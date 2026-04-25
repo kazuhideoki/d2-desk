@@ -8,6 +8,7 @@
     "sidecar:build": "cd sidecar && go build -o ../src-tauri/binaries/d2-sidecar-aarch64-apple-darwin .",
     "build": "tsc && vite build",
     "build:app": "npm run sidecar:build && npm run build",
+    "build:install": "scripts/build-and-install-macos.sh",
     "preview": "vite preview",
     "tauri": "tauri"
   },
