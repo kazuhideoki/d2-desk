@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"encoding/base64"
+	"strings"
+	"testing"
+)
 
 func TestCompileProducesSVGAndObjects(t *testing.T) {
 	result, err := compile(compileParams{Source: "api -> db\napi: API\ndb: Database"})
@@ -15,9 +19,143 @@ func TestCompileProducesSVGAndObjects(t *testing.T) {
 	}
 }
 
+func TestCompileBuildsObjectMapWithSourceRanges(t *testing.T) {
+	source := `direction: right
+
+api: API Server {
+  shape: hexagon
+}
+
+db: Database {
+  shape: cylinder
+}
+
+api -> db: query`
+	result, err := compile(compileParams{Source: source, Layout: "dagre", Theme: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("expected no diagnostics, got %#v", result.Diagnostics)
+	}
+
+	api := findObject(result.Objects, "api")
+	if api == nil {
+		t.Fatal("expected api object")
+	}
+	if api.Kind != "shape" {
+		t.Fatalf("expected api to be shape, got %q", api.Kind)
+	}
+	if api.Preview.X == nil || api.Preview.Y == nil || api.Preview.Width == nil || api.Preview.Height == nil {
+		t.Fatalf("expected api preview bounds, got %#v", api.Preview)
+	}
+	if len(api.SourceRanges) == 0 {
+		t.Fatal("expected api source ranges")
+	}
+	if api.SourceRanges[0].StartLine != 3 || api.SourceRanges[0].StartColumn != 1 {
+		t.Fatalf("unexpected api source range: %#v", api.SourceRanges[0])
+	}
+
+	connection := findConnection(result.Objects, "query")
+	if connection == nil {
+		t.Fatalf("expected api to db connection in %#v", result.Objects)
+	}
+	if len(connection.Preview.Route) == 0 {
+		t.Fatal("expected connection route")
+	}
+	if len(connection.SourceRanges) < 2 {
+		t.Fatalf("expected connection to include source ranges for both endpoints, got %#v", connection.SourceRanges)
+	}
+}
+
+func TestCompileReturnsDiagnosticsForInvalidSource(t *testing.T) {
+	result, err := compile(compileParams{Source: "api -> {"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Diagnostics) == 0 {
+		t.Fatal("expected diagnostics")
+	}
+	if result.Diagnostics[0].Severity != "error" {
+		t.Fatalf("expected error diagnostic, got %#v", result.Diagnostics[0])
+	}
+	if result.SVG == "" {
+		t.Fatal("expected fallback or partial SVG")
+	}
+}
+
 func TestNodeAtFindsSourceObject(t *testing.T) {
 	result := nodeAt(nodeAtParams{Source: "api -> db", Line: 1, Column: 2})
 	if result["id"] == "" {
 		t.Fatal("expected object id")
 	}
+}
+
+func TestNodeAtFindsDefinitionsAndConnectionEndpoints(t *testing.T) {
+	source := "api: API Server\napi -> db: query\n"
+
+	definition := nodeAt(nodeAtParams{Source: source, Line: 1, Column: 2})
+	if definition["id"] != "api" {
+		t.Fatalf("expected api at definition, got %#v", definition)
+	}
+
+	endpoint := nodeAt(nodeAtParams{Source: source, Line: 2, Column: 9})
+	if endpoint["id"] != "db" {
+		t.Fatalf("expected db at connection endpoint, got %#v", endpoint)
+	}
+}
+
+func TestFormatPreservesValidDocument(t *testing.T) {
+	formatted, err := format("api: API Server\napi -> db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(formatted, "api") || !strings.Contains(formatted, "db") {
+		t.Fatalf("expected formatted source to preserve identifiers, got %q", formatted)
+	}
+}
+
+func TestExportSVGReturnsBase64SVG(t *testing.T) {
+	result, err := export(exportParams{Source: "api -> db", Format: "svg", Layout: "dagre", Theme: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Format != "svg" {
+		t.Fatalf("expected svg format, got %q", result.Format)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(result.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(decoded), "<svg") {
+		t.Fatalf("expected decoded SVG, got %q", string(decoded[:min(len(decoded), 80)]))
+	}
+}
+
+func TestExportRejectsUnsupportedFormat(t *testing.T) {
+	_, err := export(exportParams{Source: "api -> db", Format: "jpg"})
+	if err == nil {
+		t.Fatal("expected unsupported format error")
+	}
+}
+
+func findObject(objects []objectMap, id string) *objectMap {
+	for i := range objects {
+		if objects[i].ID == id {
+			return &objects[i]
+		}
+	}
+	return nil
+}
+
+func findConnection(objects []objectMap, label string) *objectMap {
+	for i := range objects {
+		if objects[i].Kind != "connection" {
+			continue
+		}
+		if objects[i].Label == label {
+			return &objects[i]
+		}
+	}
+	return nil
 }
