@@ -113,10 +113,7 @@ function App() {
 
   const renderedSvg = useMemo(() => normalizeSvgSize(compileResult.svg), [compileResult.svg]);
 
-  const viewBox = useMemo(() => {
-    const match = renderedSvg.match(/viewBox="([^"]+)"/);
-    return match?.[1] ?? "0 0 800 600";
-  }, [renderedSvg]);
+  const overlayViewBox = useMemo(() => getDiagramViewBox(renderedSvg), [renderedSvg]);
 
   const compile = useCallback(
     async (nextSource: string) => {
@@ -448,7 +445,7 @@ function App() {
           <div className="preview-viewport">
             <div className="preview-canvas" style={{ transform: `scale(${zoom})` }}>
               <div className="svg-output" dangerouslySetInnerHTML={{ __html: renderedSvg }} />
-              <svg className="overlay" viewBox={viewBox}>
+              <svg className="overlay" viewBox={overlayViewBox}>
                 {compileResult.objects.map((object) =>
                   object.kind === "shape" ? (
                     <rect
@@ -526,6 +523,13 @@ function normalizeSvgSize(svg: string) {
     match[0],
     `<svg${before}viewBox="${viewBox}" width="${Math.ceil(width)}" height="${Math.ceil(height)}"${after}>`,
   );
+}
+
+function getDiagramViewBox(svg: string) {
+  const innerSvgMatch = svg.match(/<svg[^>]*\bd2-svg\b[^>]*\sviewBox="([^"]+)"/);
+  if (innerSvgMatch?.[1]) return innerSvgMatch[1];
+  const outerSvgMatch = svg.match(/<svg[^>]*\sviewBox="([^"]+)"/);
+  return outerSvgMatch?.[1] ?? "0 0 800 600";
 }
 
 function downloadBytes(name: string, base64Data: string, type: string) {

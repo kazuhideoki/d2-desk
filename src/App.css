@@ -16,8 +16,15 @@
 
 body {
   margin: 0;
-  min-width: 960px;
-  min-height: 640px;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #eef2f3;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
   overflow: hidden;
 }
 
@@ -55,7 +62,10 @@ select {
 .app-shell {
   display: grid;
   grid-template-rows: 48px minmax(0, 1fr) 74px;
+  width: 100vw;
   height: 100vh;
+  overflow: hidden;
+  background: #eef2f3;
 }
 
 .topbar {
@@ -94,24 +104,29 @@ select {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(360px, 0.95fr) minmax(440px, 1.05fr);
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
   min-height: 0;
+  overflow: hidden;
 }
 
 .editor-pane,
 .preview-pane {
+  position: relative;
   display: grid;
   grid-template-rows: 36px minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .editor-pane {
+  z-index: 0;
   border-right: 1px solid #c9d3d6;
   background: #1e1e1e;
 }
 
 .preview-pane {
+  z-index: 1;
   background: #f4f7f7;
 }
 
@@ -137,17 +152,21 @@ select {
   min-height: 0;
   overflow: auto;
   padding: 28px;
+  background: #f4f7f7;
+  contain: layout paint;
 }
 
 .preview-canvas {
   position: relative;
   display: inline-block;
   transform-origin: top left;
+  background: #f4f7f7;
 }
 
 .svg-output {
   display: inline-block;
   line-height: 0;
+  background: #ffffff;
 }
 
 .svg-output svg {
