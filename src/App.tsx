@@ -111,10 +111,12 @@ function App() {
     [activeId, compileResult.objects, hoverId],
   );
 
+  const renderedSvg = useMemo(() => normalizeSvgSize(compileResult.svg), [compileResult.svg]);
+
   const viewBox = useMemo(() => {
-    const match = compileResult.svg.match(/viewBox="([^"]+)"/);
+    const match = renderedSvg.match(/viewBox="([^"]+)"/);
     return match?.[1] ?? "0 0 800 600";
-  }, [compileResult.svg]);
+  }, [renderedSvg]);
 
   const compile = useCallback(
     async (nextSource: string) => {
@@ -124,10 +126,34 @@ function App() {
           method: "compile",
           params: { source: nextSource, layout, theme },
         });
+        if (result.diagnostics.length > 0) {
+          setCompileResult((previous) => ({
+            ...previous,
+            diagnostics: result.diagnostics,
+          }));
+          setStatus("Diagnostics updated; preview kept from last valid compile");
+          return;
+        }
         setCompileResult(result);
-        setStatus(result.diagnostics.length > 0 ? "Compiled with diagnostics" : "Compiled");
+        setStatus("Compiled");
       } catch (error) {
-        setStatus(String(error));
+        setCompileResult((previous) => ({
+          ...previous,
+          diagnostics: [
+            {
+              message: String(error),
+              severity: "error",
+              sourceRange: {
+                file: "main.d2",
+                startLine: 1,
+                startColumn: 1,
+                endLine: 1,
+                endColumn: 1,
+              },
+            },
+          ],
+        }));
+        setStatus("Compile failed; preview kept from last valid compile");
       }
     },
     [layout, theme],
@@ -175,6 +201,24 @@ function App() {
           [/\b(direction|shape|style|fill|stroke|icon|label|tooltip|near)\b/, "type"],
           [/[{}:]/, "delimiter"],
         ],
+      },
+    });
+    monaco.editor.defineTheme("d2-dark", {
+      base: "vs-dark",
+      inherit: true,
+      rules: [
+        { token: "", foreground: "d4d4d4" },
+        { token: "comment", foreground: "6a9955" },
+        { token: "keyword", foreground: "4fc1ff" },
+        { token: "type", foreground: "4ec9b0" },
+        { token: "string", foreground: "ce9178" },
+        { token: "delimiter", foreground: "d4d4d4" },
+      ],
+      colors: {
+        "editor.background": "#1e1e1e",
+        "editor.foreground": "#d4d4d4",
+        "editorLineNumber.foreground": "#858585",
+        "editorCursor.foreground": "#f8fafc",
       },
     });
   };
@@ -259,7 +303,7 @@ function App() {
 
   async function exportPNG() {
     const image = new Image();
-    const svgBlob = new Blob([compileResult.svg], { type: "image/svg+xml" });
+    const svgBlob = new Blob([renderedSvg], { type: "image/svg+xml" });
     const url = URL.createObjectURL(svgBlob);
     image.onload = () => {
       const canvas = document.createElement("canvas");
@@ -282,7 +326,7 @@ function App() {
   function printPDF() {
     const win = window.open("", "_blank");
     if (!win) return;
-    win.document.write(`<html><head><title>${baseName(fileName)}</title></head><body>${compileResult.svg}</body></html>`);
+    win.document.write(`<html><head><title>${baseName(fileName)}</title></head><body>${renderedSvg}</body></html>`);
     win.document.close();
     win.focus();
     win.print();
@@ -379,7 +423,7 @@ function App() {
           <Editor
             height="100%"
             language="d2"
-            theme="vs-dark"
+            theme="d2-dark"
             value={source}
             beforeMount={beforeMount}
             onMount={handleMount}
@@ -403,7 +447,7 @@ function App() {
           </div>
           <div className="preview-viewport">
             <div className="preview-canvas" style={{ transform: `scale(${zoom})` }}>
-              <div className="svg-output" dangerouslySetInnerHTML={{ __html: compileResult.svg }} />
+              <div className="svg-output" dangerouslySetInnerHTML={{ __html: renderedSvg }} />
               <svg className="overlay" viewBox={viewBox}>
                 {compileResult.objects.map((object) =>
                   object.kind === "shape" ? (
@@ -468,6 +512,20 @@ function routePath(route: { x: number; y: number }[]) {
 
 function baseName(name: string) {
   return name.replace(/\.[^.]+$/, "");
+}
+
+function normalizeSvgSize(svg: string) {
+  if (!svg || /<svg[^>]*\swidth=/.test(svg)) return svg;
+  const match = svg.match(/<svg([^>]*)viewBox="([^"]+)"([^>]*)>/);
+  if (!match) return svg;
+  const [, before, viewBox, after] = match;
+  const parts = viewBox.split(/\s+/).map(Number);
+  if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) return svg;
+  const [, , width, height] = parts;
+  return svg.replace(
+    match[0],
+    `<svg${before}viewBox="${viewBox}" width="${Math.ceil(width)}" height="${Math.ceil(height)}"${after}>`,
+  );
 }
 
 function downloadBytes(name: string, base64Data: string, type: string) {
