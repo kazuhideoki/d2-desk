@@ -85,6 +85,12 @@ const themes = [
   { id: 101, label: "Origami" },
 ];
 
+const baseEditorFontSize = 14;
+const baseEditorLineHeight = 20;
+const minZoom = 0.4;
+const maxZoom = 2.2;
+const zoomStep = 0.1;
+
 function App() {
   const [source, setSource] = useState(
     () => localStorage.getItem("d2-desk:last-source") ?? sampleSource,
@@ -114,6 +120,9 @@ function App() {
   const renderedSvg = useMemo(() => normalizeSvgSize(compileResult.svg), [compileResult.svg]);
 
   const overlayViewBox = useMemo(() => getDiagramViewBox(renderedSvg), [renderedSvg]);
+
+  const editorFontSize = Math.round(baseEditorFontSize * zoom);
+  const editorLineHeight = Math.round(baseEditorLineHeight * zoom);
 
   const compile = useCallback(
     async (nextSource: string) => {
@@ -185,6 +194,26 @@ function App() {
   useEffect(() => {
     highlightObject(hoverId ?? activeId, false);
   }, [activeId, hoverId, compileResult.objects]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+
+      if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        zoomIn();
+      } else if (event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        zoomOut();
+      } else if (event.key === "0") {
+        event.preventDefault();
+        resetView();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
+  }, []);
 
   const beforeMount = (monaco: typeof Monaco) => {
     monaco.languages.register({ id: "d2" });
@@ -349,6 +378,14 @@ function App() {
     setZoom(1);
   }
 
+  function zoomIn() {
+    setZoom((value) => clampZoom(value + zoomStep));
+  }
+
+  function zoomOut() {
+    setZoom((value) => clampZoom(value - zoomStep));
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -378,13 +415,13 @@ function App() {
             <option value="dagre">dagre</option>
           </select>
           <span className="divider" />
-          <button title="Zoom out" onClick={() => setZoom((value) => Math.max(0.4, value - 0.1))}>
+          <button title="Zoom out (Command/Ctrl + -)" onClick={zoomOut}>
             <ZoomOut size={16} />
           </button>
-          <button title="Reset zoom" onClick={resetView}>
+          <button title="Reset zoom (Command/Ctrl + 0)" onClick={resetView}>
             <Focus size={16} />
           </button>
-          <button title="Zoom in" onClick={() => setZoom((value) => Math.min(2.2, value + 0.1))}>
+          <button title="Zoom in (Command/Ctrl + +)" onClick={zoomIn}>
             <ZoomIn size={16} />
           </button>
           <span className="divider" />
@@ -426,7 +463,8 @@ function App() {
             onMount={handleMount}
             onChange={(value) => setSource(value ?? "")}
             options={{
-              fontSize: 14,
+              fontSize: editorFontSize,
+              lineHeight: editorLineHeight,
               fontLigatures: true,
               minimap: { enabled: false },
               scrollBeyondLastLine: false,
@@ -509,6 +547,10 @@ function routePath(route: { x: number; y: number }[]) {
 
 function baseName(name: string) {
   return name.replace(/\.[^.]+$/, "");
+}
+
+function clampZoom(value: number) {
+  return Number(Math.min(maxZoom, Math.max(minZoom, value)).toFixed(2));
 }
 
 function normalizeSvgSize(svg: string) {
