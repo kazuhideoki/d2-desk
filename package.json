@@ -10,6 +10,7 @@
     "build:app": "npm run sidecar:build && npm run build",
     "build:install": "scripts/build-and-install-macos.sh",
     "preview": "vite preview",
+    "tauri:dev": "node scripts/tauri-dev-isolated.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

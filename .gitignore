@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 *.local
+.tmp
 
 # Generated sidecar binaries
 src-tauri/binaries/d2-sidecar-*

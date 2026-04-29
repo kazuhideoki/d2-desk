@@ -84,6 +84,10 @@ fn run_sidecar(input: Vec<u8>) -> Result<Vec<u8>, String> {
 fn sidecar_binary_path(manifest_dir: &PathBuf) -> Option<PathBuf> {
     let mut candidates = Vec::new();
 
+    if let Ok(path) = std::env::var("D2_DESK_SIDECAR_PATH") {
+        candidates.push(PathBuf::from(path));
+    }
+
     if let Ok(current_exe) = std::env::current_exe() {
         if let Some(exe_dir) = current_exe.parent() {
             candidates.push(exe_dir.join(runtime_sidecar_name("d2-sidecar")));
