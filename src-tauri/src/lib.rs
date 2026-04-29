@@ -36,11 +36,9 @@ fn run_sidecar(input: Vec<u8>) -> Result<Vec<u8>, String> {
     let repo_root = manifest_dir
         .parent()
         .ok_or_else(|| "could not resolve repository root".to_string())?;
-    let bundled = manifest_dir
-        .join("binaries")
-        .join(platform_sidecar_name("d2-sidecar"));
 
-    let mut command = if bundled.exists() {
+    let bundled = sidecar_binary_path(&manifest_dir);
+    let mut command = if let Some(bundled) = bundled {
         Command::new(bundled)
     } else {
         let mut command = Command::new("go");
@@ -81,6 +79,33 @@ fn run_sidecar(input: Vec<u8>) -> Result<Vec<u8>, String> {
         ));
     }
     Ok(output.stdout)
+}
+
+fn sidecar_binary_path(manifest_dir: &PathBuf) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            candidates.push(exe_dir.join(runtime_sidecar_name("d2-sidecar")));
+            candidates.push(exe_dir.join(platform_sidecar_name("d2-sidecar")));
+        }
+    }
+
+    candidates.push(
+        manifest_dir
+            .join("binaries")
+            .join(platform_sidecar_name("d2-sidecar")),
+    );
+
+    candidates.into_iter().find(|candidate| candidate.exists())
+}
+
+fn runtime_sidecar_name(base: &str) -> String {
+    if cfg!(target_os = "windows") {
+        format!("{base}.exe")
+    } else {
+        base.to_string()
+    }
 }
 
 fn platform_sidecar_name(base: &str) -> String {
