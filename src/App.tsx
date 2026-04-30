@@ -58,17 +58,18 @@ type ExportResult = {
   data: string;
 };
 
-<<<<<<< HEAD
 type D2Tab = {
   id: string;
   fileName: string;
   source: string;
+  filePath: string | null;
 };
 
 type StoredTabs = {
   activeTabId: string;
   tabs: D2Tab[];
-=======
+};
+
 type OpenedD2File = {
   path: string;
   contents: string;
@@ -76,7 +77,6 @@ type OpenedD2File = {
 
 type SavedD2File = {
   path: string;
->>>>>>> main
 };
 
 const sampleSource = `direction: right
@@ -130,13 +130,12 @@ function App() {
   const [zoom, setZoom] = useState(1);
   const [theme, setTheme] = useState(4);
   const [layout, setLayout] = useState("dagre");
-<<<<<<< HEAD
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decorationIds = useRef<string[]>([]);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const activeTabIdRef = useRef(activeTabId);
   const activeCompileRequestId = useRef(0);
+  const openSourceFileRef = useRef<() => void>(() => undefined);
+  const saveSourceRef = useRef<() => void>(() => undefined);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0],
@@ -144,17 +143,9 @@ function App() {
   );
   const source = activeTab?.source ?? "";
   const fileName = activeTab?.fileName ?? "untitled.d2";
+  const currentFilePath = activeTab?.filePath ?? null;
   const latestCompileInputsRef = useRef({ tabId: activeTabId, source, layout, theme });
   latestCompileInputsRef.current = { tabId: activeTabId, source, layout, theme };
-=======
-  const [fileName, setFileName] = useState("untitled.d2");
-  const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
-  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
-  const monacoRef = useRef<typeof Monaco | null>(null);
-  const decorationIds = useRef<string[]>([]);
-  const openSourceFileRef = useRef<() => void>(() => undefined);
-  const saveSourceRef = useRef<() => void>(() => undefined);
->>>>>>> main
 
   const activeObject = useMemo(
     () => compileResult.objects.find((object) => object.id === (hoverId ?? activeId)),
@@ -177,7 +168,6 @@ function App() {
   const createNewTab = useCallback(() => {
     const nextTab = createEmptyTab(tabs);
     setTabs((currentTabs) => [...currentTabs, nextTab]);
-    activeTabIdRef.current = nextTab.id;
     setActiveTabId(nextTab.id);
     setActiveId(null);
     setHoverId(null);
@@ -249,10 +239,6 @@ function App() {
   }, [activeTabId, tabs]);
 
   useEffect(() => {
-    activeTabIdRef.current = activeTabId;
-  }, [activeTabId]);
-
-  useEffect(() => {
     localStorage.setItem("d2-desk:last-source", source);
     const requestId = activeCompileRequestId.current + 1;
     activeCompileRequestId.current = requestId;
@@ -302,14 +288,16 @@ function App() {
       }
 
       const result = await invoke<OpenedD2File>("read_d2_file", { path: selected });
-      setSource(result.contents);
-      setCurrentFilePath(result.path);
-      setFileName(fileNameFromPath(result.path));
+      updateActiveTab({
+        source: result.contents,
+        fileName: fileNameFromPath(result.path),
+        filePath: result.path,
+      });
       setStatus(`Opened ${result.path}`);
     } catch (error) {
       setStatus(String(error));
     }
-  }, [currentFilePath]);
+  }, [currentFilePath, updateActiveTab]);
 
   const saveSource = useCallback(async () => {
     try {
@@ -329,13 +317,15 @@ function App() {
         path,
         contents: source,
       });
-      setCurrentFilePath(result.path);
-      setFileName(fileNameFromPath(result.path));
+      updateActiveTab({
+        fileName: fileNameFromPath(result.path),
+        filePath: result.path,
+      });
       setStatus(`Saved ${result.path}`);
     } catch (error) {
       setStatus(String(error));
     }
-  }, [currentFilePath, fileName, source]);
+  }, [currentFilePath, fileName, source, updateActiveTab]);
 
   useEffect(() => {
     openSourceFileRef.current = () => {
@@ -390,11 +380,7 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-<<<<<<< HEAD
-  }, [createNewTab]);
-=======
-  }, [openSourceFile, saveSource]);
->>>>>>> main
+  }, [createNewTab, openSourceFile, saveSource]);
 
   const beforeMount = (monaco: typeof Monaco) => {
     monaco.languages.register({ id: "d2" });
@@ -545,24 +531,6 @@ function App() {
     win.print();
   }
 
-<<<<<<< HEAD
-  function openFile(file: File) {
-    const reader = new FileReader();
-    reader.onload = () => {
-      updateActiveTab({ source: String(reader.result ?? ""), fileName: file.name });
-      setStatus(`Opened ${file.name}`);
-    };
-    reader.readAsText(file);
-  }
-
-  function saveSource() {
-    const blob = new Blob([source], { type: "text/plain;charset=utf-8" });
-    downloadURL(fileName.endsWith(".d2") ? fileName : `${fileName}.d2`, URL.createObjectURL(blob));
-    setStatus("Saved D2 source");
-  }
-
-=======
->>>>>>> main
   function resetView() {
     setZoom(1);
   }
@@ -640,7 +608,6 @@ function App() {
               aria-selected={tab.id === activeTabId}
               title={tab.fileName}
               onClick={() => {
-                activeTabIdRef.current = tab.id;
                 setActiveTabId(tab.id);
                 setActiveId(null);
                 setHoverId(null);
@@ -783,12 +750,14 @@ function loadTabs(): D2Tab[] {
         (tab): tab is D2Tab =>
           typeof tab.id === "string" &&
           typeof tab.fileName === "string" &&
-          typeof tab.source === "string",
+          typeof tab.source === "string" &&
+          (typeof tab.filePath === "string" || tab.filePath === null || tab.filePath === undefined),
       )
       .map((tab) => ({
         id: tab.id,
         fileName: tab.fileName,
         source: tab.source,
+        filePath: tab.filePath ?? null,
       }));
     return tabs.length > 0 ? tabs : [fallbackTab];
   } catch {
@@ -827,6 +796,7 @@ function createTab(fileName: string, source: string): D2Tab {
     id: createTabId(),
     fileName,
     source,
+    filePath: null,
   };
 }
 
