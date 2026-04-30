@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   Download,
   FileDown,
@@ -56,6 +58,7 @@ type ExportResult = {
   data: string;
 };
 
+<<<<<<< HEAD
 type D2Tab = {
   id: string;
   fileName: string;
@@ -65,6 +68,15 @@ type D2Tab = {
 type StoredTabs = {
   activeTabId: string;
   tabs: D2Tab[];
+=======
+type OpenedD2File = {
+  path: string;
+  contents: string;
+};
+
+type SavedD2File = {
+  path: string;
+>>>>>>> main
 };
 
 const sampleSource = `direction: right
@@ -118,6 +130,7 @@ function App() {
   const [zoom, setZoom] = useState(1);
   const [theme, setTheme] = useState(4);
   const [layout, setLayout] = useState("dagre");
+<<<<<<< HEAD
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decorationIds = useRef<string[]>([]);
@@ -133,6 +146,15 @@ function App() {
   const fileName = activeTab?.fileName ?? "untitled.d2";
   const latestCompileInputsRef = useRef({ tabId: activeTabId, source, layout, theme });
   latestCompileInputsRef.current = { tabId: activeTabId, source, layout, theme };
+=======
+  const [fileName, setFileName] = useState("untitled.d2");
+  const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
+  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<typeof Monaco | null>(null);
+  const decorationIds = useRef<string[]>([]);
+  const openSourceFileRef = useRef<() => void>(() => undefined);
+  const saveSourceRef = useRef<() => void>(() => undefined);
+>>>>>>> main
 
   const activeObject = useMemo(
     () => compileResult.objects.find((object) => object.id === (hoverId ?? activeId)),
@@ -263,11 +285,95 @@ function App() {
     highlightObject(hoverId ?? activeId, false);
   }, [activeId, hoverId, compileResult.objects]);
 
+  const openSourceFile = useCallback(async () => {
+    try {
+      const selected = await open({
+        title: "Open D2 file",
+        filters: [
+          { name: "D2", extensions: ["d2"] },
+          { name: "Text", extensions: ["txt"] },
+        ],
+        multiple: false,
+        defaultPath: currentFilePath ?? undefined,
+      });
+      if (!selected || Array.isArray(selected)) {
+        setStatus("Open canceled");
+        return;
+      }
+
+      const result = await invoke<OpenedD2File>("read_d2_file", { path: selected });
+      setSource(result.contents);
+      setCurrentFilePath(result.path);
+      setFileName(fileNameFromPath(result.path));
+      setStatus(`Opened ${result.path}`);
+    } catch (error) {
+      setStatus(String(error));
+    }
+  }, [currentFilePath]);
+
+  const saveSource = useCallback(async () => {
+    try {
+      const path =
+        currentFilePath ??
+        (await save({
+          title: "Save D2 file",
+          filters: [{ name: "D2", extensions: ["d2"] }],
+          defaultPath: ensureD2FileName(fileName),
+        }));
+      if (!path) {
+        setStatus("Save canceled");
+        return;
+      }
+
+      const result = await invoke<SavedD2File>("write_d2_file", {
+        path,
+        contents: source,
+      });
+      setCurrentFilePath(result.path);
+      setFileName(fileNameFromPath(result.path));
+      setStatus(`Saved ${result.path}`);
+    } catch (error) {
+      setStatus(String(error));
+    }
+  }, [currentFilePath, fileName, source]);
+
+  useEffect(() => {
+    openSourceFileRef.current = () => {
+      void openSourceFile();
+    };
+    saveSourceRef.current = () => {
+      void saveSource();
+    };
+  }, [openSourceFile, saveSource]);
+
+  useEffect(() => {
+    const unlisteners: Array<() => void> = [];
+    void listen("d2-desk-open", () => openSourceFileRef.current()).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen("d2-desk-save", () => saveSourceRef.current()).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+
+    return () => {
+      for (const unlisten of unlisteners) {
+        unlisten();
+      }
+    };
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      const key = event.key.toLowerCase();
 
-      if (event.key === "+" || event.key === "=") {
+      if (key === "o") {
+        event.preventDefault();
+        void openSourceFile();
+      } else if (key === "s") {
+        event.preventDefault();
+        void saveSource();
+      } else if (event.key === "+" || event.key === "=") {
         event.preventDefault();
         zoomIn();
       } else if (event.key === "-" || event.key === "_") {
@@ -284,7 +390,11 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
+<<<<<<< HEAD
   }, [createNewTab]);
+=======
+  }, [openSourceFile, saveSource]);
+>>>>>>> main
 
   const beforeMount = (monaco: typeof Monaco) => {
     monaco.languages.register({ id: "d2" });
@@ -323,6 +433,12 @@ function App() {
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyO, () => {
+      openSourceFileRef.current();
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+      saveSourceRef.current();
+    });
     editor.onDidChangeCursorPosition(async (event) => {
       try {
         const result = await invoke<{ id?: string }>("sidecar_call", {
@@ -429,6 +545,7 @@ function App() {
     win.print();
   }
 
+<<<<<<< HEAD
   function openFile(file: File) {
     const reader = new FileReader();
     reader.onload = () => {
@@ -444,6 +561,8 @@ function App() {
     setStatus("Saved D2 source");
   }
 
+=======
+>>>>>>> main
   function resetView() {
     setZoom(1);
   }
@@ -464,10 +583,10 @@ function App() {
           <span>D2 Desk</span>
         </div>
         <div className="toolbar" role="toolbar">
-          <button title="Open D2 file" onClick={() => fileInputRef.current?.click()}>
+          <button title="Open D2 file (Command/Ctrl + O)" onClick={openSourceFile}>
             <FileInput size={16} />
           </button>
-          <button title="Save D2 source" onClick={saveSource}>
+          <button title="Save D2 source (Command/Ctrl + S)" onClick={saveSource}>
             <Save size={16} />
           </button>
           <button title="Format document" onClick={formatDocument}>
@@ -508,17 +627,6 @@ function App() {
             <Maximize2 size={16} />
           </button>
         </div>
-        <input
-          ref={fileInputRef}
-          className="hidden-input"
-          type="file"
-          accept=".d2,text/plain"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file) openFile(file);
-            event.currentTarget.value = "";
-          }}
-        />
       </header>
 
       <nav className="tabbar" aria-label="Open D2 files">
@@ -648,6 +756,14 @@ function routePath(route: { x: number; y: number }[]) {
 
 function baseName(name: string) {
   return name.replace(/\.[^.]+$/, "");
+}
+
+function fileNameFromPath(path: string) {
+  return path.split(/[\\/]/).pop() || "untitled.d2";
+}
+
+function ensureD2FileName(name: string) {
+  return name.endsWith(".d2") ? name : `${name}.d2`;
 }
 
 function clampZoom(value: number) {

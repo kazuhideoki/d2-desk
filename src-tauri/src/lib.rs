@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::Emitter;
 
 #[derive(Debug, Deserialize)]
 struct SidecarResponse {
@@ -14,6 +17,17 @@ struct SidecarResponse {
 struct SidecarRequest {
     method: String,
     params: Value,
+}
+
+#[derive(Debug, Serialize)]
+struct OpenedD2File {
+    path: String,
+    contents: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SavedD2File {
+    path: String,
 }
 
 #[tauri::command]
@@ -29,6 +43,41 @@ fn sidecar_call(method: String, params: Value) -> Result<Value, String> {
     } else {
         Ok(response.result.unwrap_or(Value::Null))
     }
+}
+
+#[tauri::command]
+fn read_d2_file(path: String) -> Result<OpenedD2File, String> {
+    let path = PathBuf::from(path);
+    let contents = fs::read_to_string(&path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+
+    Ok(OpenedD2File {
+        path: path_to_string(path),
+        contents,
+    })
+}
+
+#[tauri::command]
+fn write_d2_file(path: String, contents: String) -> Result<SavedD2File, String> {
+    let path = ensure_d2_extension(PathBuf::from(path));
+    fs::write(&path, contents)
+        .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+
+    Ok(SavedD2File {
+        path: path_to_string(path),
+    })
+}
+
+fn ensure_d2_extension(path: PathBuf) -> PathBuf {
+    if path.extension().is_some() {
+        path
+    } else {
+        path.with_extension("d2")
+    }
+}
+
+fn path_to_string(path: PathBuf) -> String {
+    path.to_string_lossy().into_owned()
 }
 
 fn run_sidecar(input: Vec<u8>) -> Result<Vec<u8>, String> {
@@ -130,8 +179,35 @@ fn platform_sidecar_name(base: &str) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .menu(|handle| {
+            let open = MenuItemBuilder::with_id("open-file", "Open...")
+                .accelerator("CmdOrCtrl+O")
+                .build(handle)?;
+            let save = MenuItemBuilder::with_id("save-file", "Save")
+                .accelerator("CmdOrCtrl+S")
+                .build(handle)?;
+            let file_menu = SubmenuBuilder::new(handle, "File")
+                .item(&open)
+                .item(&save)
+                .separator()
+                .close_window()
+                .build()?;
+            MenuBuilder::new(handle).item(&file_menu).build()
+        })
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![sidecar_call])
+        .plugin(tauri_plugin_dialog::init())
+        .on_menu_event(|app, event| {
+            if event.id() == "open-file" {
+                let _ = app.emit("d2-desk-open", ());
+            } else if event.id() == "save-file" {
+                let _ = app.emit("d2-desk-save", ());
+            }
+        })
+        .invoke_handler(tauri::generate_handler![
+            sidecar_call,
+            read_d2_file,
+            write_d2_file
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
