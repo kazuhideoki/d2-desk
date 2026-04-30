@@ -61,7 +61,7 @@ select {
 
 .app-shell {
   display: grid;
-  grid-template-rows: 48px minmax(0, 1fr) 74px;
+  grid-template-rows: 48px 38px minmax(0, 1fr) 74px;
   width: 100vw;
   height: 100vh;
   overflow: hidden;
@@ -100,6 +100,60 @@ select {
 
 .hidden-input {
   display: none;
+}
+
+.tabbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid #cad4d7;
+  background: #e9eef0;
+}
+
+.tabs {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: end;
+  gap: 4px;
+  overflow: auto hidden;
+}
+
+.tab {
+  display: inline-flex;
+  width: 168px;
+  min-width: 120px;
+  max-width: 220px;
+  height: 30px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0 10px;
+  border-color: #c6d0d3;
+  border-bottom-color: #b8c4c8;
+  border-radius: 6px 6px 0 0;
+  color: #53676f;
+  background: #f4f7f7;
+}
+
+.tab.active {
+  border-color: #9aa9ae;
+  border-bottom-color: #ffffff;
+  color: #172026;
+  background: #ffffff;
+}
+
+.tab span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-add {
+  flex: 0 0 auto;
 }
 
 .workspace {

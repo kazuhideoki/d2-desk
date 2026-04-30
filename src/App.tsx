@@ -9,6 +9,7 @@ import {
   FileText,
   Focus,
   Maximize2,
+  Plus,
   Save,
   Wand2,
   ZoomIn,
@@ -55,6 +56,17 @@ type ExportResult = {
   data: string;
 };
 
+type D2Tab = {
+  id: string;
+  fileName: string;
+  source: string;
+};
+
+type StoredTabs = {
+  activeTabId: string;
+  tabs: D2Tab[];
+};
+
 const sampleSource = `direction: right
 
 user: User {
@@ -90,11 +102,11 @@ const baseEditorLineHeight = 20;
 const minZoom = 0.4;
 const maxZoom = 2.2;
 const zoomStep = 0.1;
+const tabsStorageKey = "d2-desk:tabs";
 
 function App() {
-  const [source, setSource] = useState(
-    () => localStorage.getItem("d2-desk:last-source") ?? sampleSource,
-  );
+  const [tabs, setTabs] = useState<D2Tab[]>(() => loadTabs());
+  const [activeTabId, setActiveTabId] = useState(() => loadActiveTabId(tabs));
   const [compileResult, setCompileResult] = useState<CompileResult>({
     svg: "",
     objects: [],
@@ -106,11 +118,17 @@ function App() {
   const [zoom, setZoom] = useState(1);
   const [theme, setTheme] = useState(4);
   const [layout, setLayout] = useState("dagre");
-  const [fileName, setFileName] = useState("untitled.d2");
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decorationIds = useRef<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const activeTab = useMemo(
+    () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0],
+    [activeTabId, tabs],
+  );
+  const source = activeTab?.source ?? "";
+  const fileName = activeTab?.fileName ?? "untitled.d2";
 
   const activeObject = useMemo(
     () => compileResult.objects.find((object) => object.id === (hoverId ?? activeId)),
@@ -123,6 +141,21 @@ function App() {
 
   const editorFontSize = Math.round(baseEditorFontSize * zoom);
   const editorLineHeight = Math.round(baseEditorLineHeight * zoom);
+
+  const updateActiveTab = useCallback((updates: Partial<D2Tab>) => {
+    setTabs((currentTabs) =>
+      currentTabs.map((tab) => (tab.id === activeTabId ? { ...tab, ...updates } : tab)),
+    );
+  }, [activeTabId]);
+
+  const createNewTab = useCallback(() => {
+    const nextTab = createEmptyTab(tabs);
+    setTabs((currentTabs) => [...currentTabs, nextTab]);
+    setActiveTabId(nextTab.id);
+    setActiveId(null);
+    setHoverId(null);
+    setStatus(`Created ${nextTab.fileName}`);
+  }, [tabs]);
 
   const compile = useCallback(
     async (nextSource: string) => {
@@ -164,6 +197,10 @@ function App() {
     },
     [layout, theme],
   );
+
+  useEffect(() => {
+    localStorage.setItem(tabsStorageKey, JSON.stringify({ activeTabId, tabs }));
+  }, [activeTabId, tabs]);
 
   useEffect(() => {
     localStorage.setItem("d2-desk:last-source", source);
@@ -208,12 +245,15 @@ function App() {
       } else if (event.key === "0") {
         event.preventDefault();
         resetView();
+      } else if (event.key.toLowerCase() === "t") {
+        event.preventDefault();
+        createNewTab();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, []);
+  }, [createNewTab]);
 
   const beforeMount = (monaco: typeof Monaco) => {
     monaco.languages.register({ id: "d2" });
@@ -307,7 +347,7 @@ function App() {
         method: "format",
         params: { source },
       });
-      setSource(formatted);
+      updateActiveTab({ source: formatted });
       setStatus("Formatted");
     } catch (error) {
       setStatus(String(error));
@@ -361,8 +401,7 @@ function App() {
   function openFile(file: File) {
     const reader = new FileReader();
     reader.onload = () => {
-      setSource(String(reader.result ?? ""));
-      setFileName(file.name);
+      updateActiveTab({ source: String(reader.result ?? ""), fileName: file.name });
       setStatus(`Opened ${file.name}`);
     };
     reader.readAsText(file);
@@ -402,6 +441,9 @@ function App() {
           </button>
           <button title="Format document" onClick={formatDocument}>
             <Wand2 size={16} />
+          </button>
+          <button title="New tab (Command/Ctrl + T)" onClick={createNewTab}>
+            <Plus size={16} />
           </button>
           <span className="divider" />
           <select value={theme} onChange={(event) => setTheme(Number(event.target.value))}>
@@ -448,6 +490,32 @@ function App() {
         />
       </header>
 
+      <nav className="tabbar" aria-label="Open D2 files">
+        <div className="tabs" role="tablist">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              className={tab.id === activeTabId ? "tab active" : "tab"}
+              type="button"
+              role="tab"
+              aria-selected={tab.id === activeTabId}
+              title={tab.fileName}
+              onClick={() => {
+                setActiveTabId(tab.id);
+                setActiveId(null);
+                setHoverId(null);
+              }}
+            >
+              <FileText size={14} />
+              <span>{tab.fileName}</span>
+            </button>
+          ))}
+        </div>
+        <button className="tab-add" title="New tab (Command/Ctrl + T)" onClick={createNewTab}>
+          <Plus size={16} />
+        </button>
+      </nav>
+
       <section className="workspace">
         <section className="editor-pane">
           <div className="pane-title">
@@ -455,13 +523,14 @@ function App() {
             <span>{source.split("\n").length} lines</span>
           </div>
           <Editor
+            key={activeTabId}
             height="100%"
             language="d2"
             theme="d2-dark"
             value={source}
             beforeMount={beforeMount}
             onMount={handleMount}
-            onChange={(value) => setSource(value ?? "")}
+            onChange={(value) => updateActiveTab({ source: value ?? "" })}
             options={{
               fontSize: editorFontSize,
               lineHeight: editorLineHeight,
@@ -551,6 +620,68 @@ function baseName(name: string) {
 
 function clampZoom(value: number) {
   return Number(Math.min(maxZoom, Math.max(minZoom, value)).toFixed(2));
+}
+
+function loadTabs(): D2Tab[] {
+  const fallbackTab = createTab("untitled.d2", localStorage.getItem("d2-desk:last-source") ?? sampleSource);
+  const stored = localStorage.getItem(tabsStorageKey);
+  if (!stored) return [fallbackTab];
+
+  try {
+    const parsed = JSON.parse(stored) as Partial<StoredTabs>;
+    const storedTabs = Array.isArray(parsed.tabs) ? parsed.tabs : [];
+    const tabs = storedTabs
+      .filter(
+        (tab): tab is D2Tab =>
+          typeof tab.id === "string" &&
+          typeof tab.fileName === "string" &&
+          typeof tab.source === "string",
+      )
+      .map((tab) => ({
+        id: tab.id,
+        fileName: tab.fileName,
+        source: tab.source,
+      }));
+    return tabs.length > 0 ? tabs : [fallbackTab];
+  } catch {
+    return [fallbackTab];
+  }
+}
+
+function loadActiveTabId(tabs: D2Tab[]) {
+  const fallbackId = tabs[0]?.id ?? createTabId();
+  const stored = localStorage.getItem(tabsStorageKey);
+  if (!stored) return fallbackId;
+
+  try {
+    const parsed = JSON.parse(stored) as Partial<StoredTabs>;
+    return tabs.some((tab) => tab.id === parsed.activeTabId) ? parsed.activeTabId : fallbackId;
+  } catch {
+    return fallbackId;
+  }
+}
+
+function createEmptyTab(existingTabs: D2Tab[]) {
+  const usedNames = new Set(existingTabs.map((tab) => tab.fileName));
+  let index = existingTabs.length + 1;
+  let fileName = `untitled-${index}.d2`;
+  while (usedNames.has(fileName)) {
+    index += 1;
+    fileName = `untitled-${index}.d2`;
+  }
+  return createTab(fileName, "");
+}
+
+function createTab(fileName: string, source: string): D2Tab {
+  return {
+    id: createTabId(),
+    fileName,
+    source,
+  };
+}
+
+function createTabId() {
+  return globalThis.crypto?.randomUUID?.() ?? `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function normalizeSvgSize(svg: string) {
