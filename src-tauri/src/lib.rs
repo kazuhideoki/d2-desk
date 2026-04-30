@@ -68,6 +68,11 @@ fn write_d2_file(path: String, contents: String) -> Result<SavedD2File, String> 
     })
 }
 
+#[tauri::command]
+fn close_current_window(window: tauri::Window) -> Result<(), String> {
+    window.close().map_err(|err| err.to_string())
+}
+
 fn ensure_d2_extension(path: PathBuf) -> PathBuf {
     if path.extension().is_some() {
         path
@@ -186,11 +191,14 @@ pub fn run() {
             let save = MenuItemBuilder::with_id("save-file", "Save")
                 .accelerator("CmdOrCtrl+S")
                 .build(handle)?;
+            let close_tab = MenuItemBuilder::with_id("close-tab", "Close Tab")
+                .accelerator("CmdOrCtrl+W")
+                .build(handle)?;
             let file_menu = SubmenuBuilder::new(handle, "File")
                 .item(&open)
                 .item(&save)
                 .separator()
-                .close_window()
+                .item(&close_tab)
                 .build()?;
             MenuBuilder::new(handle).item(&file_menu).build()
         })
@@ -198,15 +206,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .on_menu_event(|app, event| {
             if event.id() == "open-file" {
-                let _ = app.emit("d2-desk-open", ());
+                let _ = app.emit_to("main", "d2-desk-open", ());
             } else if event.id() == "save-file" {
-                let _ = app.emit("d2-desk-save", ());
+                let _ = app.emit_to("main", "d2-desk-save", ());
+            } else if event.id() == "close-tab" {
+                let _ = app.emit_to("main", "d2-desk-close-tab", ());
             }
         })
         .invoke_handler(tauri::generate_handler![
             sidecar_call,
             read_d2_file,
-            write_d2_file
+            write_d2_file,
+            close_current_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

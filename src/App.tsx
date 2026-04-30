@@ -3,7 +3,7 @@ import Editor, { type OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import {
   Download,
   FileDown,
@@ -14,6 +14,7 @@ import {
   Plus,
   Save,
   Wand2,
+  X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -62,6 +63,7 @@ type D2Tab = {
   id: string;
   fileName: string;
   source: string;
+  savedSource: string;
   filePath: string | null;
 };
 
@@ -136,6 +138,8 @@ function App() {
   const activeCompileRequestId = useRef(0);
   const openSourceFileRef = useRef<() => void>(() => undefined);
   const saveSourceRef = useRef<() => void>(() => undefined);
+  const closeActiveTabRef = useRef<() => void>(() => undefined);
+  const closeTabInFlightRef = useRef(false);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0],
@@ -290,6 +294,7 @@ function App() {
       const result = await invoke<OpenedD2File>("read_d2_file", { path: selected });
       updateActiveTab({
         source: result.contents,
+        savedSource: result.contents,
         fileName: fileNameFromPath(result.path),
         filePath: result.path,
       });
@@ -320,12 +325,66 @@ function App() {
       updateActiveTab({
         fileName: fileNameFromPath(result.path),
         filePath: result.path,
+        savedSource: source,
       });
       setStatus(`Saved ${result.path}`);
     } catch (error) {
       setStatus(String(error));
     }
   }, [currentFilePath, fileName, source, updateActiveTab]);
+
+  const closeTab = useCallback(async (tabId: string) => {
+    if (closeTabInFlightRef.current) return;
+    closeTabInFlightRef.current = true;
+
+    try {
+      const targetTab = tabs.find((tab) => tab.id === tabId);
+      if (!targetTab) return;
+
+      if (isTabUnsaved(targetTab)) {
+        const shouldClose = await confirm(
+          `${targetTab.fileName} has unsaved changes. Close it anyway?`,
+          {
+            title: "Unsaved changes",
+            kind: "warning",
+            okLabel: "Close without saving",
+            cancelLabel: "Cancel",
+          },
+        );
+        if (!shouldClose) {
+          setStatus("Close canceled");
+          return;
+        }
+      }
+
+      if (tabs.length === 1) {
+        setStatus(`Closing ${targetTab.fileName}`);
+        try {
+          await invoke("close_current_window");
+        } catch {
+          window.close();
+        }
+        return;
+      }
+
+      const targetIndex = tabs.findIndex((tab) => tab.id === tabId);
+      const nextTabs = tabs.filter((tab) => tab.id !== tabId);
+      if (tabId === activeTabId) {
+        const nextActiveTab = nextTabs[Math.min(targetIndex, nextTabs.length - 1)] ?? nextTabs[0];
+        setActiveTabId(nextActiveTab.id);
+        setActiveId(null);
+        setHoverId(null);
+      }
+      setTabs(nextTabs);
+      setStatus(`Closed ${targetTab.fileName}`);
+    } finally {
+      closeTabInFlightRef.current = false;
+    }
+  }, [activeTabId, tabs]);
+
+  const closeActiveTab = useCallback(() => {
+    void closeTab(activeTabId);
+  }, [activeTabId, closeTab]);
 
   useEffect(() => {
     openSourceFileRef.current = () => {
@@ -334,7 +393,8 @@ function App() {
     saveSourceRef.current = () => {
       void saveSource();
     };
-  }, [openSourceFile, saveSource]);
+    closeActiveTabRef.current = closeActiveTab;
+  }, [closeActiveTab, openSourceFile, saveSource]);
 
   useEffect(() => {
     const unlisteners: Array<() => void> = [];
@@ -342,6 +402,9 @@ function App() {
       unlisteners.push(unlisten);
     });
     void listen("d2-desk-save", () => saveSourceRef.current()).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen("d2-desk-close-tab", () => closeActiveTabRef.current()).then((unlisten) => {
       unlisteners.push(unlisten);
     });
 
@@ -375,12 +438,16 @@ function App() {
       } else if (event.key.toLowerCase() === "t") {
         event.preventDefault();
         createNewTab();
+      } else if (event.key.toLowerCase() === "w") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        closeActiveTab();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [createNewTab, openSourceFile, saveSource]);
+  }, [closeActiveTab, createNewTab, openSourceFile, saveSource]);
 
   const beforeMount = (monaco: typeof Monaco) => {
     monaco.languages.register({ id: "d2" });
@@ -600,22 +667,38 @@ function App() {
       <nav className="tabbar" aria-label="Open D2 files">
         <div className="tabs" role="tablist">
           {tabs.map((tab) => (
-            <button
+            <div
               key={tab.id}
               className={tab.id === activeTabId ? "tab active" : "tab"}
-              type="button"
-              role="tab"
-              aria-selected={tab.id === activeTabId}
               title={tab.fileName}
-              onClick={() => {
-                setActiveTabId(tab.id);
-                setActiveId(null);
-                setHoverId(null);
-              }}
             >
-              <FileText size={14} />
-              <span>{tab.fileName}</span>
-            </button>
+              <button
+                className="tab-label"
+                type="button"
+                role="tab"
+                aria-selected={tab.id === activeTabId}
+                onClick={() => {
+                  setActiveTabId(tab.id);
+                  setActiveId(null);
+                  setHoverId(null);
+                }}
+              >
+                <FileText size={14} />
+                <span>{isTabUnsaved(tab) ? `${tab.fileName} *` : tab.fileName}</span>
+              </button>
+              <button
+                className="tab-close"
+                type="button"
+                aria-label={`Close ${tab.fileName}`}
+                title={`Close ${tab.fileName}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void closeTab(tab.id);
+                }}
+              >
+                <X size={14} />
+              </button>
+            </div>
           ))}
         </div>
         <button className="tab-add" title="New tab (Command/Ctrl + T)" onClick={createNewTab}>
@@ -733,12 +816,17 @@ function ensureD2FileName(name: string) {
   return name.endsWith(".d2") ? name : `${name}.d2`;
 }
 
+function isTabUnsaved(tab: D2Tab) {
+  return tab.source !== tab.savedSource;
+}
+
 function clampZoom(value: number) {
   return Number(Math.min(maxZoom, Math.max(minZoom, value)).toFixed(2));
 }
 
 function loadTabs(): D2Tab[] {
-  const fallbackTab = createTab("untitled.d2", localStorage.getItem("d2-desk:last-source") ?? sampleSource);
+  const fallbackSource = localStorage.getItem("d2-desk:last-source") ?? sampleSource;
+  const fallbackTab = createTab("untitled.d2", fallbackSource, "");
   const stored = localStorage.getItem(tabsStorageKey);
   if (!stored) return [fallbackTab];
 
@@ -751,12 +839,14 @@ function loadTabs(): D2Tab[] {
           typeof tab.id === "string" &&
           typeof tab.fileName === "string" &&
           typeof tab.source === "string" &&
+          (typeof tab.savedSource === "string" || tab.savedSource === undefined) &&
           (typeof tab.filePath === "string" || tab.filePath === null || tab.filePath === undefined),
       )
       .map((tab) => ({
         id: tab.id,
         fileName: tab.fileName,
         source: tab.source,
+        savedSource: tab.savedSource ?? (tab.filePath ? tab.source : ""),
         filePath: tab.filePath ?? null,
       }));
     return tabs.length > 0 ? tabs : [fallbackTab];
@@ -788,14 +878,15 @@ function createEmptyTab(existingTabs: D2Tab[]) {
     index += 1;
     fileName = `untitled-${index}.d2`;
   }
-  return createTab(fileName, "");
+  return createTab(fileName, "", "");
 }
 
-function createTab(fileName: string, source: string): D2Tab {
+function createTab(fileName: string, source: string, savedSource = source): D2Tab {
   return {
     id: createTabId(),
     fileName,
     source,
+    savedSource,
     filePath: null,
   };
 }
