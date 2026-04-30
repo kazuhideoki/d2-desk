@@ -11,6 +11,7 @@
     "build:install": "scripts/build-and-install-macos.sh",
     "preview": "vite preview",
     "tauri:dev": "node scripts/tauri-dev-isolated.mjs",
+    "tauri:dev:app": "node scripts/tauri-dev-app.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
