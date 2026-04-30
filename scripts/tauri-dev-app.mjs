@@ -74,10 +74,12 @@ if (printConfigOnly) {
 }
 
 const startedAt = performance.now();
-await run("npm", [
-  "run",
-  "tauri",
-  "--",
+const tauriCommand =
+  process.env.D2_DESK_TAURI_CLI === "cargo"
+    ? ["cargo", ["tauri"]]
+    : ["npm", ["run", "tauri", "--"]];
+await run(tauriCommand[0], [
+  ...tauriCommand[1],
   "build",
   "--debug",
   "--bundles",
