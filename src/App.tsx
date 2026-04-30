@@ -122,6 +122,8 @@ function App() {
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decorationIds = useRef<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const activeTabIdRef = useRef(activeTabId);
+  const activeCompileRequestId = useRef(0);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0],
@@ -129,6 +131,8 @@ function App() {
   );
   const source = activeTab?.source ?? "";
   const fileName = activeTab?.fileName ?? "untitled.d2";
+  const latestCompileInputsRef = useRef({ tabId: activeTabId, source, layout, theme });
+  latestCompileInputsRef.current = { tabId: activeTabId, source, layout, theme };
 
   const activeObject = useMemo(
     () => compileResult.objects.find((object) => object.id === (hoverId ?? activeId)),
@@ -151,6 +155,7 @@ function App() {
   const createNewTab = useCallback(() => {
     const nextTab = createEmptyTab(tabs);
     setTabs((currentTabs) => [...currentTabs, nextTab]);
+    activeTabIdRef.current = nextTab.id;
     setActiveTabId(nextTab.id);
     setActiveId(null);
     setHoverId(null);
@@ -158,13 +163,22 @@ function App() {
   }, [tabs]);
 
   const compile = useCallback(
-    async (nextSource: string) => {
-      setStatus("Compiling");
+    async (nextSource: string, tabId: string, requestId: number) => {
       try {
         const result = await invoke<CompileResult>("sidecar_call", {
           method: "compile",
           params: { source: nextSource, layout, theme },
         });
+        const latestInputs = latestCompileInputsRef.current;
+        if (
+          requestId !== activeCompileRequestId.current ||
+          tabId !== latestInputs.tabId ||
+          nextSource !== latestInputs.source ||
+          layout !== latestInputs.layout ||
+          theme !== latestInputs.theme
+        ) {
+          return;
+        }
         if (result.diagnostics.length > 0) {
           setCompileResult((previous) => ({
             ...previous,
@@ -176,6 +190,16 @@ function App() {
         setCompileResult(result);
         setStatus("Compiled");
       } catch (error) {
+        const latestInputs = latestCompileInputsRef.current;
+        if (
+          requestId !== activeCompileRequestId.current ||
+          tabId !== latestInputs.tabId ||
+          nextSource !== latestInputs.source ||
+          layout !== latestInputs.layout ||
+          theme !== latestInputs.theme
+        ) {
+          return;
+        }
         setCompileResult((previous) => ({
           ...previous,
           diagnostics: [
@@ -203,12 +227,19 @@ function App() {
   }, [activeTabId, tabs]);
 
   useEffect(() => {
+    activeTabIdRef.current = activeTabId;
+  }, [activeTabId]);
+
+  useEffect(() => {
     localStorage.setItem("d2-desk:last-source", source);
+    const requestId = activeCompileRequestId.current + 1;
+    activeCompileRequestId.current = requestId;
+    setStatus("Compiling");
     const timeout = window.setTimeout(() => {
-      void compile(source);
+      void compile(source, activeTabId, requestId);
     }, 220);
     return () => window.clearTimeout(timeout);
-  }, [compile, source]);
+  }, [activeTabId, compile, source]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -501,6 +532,7 @@ function App() {
               aria-selected={tab.id === activeTabId}
               title={tab.fileName}
               onClick={() => {
+                activeTabIdRef.current = tab.id;
                 setActiveTabId(tab.id);
                 setActiveId(null);
                 setHoverId(null);
@@ -655,7 +687,9 @@ function loadActiveTabId(tabs: D2Tab[]) {
 
   try {
     const parsed = JSON.parse(stored) as Partial<StoredTabs>;
-    return tabs.some((tab) => tab.id === parsed.activeTabId) ? parsed.activeTabId : fallbackId;
+    return typeof parsed.activeTabId === "string" && tabs.some((tab) => tab.id === parsed.activeTabId)
+      ? parsed.activeTabId
+      : fallbackId;
   } catch {
     return fallbackId;
   }
