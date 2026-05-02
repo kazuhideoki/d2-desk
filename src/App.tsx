@@ -139,7 +139,9 @@ function App() {
   const openSourceFileRef = useRef<() => void>(() => undefined);
   const saveSourceRef = useRef<() => void>(() => undefined);
   const closeActiveTabRef = useRef<() => void>(() => undefined);
+  const quitApplicationRef = useRef<() => void>(() => undefined);
   const closeTabInFlightRef = useRef(false);
+  const quitInFlightRef = useRef(false);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0],
@@ -386,6 +388,40 @@ function App() {
     void closeTab(activeTabId);
   }, [activeTabId, closeTab]);
 
+  const quitApplication = useCallback(async () => {
+    if (quitInFlightRef.current) return;
+    quitInFlightRef.current = true;
+
+    try {
+      const unsavedTabs = tabs.filter(isTabUnsaved);
+      if (unsavedTabs.length > 0) {
+        const fileList = unsavedTabs.map((tab) => tab.fileName).join(", ");
+        const shouldQuit = await confirm(
+          `${fileList} ${unsavedTabs.length === 1 ? "has" : "have"} unsaved changes. Quit anyway?`,
+          {
+            title: "Unsaved changes",
+            kind: "warning",
+            okLabel: "Quit without saving",
+            cancelLabel: "Cancel",
+          },
+        );
+        if (!shouldQuit) {
+          setStatus("Quit canceled");
+          return;
+        }
+      }
+
+      setStatus("Quitting");
+      try {
+        await invoke("quit_application");
+      } catch {
+        window.close();
+      }
+    } finally {
+      quitInFlightRef.current = false;
+    }
+  }, [tabs]);
+
   useEffect(() => {
     openSourceFileRef.current = () => {
       void openSourceFile();
@@ -394,7 +430,10 @@ function App() {
       void saveSource();
     };
     closeActiveTabRef.current = closeActiveTab;
-  }, [closeActiveTab, openSourceFile, saveSource]);
+    quitApplicationRef.current = () => {
+      void quitApplication();
+    };
+  }, [closeActiveTab, openSourceFile, quitApplication, saveSource]);
 
   useEffect(() => {
     const unlisteners: Array<() => void> = [];
@@ -405,6 +444,9 @@ function App() {
       unlisteners.push(unlisten);
     });
     void listen("d2-desk-close-tab", () => closeActiveTabRef.current()).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen("d2-desk-request-quit", () => quitApplicationRef.current()).then((unlisten) => {
       unlisteners.push(unlisten);
     });
 
@@ -442,12 +484,16 @@ function App() {
         event.preventDefault();
         event.stopImmediatePropagation();
         closeActiveTab();
+      } else if (event.key.toLowerCase() === "q") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void quitApplication();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [closeActiveTab, createNewTab, openSourceFile, saveSource]);
+  }, [closeActiveTab, createNewTab, openSourceFile, quitApplication, saveSource]);
 
   const beforeMount = (monaco: typeof Monaco) => {
     monaco.languages.register({ id: "d2" });

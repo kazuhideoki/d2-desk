@@ -4,8 +4,13 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
-use tauri::Emitter;
+use tauri::{Emitter, Manager, State};
+
+struct ExitState {
+    allow_exit: Mutex<bool>,
+}
 
 #[derive(Debug, Deserialize)]
 struct SidecarResponse {
@@ -69,8 +74,16 @@ fn write_d2_file(path: String, contents: String) -> Result<SavedD2File, String> 
 }
 
 #[tauri::command]
-fn close_current_window(window: tauri::Window) -> Result<(), String> {
+fn close_current_window(window: tauri::Window, exit_state: State<ExitState>) -> Result<(), String> {
+    *exit_state.allow_exit.lock().map_err(|err| err.to_string())? = true;
     window.close().map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn quit_application(app: tauri::AppHandle, exit_state: State<ExitState>) -> Result<(), String> {
+    *exit_state.allow_exit.lock().map_err(|err| err.to_string())? = true;
+    app.exit(0);
+    Ok(())
 }
 
 fn ensure_d2_extension(path: PathBuf) -> PathBuf {
@@ -184,6 +197,9 @@ fn platform_sidecar_name(base: &str) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(ExitState {
+            allow_exit: Mutex::new(false),
+        })
         .menu(|handle| {
             let open = MenuItemBuilder::with_id("open-file", "Open...")
                 .accelerator("CmdOrCtrl+O")
@@ -213,12 +229,42 @@ pub fn run() {
                 let _ = app.emit_to("main", "d2-desk-close-tab", ());
             }
         })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let app = window.app_handle();
+                let exit_state = app.state::<ExitState>();
+                let allow_exit = exit_state
+                    .allow_exit
+                    .lock()
+                    .map(|allow_exit| *allow_exit)
+                    .unwrap_or(false);
+                if !allow_exit {
+                    api.prevent_close();
+                    let _ = window.emit("d2-desk-request-quit", ());
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             sidecar_call,
             read_d2_file,
             write_d2_file,
-            close_current_window
+            close_current_window,
+            quit_application
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                let exit_state = app.state::<ExitState>();
+                let allow_exit = exit_state
+                    .allow_exit
+                    .lock()
+                    .map(|allow_exit| *allow_exit)
+                    .unwrap_or(false);
+                if !allow_exit {
+                    api.prevent_exit();
+                    let _ = app.emit_to("main", "d2-desk-request-quit", ());
+                }
+            }
+        });
 }
