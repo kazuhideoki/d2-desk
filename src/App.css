@@ -293,12 +293,15 @@ rect.hit-target {
   stroke-width: 2;
 }
 
-.hit-target.active {
+/* Keep focus visuals separate from hit targets so hover does not resize pointer bounds. */
+.focus-indicator {
+  pointer-events: none;
   fill: rgba(20, 184, 166, 0.12);
   stroke: #0f766e;
+  stroke-width: 2;
 }
 
-path.hit-target.active {
+.focus-indicator.connection {
   fill: none;
   stroke-width: 12;
 }

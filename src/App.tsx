@@ -743,37 +743,56 @@ function App() {
             <div className="preview-canvas" style={{ transform: `scale(${zoom})` }}>
               <div className="svg-output" dangerouslySetInnerHTML={{ __html: renderedSvg }} />
               <svg className="overlay" viewBox={overlayViewBox}>
-                {compileResult.objects.map((object) =>
-                  object.kind === "shape" ? (
-                    <rect
-                      key={object.id}
-                      className={overlayClass(object.id)}
-                      x={object.preview.x}
-                      y={object.preview.y}
-                      width={object.preview.width}
-                      height={object.preview.height}
-                      rx={8}
-                      onMouseEnter={() => setHoverId(object.id)}
-                      onMouseLeave={() => setHoverId(null)}
-                      onClick={() => {
-                        setActiveId(object.id);
-                        highlightObject(object.id, true);
-                      }}
-                    />
+                {compileResult.objects.map((object) => {
+                  const isFocused = object.id === (hoverId ?? activeId);
+                  return object.kind === "shape" ? (
+                    <g key={object.id}>
+                      {isFocused ? (
+                        <rect
+                          className="focus-indicator"
+                          x={object.preview.x}
+                          y={object.preview.y}
+                          width={object.preview.width}
+                          height={object.preview.height}
+                          rx={8}
+                        />
+                      ) : null}
+                      <rect
+                        className="hit-target"
+                        x={object.preview.x}
+                        y={object.preview.y}
+                        width={object.preview.width}
+                        height={object.preview.height}
+                        rx={8}
+                        onMouseEnter={() => setHoverId(object.id)}
+                        onMouseLeave={() => setHoverId(null)}
+                        onClick={() => {
+                          setActiveId(object.id);
+                          highlightObject(object.id, true);
+                        }}
+                      />
+                    </g>
                   ) : (
-                    <path
-                      key={object.id}
-                      className={overlayClass(object.id)}
-                      d={routePath(object.preview.route ?? [])}
-                      onMouseEnter={() => setHoverId(object.id)}
-                      onMouseLeave={() => setHoverId(null)}
-                      onClick={() => {
-                        setActiveId(object.id);
-                        highlightObject(object.id, true);
-                      }}
-                    />
-                  ),
-                )}
+                    <g key={object.id}>
+                      {isFocused ? (
+                        <path
+                          className="focus-indicator connection"
+                          d={routePath(object.preview.route ?? [])}
+                        />
+                      ) : null}
+                      <path
+                        className="hit-target"
+                        d={routePath(object.preview.route ?? [])}
+                        onMouseEnter={() => setHoverId(object.id)}
+                        onMouseLeave={() => setHoverId(null)}
+                        onClick={() => {
+                          setActiveId(object.id);
+                          highlightObject(object.id, true);
+                        }}
+                      />
+                    </g>
+                  );
+                })}
               </svg>
             </div>
           </div>
@@ -793,10 +812,6 @@ function App() {
       </footer>
     </main>
   );
-
-  function overlayClass(id: string) {
-    return id === (hoverId ?? activeId) ? "hit-target active" : "hit-target";
-  }
 }
 
 function routePath(route: { x: number; y: number }[]) {
