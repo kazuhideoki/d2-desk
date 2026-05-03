@@ -32,7 +32,7 @@ type D2Object = {
   id: string;
   kind: "shape" | "connection";
   label?: string;
-  sourceRanges: SourceRange[];
+  sourceRanges?: SourceRange[] | null;
   preview: {
     x?: number;
     y?: number;
@@ -560,8 +560,9 @@ function App() {
     const monaco = monacoRef.current;
     if (!editor || !monaco) return;
     const object = compileResult.objects.find((item) => item.id === id);
+    const sourceRanges = object?.sourceRanges ?? [];
     const decorations =
-      object?.sourceRanges.map((range) => ({
+      sourceRanges.map((range) => ({
         range: new monaco.Range(
           range.startLine,
           range.startColumn,
@@ -577,11 +578,11 @@ function App() {
         },
       })) ?? [];
     decorationIds.current = editor.deltaDecorations(decorationIds.current, decorations);
-    if (reveal && object?.sourceRanges[0]) {
-      editor.revealLineInCenter(object.sourceRanges[0].startLine);
+    if (reveal && sourceRanges[0]) {
+      editor.revealLineInCenter(sourceRanges[0].startLine);
       editor.setPosition({
-        lineNumber: object.sourceRanges[0].startLine,
-        column: object.sourceRanges[0].startColumn,
+        lineNumber: sourceRanges[0].startLine,
+        column: sourceRanges[0].startColumn,
       });
       editor.focus();
     }

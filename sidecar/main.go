@@ -255,7 +255,7 @@ func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
 			Kind:         "shape",
 			BoardPath:    []string{},
 			Label:        shape.Label,
-			SourceRanges: rangesFor(shape.ID, sourceRanges),
+			SourceRanges: nonNilRanges(rangesFor(shape.ID, sourceRanges)),
 			Preview:      previewBox{X: &x, Y: &y, Width: &w, Height: &h},
 		})
 	}
@@ -271,7 +271,7 @@ func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
 			Kind:         "connection",
 			BoardPath:    []string{},
 			Label:        conn.Label,
-			SourceRanges: rangesForConnection(conn.Src, conn.Dst, sourceRanges),
+			SourceRanges: nonNilRanges(rangesForConnection(conn.Src, conn.Dst, sourceRanges)),
 			Preview:      previewBox{Route: route},
 		})
 	}
@@ -348,7 +348,11 @@ func addTokenRange(out map[string][]sourceRange, text string, line int, baseColu
 	if idx := strings.IndexAny(text, ":{"); idx >= 0 {
 		text = text[:idx]
 	}
-	token := strings.Trim(strings.TrimSpace(text), `"'`)
+	tokenText := text
+	if idx := strings.Index(tokenText, "->"); idx >= 0 {
+		tokenText = tokenText[:idx]
+	}
+	token := strings.Trim(strings.TrimSpace(tokenText), `"'`)
 	token = strings.TrimSuffix(token, ".")
 	if token == "" {
 		return
@@ -377,6 +381,13 @@ func rangesFor(id string, ranges map[string][]sourceRange) []sourceRange {
 		return ranges[parts[len(parts)-1]]
 	}
 	return nil
+}
+
+func nonNilRanges(ranges []sourceRange) []sourceRange {
+	if ranges == nil {
+		return []sourceRange{}
+	}
+	return ranges
 }
 
 func rangesForConnection(src, dst string, ranges map[string][]sourceRange) []sourceRange {

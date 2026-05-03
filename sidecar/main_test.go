@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -65,6 +66,28 @@ api -> db: query`
 	}
 	if len(connection.SourceRanges) < 2 {
 		t.Fatalf("expected connection to include source ranges for both endpoints, got %#v", connection.SourceRanges)
+	}
+}
+
+func TestCompileDoesNotMarshalNullSourceRanges(t *testing.T) {
+	result, err := compile(compileParams{Source: "direction: down\n\nhoge -> fuga -> piyo\n", Layout: "dagre", Theme: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"sourceRanges":null`) {
+		t.Fatalf("expected sourceRanges to marshal as arrays, got %s", encoded)
+	}
+
+	fuga := findObject(result.Objects, "fuga")
+	if fuga == nil {
+		t.Fatal("expected fuga object")
+	}
+	if len(fuga.SourceRanges) == 0 {
+		t.Fatalf("expected chained connection endpoint range for fuga, got %#v", fuga.SourceRanges)
 	}
 }
 
