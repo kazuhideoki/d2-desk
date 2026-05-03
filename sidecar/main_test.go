@@ -89,6 +89,34 @@ func TestCompileDoesNotMarshalNullSourceRanges(t *testing.T) {
 	if len(fuga.SourceRanges) == 0 {
 		t.Fatalf("expected chained connection endpoint range for fuga, got %#v", fuga.SourceRanges)
 	}
+
+	piyo := findObject(result.Objects, "piyo")
+	if piyo == nil {
+		t.Fatal("expected piyo object")
+	}
+	if len(piyo.SourceRanges) == 0 {
+		t.Fatalf("expected chained connection endpoint range for piyo, got %#v", piyo.SourceRanges)
+	}
+
+	connection := findConnectionByID(result.Objects, "(fuga -> piyo)[0]")
+	if connection == nil {
+		t.Fatalf("expected fuga to piyo connection in %#v", result.Objects)
+	}
+	if len(connection.SourceRanges) < 2 {
+		t.Fatalf("expected fuga to piyo connection to include both endpoint ranges, got %#v", connection.SourceRanges)
+	}
+}
+
+func TestScanSourceRangesIgnoresConnectionLabelArrows(t *testing.T) {
+	sourceRanges := scanSourceRanges("hoge -> fuga: piyo -> label\npiyo\n")
+
+	piyoRanges := sourceRanges["piyo"]
+	if len(piyoRanges) != 1 {
+		t.Fatalf("expected only piyo definition range, got %#v", piyoRanges)
+	}
+	if piyoRanges[0].StartLine != 2 || piyoRanges[0].StartColumn != 1 {
+		t.Fatalf("expected piyo definition range, got %#v", piyoRanges[0])
+	}
 }
 
 func TestCompileReturnsDiagnosticsForInvalidSource(t *testing.T) {
@@ -177,6 +205,15 @@ func findConnection(objects []objectMap, label string) *objectMap {
 			continue
 		}
 		if objects[i].Label == label {
+			return &objects[i]
+		}
+	}
+	return nil
+}
+
+func findConnectionByID(objects []objectMap, id string) *objectMap {
+	for i := range objects {
+		if objects[i].Kind == "connection" && objects[i].ID == id {
 			return &objects[i]
 		}
 	}

@@ -331,8 +331,7 @@ func scanSourceRanges(source string) map[string][]sourceRange {
 			continue
 		}
 		if idx := strings.Index(line, "->"); idx >= 0 {
-			addTokenRange(out, line[:idx], i+1, 0)
-			addTokenRange(out, line[idx+2:], i+1, idx+2)
+			scanConnectionTokenRanges(out, line, i+1)
 			continue
 		}
 		left := line
@@ -342,6 +341,25 @@ func scanSourceRanges(source string) map[string][]sourceRange {
 		addTokenRange(out, left, i+1, 0)
 	}
 	return out
+}
+
+func scanConnectionTokenRanges(out map[string][]sourceRange, line string, lineNumber int) {
+	start := 0
+	for {
+		segment := line[start:]
+		idx := strings.Index(segment, "->")
+		if terminator := strings.IndexAny(segment, ":{"); terminator >= 0 && (idx < 0 || terminator < idx) {
+			addTokenRange(out, segment[:terminator], lineNumber, start)
+			return
+		}
+		if idx < 0 {
+			addTokenRange(out, segment, lineNumber, start)
+			return
+		}
+		arrow := start + idx
+		addTokenRange(out, line[start:arrow], lineNumber, start)
+		start = arrow + 2
+	}
 }
 
 func addTokenRange(out map[string][]sourceRange, text string, line int, baseColumn int) {
