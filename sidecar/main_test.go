@@ -107,6 +107,57 @@ func TestCompileDoesNotMarshalNullSourceRanges(t *testing.T) {
 	}
 }
 
+func TestCompileMapsBidirectionalNestedParentEndpoint(t *testing.T) {
+	source := `direction: right
+
+hoge {
+  hoge1
+  hoge2
+}
+
+hoge <-> fuga -> piyo
+`
+	result, err := compile(compileParams{Source: source, Layout: "dagre", Theme: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hoge := findObject(result.Objects, "hoge")
+	if hoge == nil {
+		t.Fatalf("expected hoge object in %#v", result.Objects)
+	}
+	if !hasRange(hoge.SourceRanges, 8, 1, 5) {
+		t.Fatalf("expected hoge to include bidirectional endpoint range, got %#v", hoge.SourceRanges)
+	}
+
+	cursor := nodeAt(nodeAtParams{Source: source, Line: 8, Column: 2})
+	if cursor["id"] != "hoge" {
+		t.Fatalf("expected cursor on parent endpoint to focus hoge, got %#v", cursor)
+	}
+}
+
+func TestCompileMapsQuotedBidirectionalEndpoint(t *testing.T) {
+	source := `"foo bar" <-> baz
+`
+	result, err := compile(compileParams{Source: source, Layout: "dagre", Theme: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	quoted := findObject(result.Objects, "foo bar")
+	if quoted == nil {
+		t.Fatalf("expected quoted object in %#v", result.Objects)
+	}
+	if !hasRange(quoted.SourceRanges, 1, 1, 10) {
+		t.Fatalf("expected quoted object to include full quoted endpoint range, got %#v", quoted.SourceRanges)
+	}
+
+	cursor := nodeAt(nodeAtParams{Source: source, Line: 1, Column: 6})
+	if cursor["id"] != "foo bar" {
+		t.Fatalf("expected cursor on quoted endpoint to focus foo bar, got %#v", cursor)
+	}
+}
+
 func TestScanSourceRangesIgnoresConnectionLabelArrows(t *testing.T) {
 	sourceRanges := scanSourceRanges("hoge -> fuga: piyo -> label\npiyo\n")
 
@@ -218,4 +269,13 @@ func findConnectionByID(objects []objectMap, id string) *objectMap {
 		}
 	}
 	return nil
+}
+
+func hasRange(ranges []sourceRange, line, startColumn, endColumn int) bool {
+	for _, r := range ranges {
+		if r.StartLine == line && r.EndLine == line && r.StartColumn == startColumn && r.EndColumn == endColumn {
+			return true
+		}
+	}
+	return false
 }

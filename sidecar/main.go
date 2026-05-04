@@ -370,24 +370,72 @@ func addTokenRange(out map[string][]sourceRange, text string, line int, baseColu
 	if idx := strings.Index(tokenText, "->"); idx >= 0 {
 		tokenText = tokenText[:idx]
 	}
-	token := strings.Trim(strings.TrimSpace(tokenText), `"'`)
-	token = strings.TrimSuffix(token, ".")
-	if token == "" {
+	token, start, end, ok := sourceTokenRange(tokenText)
+	if !ok {
 		return
 	}
-	loc := identifierRE.FindStringIndex(text)
-	if loc == nil {
-		return
-	}
-	start := loc[0] + 1
-	end := loc[1] + 1
 	out[token] = append(out[token], sourceRange{
 		File:        "main.d2",
 		StartLine:   line,
-		StartColumn: baseColumn + start,
+		StartColumn: baseColumn + start + 1,
 		EndLine:     line,
-		EndColumn:   baseColumn + end,
+		EndColumn:   baseColumn + end + 1,
 	})
+}
+
+func sourceTokenRange(text string) (string, int, int, bool) {
+	start := firstNonSpaceIndex(text)
+	if start >= len(text) {
+		return "", 0, 0, false
+	}
+	if text[start] == '"' || text[start] == '\'' {
+		end := quotedTokenEnd(text, start)
+		if end <= start+1 {
+			return "", 0, 0, false
+		}
+		return text[start+1 : end], start, end + 1, true
+	}
+
+	loc := identifierRE.FindStringIndex(text)
+	if loc == nil {
+		return "", 0, 0, false
+	}
+	token := strings.TrimSuffix(strings.TrimSpace(text[loc[0]:loc[1]]), ".")
+	if token == "" {
+		return "", 0, 0, false
+	}
+	return token, loc[0], loc[1], true
+}
+
+func firstNonSpaceIndex(text string) int {
+	for i := 0; i < len(text); i++ {
+		switch text[i] {
+		case ' ', '\t', '\r', '\n':
+			continue
+		default:
+			return i
+		}
+	}
+	return len(text)
+}
+
+func quotedTokenEnd(text string, start int) int {
+	quote := text[start]
+	escaped := false
+	for i := start + 1; i < len(text); i++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if text[i] == '\\' {
+			escaped = true
+			continue
+		}
+		if text[i] == quote {
+			return i
+		}
+	}
+	return -1
 }
 
 func rangesFor(id string, ranges map[string][]sourceRange) []sourceRange {
