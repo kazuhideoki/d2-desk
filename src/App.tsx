@@ -10,7 +10,6 @@ import {
   FileInput,
   FileText,
   Focus,
-  Maximize2,
   Plus,
   Save,
   Wand2,
@@ -636,15 +635,6 @@ function App() {
     image.src = url;
   }
 
-  function printPDF() {
-    const win = window.open("", "_blank");
-    if (!win) return;
-    win.document.write(`<html><head><title>${baseName(fileName)}</title></head><body>${renderedSvg}</body></html>`);
-    win.document.close();
-    win.focus();
-    win.print();
-  }
-
   function resetView() {
     setZoom(1);
   }
@@ -674,9 +664,6 @@ function App() {
           <button title="Format document" onClick={formatDocument}>
             <Wand2 size={16} />
           </button>
-          <button title="New tab (Command/Ctrl + T)" onClick={createNewTab}>
-            <Plus size={16} />
-          </button>
           <span className="divider" />
           <select value={theme} onChange={(event) => setTheme(Number(event.target.value))}>
             {themes.map((item) => (
@@ -704,9 +691,6 @@ function App() {
           </button>
           <button title="Export PNG" onClick={exportPNG}>
             <FileDown size={16} />
-          </button>
-          <button title="Print or save as PDF" onClick={printPDF}>
-            <Maximize2 size={16} />
           </button>
         </div>
       </header>
