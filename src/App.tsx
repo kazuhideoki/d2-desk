@@ -64,6 +64,7 @@ type D2Tab = {
   source: string;
   savedSource: string;
   filePath: string | null;
+  editorViewState: Monaco.editor.ICodeEditorViewState | null;
 };
 
 type StoredTabs = {
@@ -139,6 +140,9 @@ function App() {
   const saveSourceRef = useRef<() => void>(() => undefined);
   const closeActiveTabRef = useRef<() => void>(() => undefined);
   const quitApplicationRef = useRef<() => void>(() => undefined);
+  const tabsRef = useRef(tabs);
+  const activeTabIdRef = useRef(activeTabId);
+  const editorTabIdRef = useRef(activeTabId);
   const closeTabInFlightRef = useRef(false);
   const quitInFlightRef = useRef(false);
 
@@ -164,20 +168,62 @@ function App() {
   const editorFontSize = Math.round(baseEditorFontSize * zoom);
   const editorLineHeight = Math.round(baseEditorLineHeight * zoom);
 
-  const updateActiveTab = useCallback((updates: Partial<D2Tab>) => {
-    setTabs((currentTabs) =>
-      currentTabs.map((tab) => (tab.id === activeTabId ? { ...tab, ...updates } : tab)),
-    );
+  useEffect(() => {
+    tabsRef.current = tabs;
+  }, [tabs]);
+
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId;
   }, [activeTabId]);
 
+  const persistActiveEditorViewState = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return tabsRef.current;
+
+    const tabId = activeTabIdRef.current;
+    if (editorTabIdRef.current !== tabId) return tabsRef.current;
+
+    const viewState = editor.saveViewState();
+    if (!viewState) return tabsRef.current;
+
+    const nextTabs = tabsRef.current.map((tab) =>
+      tab.id === tabId ? { ...tab, editorViewState: viewState } : tab,
+    );
+    tabsRef.current = nextTabs;
+    setTabs(nextTabs);
+    writeStoredTabs(nextTabs, tabId);
+    return nextTabs;
+  }, []);
+
+  const activateTab = useCallback((tabId: string) => {
+    activeTabIdRef.current = tabId;
+    setActiveTabId(tabId);
+    setActiveId(null);
+    setHoverId(null);
+  }, []);
+
+  const updateActiveTab = useCallback((updates: Partial<D2Tab>) => {
+    setTabs((currentTabs) => {
+      const tabId = activeTabIdRef.current;
+      const nextTabs = currentTabs.map((tab) => (tab.id === tabId ? { ...tab, ...updates } : tab));
+      tabsRef.current = nextTabs;
+      writeStoredTabs(nextTabs, tabId);
+      return nextTabs;
+    });
+  }, []);
+
   const createNewTab = useCallback(() => {
-    const nextTab = createEmptyTab(tabs);
-    setTabs((currentTabs) => [...currentTabs, nextTab]);
+    const nextTab = createEmptyTab(tabsRef.current);
+    const nextTabs = [...tabsRef.current, nextTab];
+    tabsRef.current = nextTabs;
+    activeTabIdRef.current = nextTab.id;
+    setTabs(nextTabs);
     setActiveTabId(nextTab.id);
+    writeStoredTabs(nextTabs, nextTab.id);
     setActiveId(null);
     setHoverId(null);
     setStatus(`Created ${nextTab.fileName}`);
-  }, [tabs]);
+  }, []);
 
   const compile = useCallback(
     async (nextSource: string, tabId: string, requestId: number) => {
@@ -240,7 +286,7 @@ function App() {
   );
 
   useEffect(() => {
-    localStorage.setItem(tabsStorageKey, JSON.stringify({ activeTabId, tabs }));
+    writeStoredTabs(tabs, activeTabId);
   }, [activeTabId, tabs]);
 
   useEffect(() => {
@@ -298,6 +344,7 @@ function App() {
         savedSource: result.contents,
         fileName: fileNameFromPath(result.path),
         filePath: result.path,
+        editorViewState: null,
       });
       setStatus(`Opened ${result.path}`);
     } catch (error) {
@@ -339,7 +386,11 @@ function App() {
     closeTabInFlightRef.current = true;
 
     try {
-      const targetTab = tabs.find((tab) => tab.id === tabId);
+      const currentTabs =
+        tabId === activeTabIdRef.current && tabsRef.current.length === 1
+          ? persistActiveEditorViewState()
+          : tabsRef.current;
+      const targetTab = currentTabs.find((tab) => tab.id === tabId);
       if (!targetTab) return;
 
       if (isTabUnsaved(targetTab)) {
@@ -358,7 +409,7 @@ function App() {
         }
       }
 
-      if (tabs.length === 1) {
+      if (currentTabs.length === 1) {
         setStatus(`Closing ${targetTab.fileName}`);
         try {
           await invoke("close_current_window");
@@ -368,20 +419,23 @@ function App() {
         return;
       }
 
-      const targetIndex = tabs.findIndex((tab) => tab.id === tabId);
-      const nextTabs = tabs.filter((tab) => tab.id !== tabId);
-      if (tabId === activeTabId) {
+      const targetIndex = currentTabs.findIndex((tab) => tab.id === tabId);
+      const nextTabs = currentTabs.filter((tab) => tab.id !== tabId);
+      if (tabId === activeTabIdRef.current) {
         const nextActiveTab = nextTabs[Math.min(targetIndex, nextTabs.length - 1)] ?? nextTabs[0];
+        activeTabIdRef.current = nextActiveTab.id;
         setActiveTabId(nextActiveTab.id);
         setActiveId(null);
         setHoverId(null);
       }
+      tabsRef.current = nextTabs;
       setTabs(nextTabs);
+      writeStoredTabs(nextTabs, activeTabIdRef.current);
       setStatus(`Closed ${targetTab.fileName}`);
     } finally {
       closeTabInFlightRef.current = false;
     }
-  }, [activeTabId, tabs]);
+  }, [persistActiveEditorViewState]);
 
   const closeActiveTab = useCallback(() => {
     void closeTab(activeTabId);
@@ -392,7 +446,8 @@ function App() {
     quitInFlightRef.current = true;
 
     try {
-      const unsavedTabs = tabs.filter(isTabUnsaved);
+      const currentTabs = persistActiveEditorViewState();
+      const unsavedTabs = currentTabs.filter(isTabUnsaved);
       if (unsavedTabs.length > 0) {
         const fileList = unsavedTabs.map((tab) => tab.fileName).join(", ");
         const shouldQuit = await confirm(
@@ -419,7 +474,7 @@ function App() {
     } finally {
       quitInFlightRef.current = false;
     }
-  }, [tabs]);
+  }, [persistActiveEditorViewState]);
 
   useEffect(() => {
     openSourceFileRef.current = () => {
@@ -531,6 +586,21 @@ function App() {
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+    editorTabIdRef.current = activeTab?.id ?? activeTabIdRef.current;
+    const savedViewState = activeTab?.editorViewState;
+    if (savedViewState) {
+      window.requestAnimationFrame(() => {
+        try {
+          editor.restoreViewState(savedViewState);
+          const position = editor.getPosition();
+          if (position) {
+            void updateFocusedObjectFromPosition(editor, position);
+          }
+        } catch {
+          updateActiveTab({ editorViewState: null });
+        }
+      });
+    }
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyO, () => {
       openSourceFileRef.current();
     });
@@ -538,21 +608,28 @@ function App() {
       saveSourceRef.current();
     });
     editor.onDidChangeCursorPosition(async (event) => {
-      try {
-        const result = await invoke<{ id?: string }>("sidecar_call", {
-          method: "nodeAt",
-          params: {
-            source: editor.getValue(),
-            line: event.position.lineNumber,
-            column: event.position.column,
-          },
-        });
-        setActiveId(result.id ?? null);
-      } catch {
-        setActiveId(null);
-      }
+      await updateFocusedObjectFromPosition(editor, event.position);
     });
   };
+
+  async function updateFocusedObjectFromPosition(
+    editor: Monaco.editor.IStandaloneCodeEditor,
+    position: Monaco.IPosition,
+  ) {
+    try {
+      const result = await invoke<{ id?: string }>("sidecar_call", {
+        method: "nodeAt",
+        params: {
+          source: editor.getValue(),
+          line: position.lineNumber,
+          column: position.column,
+        },
+      });
+      setActiveId(result.id ?? null);
+    } catch {
+      setActiveId(null);
+    }
+  }
 
   function highlightObject(id: string | null, reveal: boolean) {
     const editor = editorRef.current;
@@ -709,9 +786,7 @@ function App() {
                 role="tab"
                 aria-selected={tab.id === activeTabId}
                 onClick={() => {
-                  setActiveTabId(tab.id);
-                  setActiveId(null);
-                  setHoverId(null);
+                  activateTab(tab.id);
                 }}
               >
                 <FileText size={14} />
@@ -886,7 +961,8 @@ function loadTabs(): D2Tab[] {
           typeof tab.fileName === "string" &&
           typeof tab.source === "string" &&
           (typeof tab.savedSource === "string" || tab.savedSource === undefined) &&
-          (typeof tab.filePath === "string" || tab.filePath === null || tab.filePath === undefined),
+          (typeof tab.filePath === "string" || tab.filePath === null || tab.filePath === undefined) &&
+          (typeof tab.editorViewState === "object" || tab.editorViewState === undefined),
       )
       .map((tab) => ({
         id: tab.id,
@@ -894,6 +970,7 @@ function loadTabs(): D2Tab[] {
         source: tab.source,
         savedSource: tab.savedSource ?? (tab.filePath ? tab.source : ""),
         filePath: tab.filePath ?? null,
+        editorViewState: tab.editorViewState ?? null,
       }));
     return tabs.length > 0 ? tabs : [fallbackTab];
   } catch {
@@ -934,7 +1011,12 @@ function createTab(fileName: string, source: string, savedSource = source): D2Ta
     source,
     savedSource,
     filePath: null,
+    editorViewState: null,
   };
+}
+
+function writeStoredTabs(tabs: D2Tab[], activeTabId: string) {
+  localStorage.setItem(tabsStorageKey, JSON.stringify({ activeTabId, tabs }));
 }
 
 function createTabId() {
