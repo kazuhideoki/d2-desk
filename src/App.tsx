@@ -139,6 +139,32 @@ function d2CompletionKindToMonaco(monaco: typeof Monaco, kind: D2CompletionItem[
   }
 }
 
+function isD2LineCommentPosition(lineContent: string, column: number) {
+  let quote: '"' | "'" | null = null;
+  const linePrefix = lineContent.slice(0, Math.max(0, column - 1));
+
+  for (let index = 0; index < linePrefix.length; index += 1) {
+    const character = linePrefix[index];
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (character === "#") {
+      return true;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+    }
+  }
+
+  return false;
+}
+
 function App() {
   const [tabs, setTabs] = useState<D2Tab[]>(() => loadTabs());
   const [activeTabId, setActiveTabId] = useState(() => loadActiveTabId(tabs));
@@ -572,6 +598,14 @@ function App() {
 
   const beforeMount = (monaco: typeof Monaco) => {
     monaco.languages.register({ id: "d2" });
+    monaco.languages.setLanguageConfiguration("d2", {
+      comments: {
+        lineComment: "#",
+      },
+      brackets: [["{", "}"]],
+      autoClosingPairs: [{ open: "{", close: "}", notIn: ["string", "comment"] }],
+      surroundingPairs: [{ open: "{", close: "}" }],
+    });
     monaco.languages.setMonarchTokensProvider("d2", {
       tokenizer: {
         root: [
@@ -657,6 +691,7 @@ function App() {
     editorRef.current = editor;
     monacoRef.current = monaco;
     editorTabIdRef.current = activeTab?.id ?? activeTabIdRef.current;
+    let isAutoClosingD2Brace = false;
     const savedViewState = activeTab?.editorViewState;
     if (savedViewState) {
       window.requestAnimationFrame(() => {
@@ -678,12 +713,44 @@ function App() {
       saveSourceRef.current();
     });
     editor.onDidChangeModelContent((event) => {
+      if (isAutoClosingD2Brace) {
+        return;
+      }
+
       const position = editor.getPosition();
-      if (!position) return;
+      const model = editor.getModel();
+      if (!position || !model) return;
+
+      const openBraceChange = event.changes.find((change) => {
+        if (change.text !== "{" || change.rangeLength !== 0) {
+          return false;
+        }
+
+        const lineContent = model.getLineContent(change.range.startLineNumber);
+        return !isD2LineCommentPosition(lineContent, change.range.startColumn);
+      });
+
+      if (openBraceChange) {
+        const lineNumber = openBraceChange.range.startLineNumber;
+        const nextColumn = openBraceChange.range.startColumn + 1;
+        isAutoClosingD2Brace = true;
+        try {
+          editor.executeEdits("d2-auto-close-brace", [
+            {
+              range: new monaco.Range(lineNumber, nextColumn, lineNumber, nextColumn),
+              text: "}",
+              forceMoveMarkers: true,
+            },
+          ]);
+          editor.setPosition({ lineNumber, column: nextColumn });
+        } finally {
+          isAutoClosingD2Brace = false;
+        }
+      }
 
       const linePrefix = editor
         .getModel()
-        ?.getLineContent(position.lineNumber)
+        ?.getLineContent(editor.getPosition()?.lineNumber ?? position.lineNumber)
         .slice(0, position.column - 1);
       if (!linePrefix || !d2ValueCompletionPattern.test(linePrefix)) return;
 
