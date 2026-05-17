@@ -124,7 +124,7 @@ const minZoom = 0.4;
 const maxZoom = 2.2;
 const zoomStep = 0.1;
 const tabsStorageKey = "d2-desk:tabs";
-const d2DirectionCompletionPattern = /^\s*direction\s*:\s*(\w*)$/;
+const d2ValueCompletionPattern = /(?:^|[{\s;])(?:[\w"'-]+(?:\.[\w-]+)*\.)?(direction|shape)\s*:\s*([\w-]*)$/;
 
 let didRegisterD2Completions = false;
 
@@ -591,14 +591,14 @@ function App() {
         async provideCompletionItems(model, position) {
           const lineContent = model.getLineContent(position.lineNumber);
           const linePrefix = lineContent.slice(0, position.column - 1);
-          const directionValueMatch = linePrefix.match(d2DirectionCompletionPattern);
-          if (!directionValueMatch) {
+          const valueMatch = linePrefix.match(d2ValueCompletionPattern);
+          if (!valueMatch) {
             return { suggestions: [] };
           }
 
-          const typedValue = directionValueMatch[1] ?? "";
+          const typedValue = valueMatch[2] ?? "";
           const lineSuffix = lineContent.slice(position.column - 1);
-          const remainingValueMatch = lineSuffix.match(/^[A-Za-z]*/);
+          const remainingValueMatch = lineSuffix.match(/^[\w-]*/);
           const remainingValue = remainingValueMatch?.[0] ?? "";
           const replacementRange = {
             startLineNumber: position.lineNumber,
@@ -685,14 +685,14 @@ function App() {
         .getModel()
         ?.getLineContent(position.lineNumber)
         .slice(0, position.column - 1);
-      if (!linePrefix || !d2DirectionCompletionPattern.test(linePrefix)) return;
+      if (!linePrefix || !d2ValueCompletionPattern.test(linePrefix)) return;
 
-      const shouldTriggerDirectionSuggest = event.changes.some(
-        (change) => change.text === ":" || change.text === " " || /^[A-Za-z]$/.test(change.text),
+      const shouldTriggerD2ValueSuggest = event.changes.some(
+        (change) => change.text === ":" || change.text === " " || /^[\w-]$/.test(change.text),
       );
-      if (shouldTriggerDirectionSuggest) {
+      if (shouldTriggerD2ValueSuggest) {
         window.setTimeout(() => {
-          editor.trigger("d2-direction-completion", "editor.action.triggerSuggest", {});
+          editor.trigger("d2-value-completion", "editor.action.triggerSuggest", {});
         }, 0);
       }
     });

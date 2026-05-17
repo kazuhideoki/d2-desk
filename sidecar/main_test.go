@@ -254,6 +254,64 @@ func TestCompleteReturnsDirectionCompletionsWhileTypingValue(t *testing.T) {
 	}
 }
 
+func TestCompleteReturnsShapeCompletions(t *testing.T) {
+	source := "shape: "
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len(source)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletion(items, "hexagon") || !hasCompletion(items, "sql_table") {
+		t.Fatalf("expected shape completions, got %#v", items)
+	}
+	if !hasCompletionKind(items, "hexagon", "shape") {
+		t.Fatalf("expected hexagon completion to be a shape, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsShapeCompletionsWhileTypingValue(t *testing.T) {
+	source := "shape: he"
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len(source)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletion(items, "hexagon") {
+		t.Fatalf("expected shape completions while typing value, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsNestedShapeCompletions(t *testing.T) {
+	source := "api: {\n  shape: he\n}"
+	items, err := complete(completeParams{Source: source, Line: 1, Column: len("  shape: he")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletion(items, "hexagon") {
+		t.Fatalf("expected nested shape completions while typing value, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsShapeCompletionsForDotSyntax(t *testing.T) {
+	source := "api.shape: he"
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len(source)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletion(items, "hexagon") {
+		t.Fatalf("expected dot syntax shape completions while typing value, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsShapeCompletionsForInlineMap(t *testing.T) {
+	source := "api: { shape: he }"
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len("api: { shape: he")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletion(items, "hexagon") {
+		t.Fatalf("expected inline map shape completions while typing value, got %#v", items)
+	}
+}
+
 func TestExportSVGReturnsBase64SVG(t *testing.T) {
 	result, err := export(exportParams{Source: "api -> db", Format: "svg", Layout: "dagre", Theme: 4})
 	if err != nil {
