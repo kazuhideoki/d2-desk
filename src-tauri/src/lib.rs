@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
-use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::{Emitter, Manager, State};
 
 struct ExitState {
@@ -210,13 +210,32 @@ pub fn run() {
             let close_tab = MenuItemBuilder::with_id("close-tab", "Close Tab")
                 .accelerator("CmdOrCtrl+W")
                 .build(handle)?;
+            let undo = PredefinedMenuItem::undo(handle, None)?;
+            let redo = PredefinedMenuItem::redo(handle, None)?;
+            let cut = PredefinedMenuItem::cut(handle, None)?;
+            let copy = PredefinedMenuItem::copy(handle, None)?;
+            let paste = PredefinedMenuItem::paste(handle, None)?;
+            let select_all = PredefinedMenuItem::select_all(handle, None)?;
+            let separator = PredefinedMenuItem::separator(handle)?;
             let file_menu = SubmenuBuilder::new(handle, "File")
                 .item(&open)
                 .item(&save)
                 .separator()
                 .item(&close_tab)
                 .build()?;
-            MenuBuilder::new(handle).item(&file_menu).build()
+            let edit_menu = SubmenuBuilder::new(handle, "Edit")
+                .item(&undo)
+                .item(&redo)
+                .item(&separator)
+                .item(&cut)
+                .item(&copy)
+                .item(&paste)
+                .item(&select_all)
+                .build()?;
+            MenuBuilder::new(handle)
+                .item(&file_menu)
+                .item(&edit_menu)
+                .build()
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
