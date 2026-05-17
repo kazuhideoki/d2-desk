@@ -117,6 +117,10 @@ const minZoom = 0.4;
 const maxZoom = 2.2;
 const zoomStep = 0.1;
 const tabsStorageKey = "d2-desk:tabs";
+const d2DirectionValues = ["up", "down", "right", "left"] as const;
+const d2DirectionCompletionPattern = /^\s*direction\s*:\s*(\w*)$/;
+
+let didRegisterD2Completions = false;
 
 function App() {
   const [tabs, setTabs] = useState<D2Tab[]>(() => loadTabs());
@@ -563,6 +567,41 @@ function App() {
         ],
       },
     });
+    if (!didRegisterD2Completions) {
+      didRegisterD2Completions = true;
+      monaco.languages.registerCompletionItemProvider("d2", {
+        triggerCharacters: [":", " "],
+        provideCompletionItems(model, position) {
+          const lineContent = model.getLineContent(position.lineNumber);
+          const linePrefix = lineContent.slice(0, position.column - 1);
+          const directionValueMatch = linePrefix.match(d2DirectionCompletionPattern);
+          if (!directionValueMatch) {
+            return { suggestions: [] };
+          }
+
+          const typedValue = directionValueMatch[1] ?? "";
+          const lineSuffix = lineContent.slice(position.column - 1);
+          const remainingValueMatch = lineSuffix.match(/^[A-Za-z]*/);
+          const remainingValue = remainingValueMatch?.[0] ?? "";
+          const replacementRange = {
+            startLineNumber: position.lineNumber,
+            startColumn: position.column - typedValue.length,
+            endLineNumber: position.lineNumber,
+            endColumn: position.column + remainingValue.length,
+          };
+
+          return {
+            suggestions: d2DirectionValues.map((direction) => ({
+              label: direction,
+              kind: monaco.languages.CompletionItemKind.EnumMember,
+              insertText: direction,
+              detail: "D2 direction",
+              range: replacementRange,
+            })),
+          };
+        },
+      });
+    }
     monaco.editor.defineTheme("d2-dark", {
       base: "vs-dark",
       inherit: true,
@@ -606,6 +645,25 @@ function App() {
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       saveSourceRef.current();
+    });
+    editor.onDidChangeModelContent((event) => {
+      const position = editor.getPosition();
+      if (!position) return;
+
+      const linePrefix = editor
+        .getModel()
+        ?.getLineContent(position.lineNumber)
+        .slice(0, position.column - 1);
+      if (!linePrefix || !d2DirectionCompletionPattern.test(linePrefix)) return;
+
+      const shouldTriggerDirectionSuggest = event.changes.some(
+        (change) => change.text === ":" || change.text === " " || /^[A-Za-z]$/.test(change.text),
+      );
+      if (shouldTriggerDirectionSuggest) {
+        window.setTimeout(() => {
+          editor.trigger("d2-direction-completion", "editor.action.triggerSuggest", {});
+        }, 0);
+      }
     });
     editor.onDidChangeCursorPosition(async (event) => {
       await updateFocusedObjectFromPosition(editor, event.position);
