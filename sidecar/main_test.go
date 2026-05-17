@@ -217,6 +217,101 @@ func TestFormatPreservesValidDocument(t *testing.T) {
 	}
 }
 
+func TestCompleteReturnsDirectionCompletions(t *testing.T) {
+	source := "direction: "
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len(source)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedLabels := []string{"up", "down", "right", "left"}
+	if gotLabels := completionLabels(items); strings.Join(gotLabels, ",") != strings.Join(expectedLabels, ",") {
+		t.Fatalf("expected direction completion labels %v, got %v", expectedLabels, gotLabels)
+	}
+	if !hasCompletion(items, "right") {
+		t.Fatalf("expected direction completions, got %#v", items)
+	}
+	if !hasCompletionKind(items, "right", "keyword") {
+		t.Fatalf("expected right completion to be a keyword, got %#v", items)
+	}
+
+	encoded, err := json.Marshal(items[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"label"`) || strings.Contains(string(encoded), `"Label"`) {
+		t.Fatalf("expected lower-case JSON fields, got %s", encoded)
+	}
+}
+
+func TestCompleteReturnsDirectionCompletionsWhileTypingValue(t *testing.T) {
+	source := "direction: r"
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len(source)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletion(items, "right") {
+		t.Fatalf("expected direction completions while typing value, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsShapeCompletions(t *testing.T) {
+	source := "shape: "
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len(source)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletion(items, "hexagon") || !hasCompletion(items, "sql_table") {
+		t.Fatalf("expected shape completions, got %#v", items)
+	}
+	if !hasCompletionKind(items, "hexagon", "shape") {
+		t.Fatalf("expected hexagon completion to be a shape, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsShapeCompletionsWhileTypingValue(t *testing.T) {
+	source := "shape: he"
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len(source)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletion(items, "hexagon") {
+		t.Fatalf("expected shape completions while typing value, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsNestedShapeCompletions(t *testing.T) {
+	source := "api: {\n  shape: he\n}"
+	items, err := complete(completeParams{Source: source, Line: 1, Column: len("  shape: he")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletion(items, "hexagon") {
+		t.Fatalf("expected nested shape completions while typing value, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsShapeCompletionsForDotSyntax(t *testing.T) {
+	source := "api.shape: he"
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len(source)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletion(items, "hexagon") {
+		t.Fatalf("expected dot syntax shape completions while typing value, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsShapeCompletionsForInlineMap(t *testing.T) {
+	source := "api: { shape: he }"
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len("api: { shape: he")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletion(items, "hexagon") {
+		t.Fatalf("expected inline map shape completions while typing value, got %#v", items)
+	}
+}
+
 func TestExportSVGReturnsBase64SVG(t *testing.T) {
 	result, err := export(exportParams{Source: "api -> db", Format: "svg", Layout: "dagre", Theme: 4})
 	if err != nil {
@@ -278,4 +373,30 @@ func hasRange(ranges []sourceRange, line, startColumn, endColumn int) bool {
 		}
 	}
 	return false
+}
+
+func hasCompletion(items []completionItem, label string) bool {
+	for _, item := range items {
+		if item.Label == label {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCompletionKind(items []completionItem, label, kind string) bool {
+	for _, item := range items {
+		if item.Label == label && item.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func completionLabels(items []completionItem) []string {
+	labels := make([]string, 0, len(items))
+	for _, item := range items {
+		labels = append(labels, item.Label)
+	}
+	return labels
 }

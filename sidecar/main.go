@@ -61,6 +61,13 @@ type completeParams struct {
 	Column int    `json:"column"`
 }
 
+type completionItem struct {
+	Label      string `json:"label"`
+	Kind       string `json:"kind"`
+	Detail     string `json:"detail"`
+	InsertText string `json:"insertText"`
+}
+
 type diagnostic struct {
 	Message     string      `json:"message"`
 	Severity    string      `json:"severity"`
@@ -152,7 +159,7 @@ func handle(req request) (any, error) {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return nil, err
 		}
-		return d2lsp.GetCompletionItems(params.Source, params.Line, params.Column)
+		return complete(params)
 	case "export":
 		var params exportParams
 		if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -162,6 +169,88 @@ func handle(req request) (any, error) {
 	default:
 		return nil, fmt.Errorf("unknown method %q", req.Method)
 	}
+}
+
+func complete(params completeParams) ([]completionItem, error) {
+	items, err := d2lsp.GetCompletionItems(params.Source, params.Line, params.Column)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		probeSource, probeColumn := completionProbeWithoutCurrentValue(params.Source, params.Line, params.Column)
+		if probeSource != params.Source || probeColumn != params.Column {
+			items, err = d2lsp.GetCompletionItems(probeSource, params.Line, probeColumn)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	completions := make([]completionItem, 0, len(items))
+	for _, item := range items {
+		completions = append(completions, completionItem{
+			Label:      item.Label,
+			Kind:       completionKind(item.Kind),
+			Detail:     item.Detail,
+			InsertText: item.InsertText,
+		})
+	}
+	return completions, nil
+}
+
+func completionProbeWithoutCurrentValue(source string, line, column int) (string, int) {
+	lines := strings.Split(source, "\n")
+	if line < 0 || line >= len(lines) {
+		return source, column
+	}
+
+	lineText := lines[line]
+	column = clamp(column, 0, len(lineText))
+	start := column
+	for start > 0 && isCompletionValueChar(lineText[start-1]) {
+		start--
+	}
+	end := column
+	for end < len(lineText) && isCompletionValueChar(lineText[end]) {
+		end++
+	}
+	if start == end {
+		return source, column
+	}
+
+	prefix := lineText[:start]
+	colonIndex := strings.LastIndex(prefix, ":")
+	if colonIndex < 0 || strings.TrimSpace(prefix[colonIndex+1:]) != "" {
+		return source, column
+	}
+
+	lines[line] = lineText[:start] + lineText[end:]
+	return strings.Join(lines, "\n"), start
+}
+
+func isCompletionValueChar(char byte) bool {
+	return char == '-' || char == '_' || (char >= '0' && char <= '9') || (char >= 'A' && char <= 'Z') || (char >= 'a' && char <= 'z')
+}
+
+func completionKind(kind d2lsp.CompletionKind) string {
+	switch kind {
+	case d2lsp.StyleCompletion:
+		return "style"
+	case d2lsp.ShapeCompletion:
+		return "shape"
+	default:
+		return "keyword"
+	}
+}
+
+func clamp(value, min, max int) int {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
 }
 
 func compile(params compileParams) (compileResult, error) {
