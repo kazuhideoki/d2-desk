@@ -78,9 +78,13 @@ export function configureD2Language(monaco: typeof Monaco) {
 
         return {
           suggestions: completions.map((completion) => ({
-            label: completion.label,
+            label: completion.description
+              ? { label: completion.label, description: completion.description }
+              : completion.label,
             kind: d2CompletionKindToMonaco(monaco, completion.kind),
             insertText: completion.insertText || completion.label,
+            filterText: completion.label,
+            sortText: completion.label,
             detail:
               completion.description ||
               (completion.detail ? `D2 ${completion.detail}` : "D2 completion"),
