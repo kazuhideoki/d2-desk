@@ -312,6 +312,206 @@ func TestCompleteReturnsShapeCompletionsForInlineMap(t *testing.T) {
 	}
 }
 
+func TestCompleteReturnsExpandedKeyCompletions(t *testing.T) {
+	source := "source-arr"
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len(source)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "source-arrowhead", "source-arrowhead: ") {
+		t.Fatalf("expected source-arrowhead key completion, got %#v", items)
+	}
+
+	source = "api: {\n  grid-c\n}"
+	items, err = complete(completeParams{Source: source, Line: 1, Column: len("  grid-c")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "grid-columns", "grid-columns: ") {
+		t.Fatalf("expected nested grid-columns key completion, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsStyleKeyCompletions(t *testing.T) {
+	source := "api: {\n  style: {\n    fill-p\n  }\n}"
+	items, err := complete(completeParams{Source: source, Line: 2, Column: len("    fill-p")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "fill-pattern", "fill-pattern: ") {
+		t.Fatalf("expected fill-pattern key completion, got %#v", items)
+	}
+}
+
+func TestCompleteScopesStyleKeyCompletionsToStyleMaps(t *testing.T) {
+	source := "api: {\n  op\n}"
+	items, err := complete(completeParams{Source: source, Line: 1, Column: len("  op")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasCompletion(items, "opacity") {
+		t.Fatalf("expected no opacity key completion outside style map, got %#v", items)
+	}
+
+	source = "api: {\n  style: {\n    op\n  }\n}"
+	items, err = complete(completeParams{Source: source, Line: 2, Column: len("    op")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "opacity", "opacity: ") {
+		t.Fatalf("expected opacity key completion inside style map, got %#v", items)
+	}
+}
+
+func TestCompleteDoesNotLeakInlineMapContext(t *testing.T) {
+	source := "api: { style: { opacity: 0.5 } }\nop"
+	items, err := complete(completeParams{Source: source, Line: 1, Column: len("op")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasCompletion(items, "opacity") {
+		t.Fatalf("expected no opacity key completion after closed inline style map, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsNestedConfigKeysForInlineParentMaps(t *testing.T) {
+	source := "vars: { d2-config: {\n  theme-\n} }"
+	items, err := complete(completeParams{Source: source, Line: 1, Column: len("  theme-")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "theme-id", "theme-id: ") {
+		t.Fatalf("expected theme-id config key completion inside inline parent maps, got %#v", items)
+	}
+}
+
+func TestCompleteIgnoresBracesInStringsAndSlashComments(t *testing.T) {
+	source := "vars: {\n  d2-config: {\n    data: \"}\"\n    // }\n    theme-\n  }\n}"
+	items, err := complete(completeParams{Source: source, Line: 4, Column: len("    theme-")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "theme-id", "theme-id: ") {
+		t.Fatalf("expected theme-id config key completion after string/comment braces, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsKeyCompletionsForDotSyntaxWithoutTypedPrefix(t *testing.T) {
+	source := "api.style."
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len(source)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "opacity", "opacity: ") {
+		t.Fatalf("expected style key completion after dot, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsInlineMapKeyCompletionsAfterCompletedValue(t *testing.T) {
+	source := "api: { label: hello; sh }"
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len("api: { label: hello; sh")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "shape", "shape: ") {
+		t.Fatalf("expected shape key completion after completed inline value, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsAdditionalValueCompletions(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		line   int
+		column int
+		label  string
+	}{
+		{
+			name:   "style fill pattern",
+			source: "api: { style.fill-pattern: l }",
+			line:   0,
+			column: len("api: { style.fill-pattern: l"),
+			label:  "lines",
+		},
+		{
+			name:   "style boolean",
+			source: "api: { style.shadow: t }",
+			line:   0,
+			column: len("api: { style.shadow: t"),
+			label:  "true",
+		},
+		{
+			name:   "arrowhead shape",
+			source: "api -> db: { source-arrowhead.shape: c }",
+			line:   0,
+			column: len("api -> db: { source-arrowhead.shape: c"),
+			label:  "cross",
+		},
+		{
+			name:   "font",
+			source: "api: { style.font: m }",
+			line:   0,
+			column: len("api: { style.font: m"),
+			label:  "mono",
+		},
+		{
+			name:   "root config boolean",
+			source: "vars: {\n  d2-config: {\n    sketch: t\n  }\n}",
+			line:   2,
+			column: len("    sketch: t"),
+			label:  "true",
+		},
+		{
+			name:   "near constant",
+			source: "api: { near: top }",
+			line:   0,
+			column: len("api: { near: top"),
+			label:  "top-center",
+		},
+		{
+			name:   "tooltip near constant",
+			source: "api: { tooltip.near: top }",
+			line:   0,
+			column: len("api: { tooltip.near: top"),
+			label:  "top-center",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			items, err := complete(completeParams{Source: tt.source, Line: tt.line, Column: tt.column})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !hasCompletion(items, tt.label) {
+				t.Fatalf("expected %q completion, got %#v", tt.label, items)
+			}
+		})
+	}
+}
+
+func TestCompleteDoesNotReturnLabelOnlyPositionsForTooltipNear(t *testing.T) {
+	source := "api: { tooltip.near: outside }"
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len("api: { tooltip.near: outside")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasCompletion(items, "outside-top-left") {
+		t.Fatalf("expected no label-only position for tooltip near, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsConfigKeyCompletions(t *testing.T) {
+	source := "vars: {\n  d2-config: {\n    theme-\n  }\n}"
+	items, err := complete(completeParams{Source: source, Line: 2, Column: len("    theme-")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "theme-id", "theme-id: ") {
+		t.Fatalf("expected theme-id config key completion, got %#v", items)
+	}
+}
+
 func TestCompleteReturnsKeyCompletions(t *testing.T) {
 	source := "dir"
 	items, err := complete(completeParams{Source: source, Line: 0, Column: len(source)})

@@ -124,8 +124,8 @@ const minZoom = 0.4;
 const maxZoom = 2.2;
 const zoomStep = 0.1;
 const tabsStorageKey = "d2-desk:tabs";
-const d2ValueCompletionPattern = /(?:^|[{\s;])(?:[\w"'-]+(?:\.[\w-]+)*\.)?(direction|shape)\s*:\s*([\w-]*)$/;
-const d2KeyCompletionLabels = ["direction", "shape"];
+const d2ValueCompletionPattern =
+  /(?:^|[{\s;])(?:[\w"'-]+(?:\.[\w-]+)*\.)?[\w-]+(?:\.[\w-]+)*\s*:\s*([\w-]*)$/;
 
 let didRegisterD2Completions = false;
 
@@ -175,7 +175,7 @@ function getD2CompletionContext(lineContent: string, column: number): D2Completi
   const linePrefix = lineContent.slice(0, Math.max(0, column - 1));
   const valueMatch = linePrefix.match(d2ValueCompletionPattern);
   if (valueMatch) {
-    const typedValue = valueMatch[2];
+    const typedValue = valueMatch[1];
     if (typedValue === undefined) return null;
     return { kind: "value", typedText: typedValue };
   }
@@ -184,12 +184,12 @@ function getD2CompletionContext(lineContent: string, column: number): D2Completi
   if (!keyMatch) return null;
 
   const typedKey = keyMatch[0];
-  if (!typedKey) return null;
+  const isDotKeyCompletion = linePrefix.trimEnd().endsWith(".");
+  if (!typedKey && !isDotKeyCompletion) return null;
 
   const tokenStart = linePrefix.length - typedKey.length;
   const tokenPrefix = linePrefix.slice(0, tokenStart);
   if (!isD2KeyCompletionBoundary(tokenPrefix)) return null;
-  if (!isD2SupportedKeyPrefix(typedKey)) return null;
 
   return { kind: "key", typedText: typedKey };
 }
@@ -201,10 +201,6 @@ function isD2KeyCompletionBoundary(prefix: string) {
 
   const lastCharacter = trimmedPrefix[trimmedPrefix.length - 1];
   return lastCharacter === "{" || lastCharacter === ";" || lastCharacter === ".";
-}
-
-function isD2SupportedKeyPrefix(typedKey: string) {
-  return d2KeyCompletionLabels.some((label) => label.startsWith(typedKey));
 }
 
 function App() {
@@ -663,7 +659,7 @@ function App() {
     if (!didRegisterD2Completions) {
       didRegisterD2Completions = true;
       monaco.languages.registerCompletionItemProvider("d2", {
-        triggerCharacters: [":", " ", "d", "s"],
+        triggerCharacters: [":", " ", ".", "d", "s"],
         async provideCompletionItems(model, position) {
           const lineContent = model.getLineContent(position.lineNumber);
           if (isD2LineCommentPosition(lineContent, position.column)) {
