@@ -68,6 +68,9 @@ func complete(params completeParams) ([]completionItem, error) {
 	if completions := d2ContextValueCompletions(params); completions != nil {
 		return enrichCompletionItems(completions, context), nil
 	}
+	if completions := d2ChildNodeCompletions(params); len(completions) > 0 {
+		return completions, nil
+	}
 	if len(items) == 0 {
 		completions := d2KeyCompletions(params)
 		if len(completions) > 0 {
@@ -82,6 +85,9 @@ func complete(params completeParams) ([]completionItem, error) {
 			Detail:     item.Detail,
 			InsertText: item.InsertText,
 		})
+	}
+	if nodeCompletions := d2TopLevelNodeCompletions(params); len(nodeCompletions) > 0 {
+		completions = mergeCompletionItems(completions, nodeCompletions)
 	}
 	return enrichCompletionItems(completions, context), nil
 }
@@ -166,6 +172,11 @@ func d2KeyCompletions(params completeParams) []completionItem {
 
 	typedKey := lineText[start:column]
 	context := completionKeyContext(params.Source, params.Line, start)
+	nodeCompletions := d2TopLevelNodeCompletions(params)
+	if isD2ConnectionEndpointCompletionBoundary(lineText[:start]) {
+		return nodeCompletions
+	}
+
 	items := d2KeyItemsForContext(context)
 	completions := make([]completionItem, 0, len(items))
 	for _, item := range items {
@@ -173,7 +184,89 @@ func d2KeyCompletions(params completeParams) []completionItem {
 			completions = append(completions, enrichCompletionItem(item, context))
 		}
 	}
+	return mergeCompletionItems(completions, nodeCompletions)
+}
+
+func d2ChildNodeCompletions(params completeParams) []completionItem {
+	parentPath, typedChild, ok := completionDotParentPath(params.Source, params.Line, params.Column)
+	if !ok {
+		return nil
+	}
+
+	children := collectD2ChildNodes(sourceWithoutCurrentCompletionToken(params.Source, params.Line, params.Column))
+	labels := children[completionPathKey(parentPath)]
+	if len(labels) == 0 {
+		return nil
+	}
+
+	completions := make([]completionItem, 0, len(labels))
+	for _, label := range labels {
+		if !strings.HasPrefix(label, typedChild) {
+			continue
+		}
+		completions = append(completions, completionItem{
+			Label:         label,
+			Kind:          "shape",
+			Detail:        "child node",
+			Description:   "子ノードを参照",
+			Documentation: "子ノードをドット記法で参照",
+			InsertText:    label,
+		})
+	}
 	return completions
+}
+
+func d2TopLevelNodeCompletions(params completeParams) []completionItem {
+	typedKey, ok := d2NodeReferenceCompletionPrefix(params)
+	if !ok {
+		return nil
+	}
+
+	children := collectD2ChildNodes(sourceWithoutCurrentCompletionToken(params.Source, params.Line, params.Column))
+	labels := children[completionPathKey(nil)]
+	if len(labels) == 0 {
+		return nil
+	}
+
+	completions := make([]completionItem, 0, len(labels))
+	for _, label := range labels {
+		if !strings.HasPrefix(label, typedKey) {
+			continue
+		}
+		completions = append(completions, completionItem{
+			Label:         label,
+			Kind:          "shape",
+			Detail:        "node",
+			Description:   "既存ノードを参照",
+			Documentation: "既存ノードを参照",
+			InsertText:    label,
+		})
+	}
+	return completions
+}
+
+func d2NodeReferenceCompletionPrefix(params completeParams) (string, bool) {
+	lines := strings.Split(params.Source, "\n")
+	if params.Line < 0 || params.Line >= len(lines) {
+		return "", false
+	}
+
+	lineText := lines[params.Line]
+	column := clamp(params.Column, 0, len(lineText))
+	start := column
+	for start > 0 && isCompletionValueChar(lineText[start-1]) {
+		start--
+	}
+
+	prefix := lineText[:start]
+	context := completionKeyContext(params.Source, params.Line, start)
+	if isD2ConnectionEndpointCompletionBoundary(prefix) {
+		return lineText[start:column], true
+	}
+	if len(context) == 0 && isD2KeyCompletionBoundary(prefix) {
+		return lineText[start:column], true
+	}
+	return "", false
 }
 
 func d2KeyItemsForContext(context []string) []completionItem {
@@ -638,8 +731,11 @@ func isD2KeyCompletionBoundary(prefix string) bool {
 	if trimmedPrefix == "" {
 		return true
 	}
-	if strings.HasSuffix(trimmedPrefix, ":") || strings.HasSuffix(trimmedPrefix, "->") {
+	if strings.HasSuffix(trimmedPrefix, ":") {
 		return false
+	}
+	if isD2ConnectionEndpointCompletionBoundary(prefix) {
+		return true
 	}
 	switch trimmedPrefix[len(trimmedPrefix)-1] {
 	case '{', ';', '.':
@@ -647,6 +743,14 @@ func isD2KeyCompletionBoundary(prefix string) bool {
 	default:
 		return false
 	}
+}
+
+func isD2ConnectionEndpointCompletionBoundary(prefix string) bool {
+	trimmedPrefix := strings.TrimRight(prefix, " \t")
+	return strings.HasSuffix(trimmedPrefix, "->") ||
+		strings.HasSuffix(trimmedPrefix, "<-") ||
+		strings.HasSuffix(trimmedPrefix, "--") ||
+		strings.HasSuffix(trimmedPrefix, "<->")
 }
 
 type completionContextFrame struct {
@@ -788,6 +892,228 @@ func extractD2KeyPath(prefix string) []string {
 		context = append(context, part)
 	}
 	return context
+}
+
+func completionDotParentPath(source string, line, column int) ([]string, string, bool) {
+	lines := strings.Split(source, "\n")
+	if line < 0 || line >= len(lines) {
+		return nil, "", false
+	}
+
+	lineText := lines[line]
+	column = clamp(column, 0, len(lineText))
+	start := column
+	for start > 0 && isCompletionValueChar(lineText[start-1]) {
+		start--
+	}
+	typedChild := lineText[start:column]
+	prefix := strings.TrimRight(lineText[:start], " \t")
+	if !strings.HasSuffix(prefix, ".") {
+		return nil, "", false
+	}
+
+	parentPath := extractD2KeyPath(strings.TrimSuffix(prefix, "."))
+	if len(parentPath) == 0 {
+		return nil, "", false
+	}
+	return parentPath, typedChild, true
+}
+
+func sourceWithoutCurrentCompletionToken(source string, line, column int) string {
+	lines := strings.Split(source, "\n")
+	if line < 0 || line >= len(lines) {
+		return source
+	}
+
+	lineText := lines[line]
+	column = clamp(column, 0, len(lineText))
+	start := column
+	for start > 0 && isCompletionValueChar(lineText[start-1]) {
+		start--
+	}
+	end := column
+	for end < len(lineText) && isCompletionValueChar(lineText[end]) {
+		end++
+	}
+	if start == end {
+		return source
+	}
+
+	lines[line] = lineText[:start] + lineText[end:]
+	return strings.Join(lines, "\n")
+}
+
+func collectD2ChildNodes(source string) map[string][]string {
+	children := map[string][]string{}
+	seen := map[string]map[string]struct{}{}
+	context := []string{}
+	ignoredMapDepth := 0
+
+	for _, line := range strings.Split(source, "\n") {
+		text := stripD2LineComment(line)
+		quote := byte(0)
+		statementStart := 0
+
+		for index := 0; index < len(text); index++ {
+			char := text[index]
+			if quote != 0 {
+				if char == '\\' {
+					index++
+				} else if char == quote {
+					quote = 0
+				}
+				continue
+			}
+			if char == '"' || char == '\'' {
+				quote = char
+				continue
+			}
+
+			switch char {
+			case '{':
+				if ignoredMapDepth > 0 {
+					ignoredMapDepth++
+					statementStart = index + 1
+					continue
+				}
+
+				path := nodePathFromStatement(text[statementStart:index])
+				if len(path) == 0 || isD2ReservedNodePath(path) {
+					ignoredMapDepth = 1
+					statementStart = index + 1
+					continue
+				}
+				fullPath := appendPath(context, path)
+				addD2NodePath(children, seen, fullPath)
+				context = fullPath
+				statementStart = index + 1
+			case '}':
+				if ignoredMapDepth > 0 {
+					ignoredMapDepth--
+					statementStart = index + 1
+					continue
+				}
+
+				addD2NodePathsFromStatement(children, seen, context, text[statementStart:index])
+				if len(context) > 0 {
+					context = context[:len(context)-1]
+				}
+				statementStart = index + 1
+			case ';':
+				if ignoredMapDepth == 0 {
+					addD2NodePathsFromStatement(children, seen, context, text[statementStart:index])
+				}
+				statementStart = index + 1
+			}
+		}
+
+		if ignoredMapDepth == 0 {
+			addD2NodePathsFromStatement(children, seen, context, text[statementStart:])
+		}
+	}
+
+	for _, labels := range children {
+		sort.Strings(labels)
+	}
+	return children
+}
+
+func addD2NodePathsFromStatement(children map[string][]string, seen map[string]map[string]struct{}, context []string, statement string) {
+	statement = strings.TrimSpace(statement)
+	if statement == "" {
+		return
+	}
+
+	for _, path := range nodePathsFromStatement(statement) {
+		if len(path) == 0 || isD2ReservedNodePath(path) {
+			continue
+		}
+		addD2NodePath(children, seen, appendPath(context, path))
+	}
+}
+
+func nodePathFromStatement(statement string) []string {
+	paths := nodePathsFromStatement(statement)
+	if len(paths) == 0 {
+		return nil
+	}
+	return paths[0]
+}
+
+func nodePathsFromStatement(statement string) [][]string {
+	statement = strings.TrimSpace(statement)
+	if statement == "" {
+		return nil
+	}
+
+	if colonIndex := strings.Index(statement, ":"); colonIndex >= 0 {
+		statement = statement[:colonIndex]
+	}
+	normalized := strings.ReplaceAll(statement, "<->", "->")
+	normalized = strings.ReplaceAll(normalized, "<-", "->")
+	normalized = strings.ReplaceAll(normalized, "--", "->")
+	parts := strings.Split(normalized, "->")
+	paths := make([][]string, 0, len(parts))
+	for _, part := range parts {
+		if path := extractD2KeyPath(part); len(path) > 0 {
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
+func addD2NodePath(children map[string][]string, seen map[string]map[string]struct{}, path []string) {
+	for index := 0; index < len(path); index++ {
+		parentKey := completionPathKey(path[:index])
+		child := path[index]
+		if seen[parentKey] == nil {
+			seen[parentKey] = map[string]struct{}{}
+		}
+		if _, ok := seen[parentKey][child]; ok {
+			continue
+		}
+		seen[parentKey][child] = struct{}{}
+		children[parentKey] = append(children[parentKey], child)
+	}
+}
+
+func appendPath(prefix, suffix []string) []string {
+	out := make([]string, 0, len(prefix)+len(suffix))
+	out = append(out, prefix...)
+	out = append(out, suffix...)
+	return out
+}
+
+func completionPathKey(path []string) string {
+	return strings.Join(path, "\x00")
+}
+
+func isD2ReservedNodePath(path []string) bool {
+	if len(path) == 0 {
+		return true
+	}
+	return isD2ReservedNodeKey(path[0])
+}
+
+func isD2ReservedNodeKey(key string) bool {
+	if _, ok := d2ast.SimpleReservedKeywords[key]; ok {
+		return true
+	}
+	if _, ok := d2ast.CompositeReservedKeywords[key]; ok {
+		return true
+	}
+	if _, ok := d2ast.BoardKeywords[key]; ok {
+		return true
+	}
+	if _, ok := d2ast.StyleKeywords[key]; ok {
+		return true
+	}
+	switch key {
+	case "source-arrowhead", "target-arrowhead", "theme-overrides", "dark-theme-overrides", "d2-config":
+		return true
+	default:
+		return false
+	}
 }
 
 func hasTrailingContext(context []string, suffix ...string) bool {
