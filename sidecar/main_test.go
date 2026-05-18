@@ -626,6 +626,92 @@ func TestCompleteReturnsKeyCompletionsForDotSyntaxWithoutTypedPrefix(t *testing.
 	}
 }
 
+func TestCompleteReturnsChildNodeCompletionsAfterDot(t *testing.T) {
+	source := `hoge: {
+  hoge1
+  hoge2
+  style: {
+    fill: red
+  }
+}
+hoge.`
+	items, err := complete(completeParams{Source: source, Line: 7, Column: len("hoge.")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "hoge1", "hoge1") || !hasCompletionInsertText(items, "hoge2", "hoge2") {
+		t.Fatalf("expected child node completions after dot, got %#v", items)
+	}
+	if hasCompletion(items, "style") || hasCompletion(items, "fill") {
+		t.Fatalf("expected reserved property maps to be excluded from child node completions, got %#v", items)
+	}
+	if hasCompletionInsertText(items, "shape", "shape: ") {
+		t.Fatalf("expected child node completions to take priority over property keys, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsChildNodeCompletionsInConnectionEndpoint(t *testing.T) {
+	source := `hoge: {
+  hoge1
+  hoge2
+}
+hoge. -> fuga`
+	items, err := complete(completeParams{Source: source, Line: 4, Column: len("hoge.")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "hoge1", "hoge1") || !hasCompletionInsertText(items, "hoge2", "hoge2") {
+		t.Fatalf("expected child node completions in connection endpoint, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsChildNodeCompletionsForDotDefinedChildren(t *testing.T) {
+	source := `hoge.hoge1
+hoge.hoge2
+hoge.`
+	items, err := complete(completeParams{Source: source, Line: 2, Column: len("hoge.")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "hoge1", "hoge1") || !hasCompletionInsertText(items, "hoge2", "hoge2") {
+		t.Fatalf("expected dot-defined child node completions after dot, got %#v", items)
+	}
+}
+
+func TestCompleteFiltersChildNodeCompletionsWhileTyping(t *testing.T) {
+	source := `hoge: {
+  alpha
+  beta
+}
+hoge.a`
+	items, err := complete(completeParams{Source: source, Line: 4, Column: len("hoge.a")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "alpha", "alpha") {
+		t.Fatalf("expected matching child node completion, got %#v", items)
+	}
+	if hasCompletion(items, "beta") {
+		t.Fatalf("expected non-matching child node to be filtered, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsDeepChildNodeCompletionsAfterDot(t *testing.T) {
+	source := `hoge: {
+  hoge1: {
+    piyo
+  }
+}
+hoge.hoge1.`
+	items, err := complete(completeParams{Source: source, Line: 5, Column: len("hoge.hoge1.")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "piyo", "piyo") {
+		t.Fatalf("expected deep child node completion after dot, got %#v", items)
+	}
+}
+
 func TestCompleteReturnsInlineMapKeyCompletionsAfterCompletedValue(t *testing.T) {
 	source := "api: { label: hello; sh }"
 	items, err := complete(completeParams{Source: source, Line: 0, Column: len("api: { label: hello; sh")})
