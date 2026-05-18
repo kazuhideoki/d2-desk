@@ -81,7 +81,14 @@ export function configureD2Language(monaco: typeof Monaco) {
             label: completion.label,
             kind: d2CompletionKindToMonaco(monaco, completion.kind),
             insertText: completion.insertText || completion.label,
-            detail: completion.detail ? `D2 ${completion.detail}` : "D2 completion",
+            detail:
+              completion.description ||
+              (completion.detail ? `D2 ${completion.detail}` : "D2 completion"),
+            documentation: completion.documentation
+              ? { value: completion.documentation }
+              : completion.detail
+                ? { value: `D2 ${completion.detail}` }
+                : undefined,
             range: replacementRange,
             ...(completionContext.kind === "key"
               ? {
