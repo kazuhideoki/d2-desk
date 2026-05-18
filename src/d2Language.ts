@@ -6,6 +6,12 @@ const d2ValueCompletionPattern =
   /(?:^|[{\s;])(?:[\w"'-]+(?:\.[\w-]+)*\.)?[\w-]+(?:\.[\w-]+)*\s*:\s*([\w-]*)$/;
 
 let didRegisterD2Completions = false;
+const d2CompletionTriggerCharacters = [
+  ":",
+  " ",
+  ".",
+  ..."-_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+];
 
 type D2CompletionContext = {
   kind: "key" | "value";
@@ -37,7 +43,7 @@ export function configureD2Language(monaco: typeof Monaco) {
   if (!didRegisterD2Completions) {
     didRegisterD2Completions = true;
     monaco.languages.registerCompletionItemProvider("d2", {
-      triggerCharacters: [":", " ", ".", "d", "s"],
+      triggerCharacters: d2CompletionTriggerCharacters,
       async provideCompletionItems(model, position) {
         const lineContent = model.getLineContent(position.lineNumber);
         if (isD2LineCommentPosition(lineContent, position.column)) {
@@ -77,6 +83,13 @@ export function configureD2Language(monaco: typeof Monaco) {
         }
         if (completions.length === 0 && completionContext.kind === "key") {
           completions = getD2ChildNodeCompletions(model.getValue(), lineContent, position.column);
+          if (completions.length === 0) {
+            completions = getD2TopLevelNodeCompletions(
+              model.getValue(),
+              lineContent,
+              position.column,
+            );
+          }
         }
 
         return {
@@ -196,7 +209,14 @@ function d2CompletionKindToMonaco(monaco: typeof Monaco, kind: D2CompletionItem[
 function isD2KeyCompletionBoundary(prefix: string) {
   const trimmedPrefix = prefix.trimEnd();
   if (!trimmedPrefix) return true;
-  if (trimmedPrefix.endsWith(":") || trimmedPrefix.endsWith("->")) return false;
+  if (trimmedPrefix.endsWith(":")) return false;
+  if (
+    trimmedPrefix.endsWith("->") ||
+    trimmedPrefix.endsWith("--") ||
+    trimmedPrefix.endsWith("<->")
+  ) {
+    return true;
+  }
 
   const lastCharacter = trimmedPrefix[trimmedPrefix.length - 1];
   return lastCharacter === "{" || lastCharacter === ";" || lastCharacter === ".";
@@ -217,7 +237,7 @@ function getD2ChildNodeCompletions(
 
   const children = collectD2ChildNodes(source);
   const labels = children.get(parentPath.join("\0")) ?? [];
-  return labels
+  const completions: D2CompletionItem[] = labels
     .filter((label) => label.startsWith(typedChild))
     .map((label) => ({
       label,
@@ -225,6 +245,32 @@ function getD2ChildNodeCompletions(
       detail: "child node",
       description: "子ノードを参照",
       documentation: "子ノードをドット記法で参照",
+      insertText: label,
+    }));
+  return completions.length > 0 ? completions : [];
+}
+
+function getD2TopLevelNodeCompletions(
+  source: string,
+  lineContent: string,
+  column: number,
+): D2CompletionItem[] {
+  const linePrefix = lineContent.slice(0, Math.max(0, column - 1));
+  const typedKey = linePrefix.match(/[\w-]*$/)?.[0] ?? "";
+  const tokenPrefix = linePrefix.slice(0, linePrefix.length - typedKey.length);
+  if (!typedKey || tokenPrefix.trimEnd().endsWith(".")) return [];
+  if (!isD2KeyCompletionBoundary(tokenPrefix)) return [];
+
+  const children = collectD2ChildNodes(source);
+  const labels = children.get("") ?? [];
+  return labels
+    .filter((label) => label.startsWith(typedKey))
+    .map((label) => ({
+      label,
+      kind: "shape" as const,
+      detail: "node",
+      description: "既存ノードを参照",
+      documentation: "既存ノードを参照",
       insertText: label,
     }));
 }

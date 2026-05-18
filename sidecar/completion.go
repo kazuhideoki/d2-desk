@@ -86,6 +86,9 @@ func complete(params completeParams) ([]completionItem, error) {
 			InsertText: item.InsertText,
 		})
 	}
+	if nodeCompletions := d2TopLevelNodeCompletions(params); len(nodeCompletions) > 0 {
+		completions = mergeCompletionItems(completions, nodeCompletions)
+	}
 	return enrichCompletionItems(completions, context), nil
 }
 
@@ -169,6 +172,11 @@ func d2KeyCompletions(params completeParams) []completionItem {
 
 	typedKey := lineText[start:column]
 	context := completionKeyContext(params.Source, params.Line, start)
+	nodeCompletions := d2TopLevelNodeCompletions(params)
+	if isD2ConnectionEndpointCompletionBoundary(lineText[:start]) {
+		return nodeCompletions
+	}
+
 	items := d2KeyItemsForContext(context)
 	completions := make([]completionItem, 0, len(items))
 	for _, item := range items {
@@ -176,7 +184,7 @@ func d2KeyCompletions(params completeParams) []completionItem {
 			completions = append(completions, enrichCompletionItem(item, context))
 		}
 	}
-	return completions
+	return mergeCompletionItems(completions, nodeCompletions)
 }
 
 func d2ChildNodeCompletions(params completeParams) []completionItem {
@@ -206,6 +214,59 @@ func d2ChildNodeCompletions(params completeParams) []completionItem {
 		})
 	}
 	return completions
+}
+
+func d2TopLevelNodeCompletions(params completeParams) []completionItem {
+	typedKey, ok := d2NodeReferenceCompletionPrefix(params)
+	if !ok {
+		return nil
+	}
+
+	children := collectD2ChildNodes(sourceWithoutCurrentCompletionToken(params.Source, params.Line, params.Column))
+	labels := children[completionPathKey(nil)]
+	if len(labels) == 0 {
+		return nil
+	}
+
+	completions := make([]completionItem, 0, len(labels))
+	for _, label := range labels {
+		if !strings.HasPrefix(label, typedKey) {
+			continue
+		}
+		completions = append(completions, completionItem{
+			Label:         label,
+			Kind:          "shape",
+			Detail:        "node",
+			Description:   "既存ノードを参照",
+			Documentation: "既存ノードを参照",
+			InsertText:    label,
+		})
+	}
+	return completions
+}
+
+func d2NodeReferenceCompletionPrefix(params completeParams) (string, bool) {
+	lines := strings.Split(params.Source, "\n")
+	if params.Line < 0 || params.Line >= len(lines) {
+		return "", false
+	}
+
+	lineText := lines[params.Line]
+	column := clamp(params.Column, 0, len(lineText))
+	start := column
+	for start > 0 && isCompletionValueChar(lineText[start-1]) {
+		start--
+	}
+
+	prefix := lineText[:start]
+	context := completionKeyContext(params.Source, params.Line, start)
+	if isD2ConnectionEndpointCompletionBoundary(prefix) {
+		return lineText[start:column], true
+	}
+	if len(context) == 0 && isD2KeyCompletionBoundary(prefix) {
+		return lineText[start:column], true
+	}
+	return "", false
 }
 
 func d2KeyItemsForContext(context []string) []completionItem {
@@ -670,8 +731,11 @@ func isD2KeyCompletionBoundary(prefix string) bool {
 	if trimmedPrefix == "" {
 		return true
 	}
-	if strings.HasSuffix(trimmedPrefix, ":") || strings.HasSuffix(trimmedPrefix, "->") {
+	if strings.HasSuffix(trimmedPrefix, ":") {
 		return false
+	}
+	if isD2ConnectionEndpointCompletionBoundary(prefix) {
+		return true
 	}
 	switch trimmedPrefix[len(trimmedPrefix)-1] {
 	case '{', ';', '.':
@@ -679,6 +743,11 @@ func isD2KeyCompletionBoundary(prefix string) bool {
 	default:
 		return false
 	}
+}
+
+func isD2ConnectionEndpointCompletionBoundary(prefix string) bool {
+	trimmedPrefix := strings.TrimRight(prefix, " \t")
+	return strings.HasSuffix(trimmedPrefix, "->") || strings.HasSuffix(trimmedPrefix, "--") || strings.HasSuffix(trimmedPrefix, "<->")
 }
 
 type completionContextFrame struct {

@@ -678,6 +678,42 @@ hoge.`
 	}
 }
 
+func TestCompleteReturnsTopLevelNodeCompletions(t *testing.T) {
+	source := `hoge: {
+  hoge1
+  hoge2
+}
+ho`
+	items, err := complete(completeParams{Source: source, Line: 4, Column: len("ho")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "hoge", "hoge") {
+		t.Fatalf("expected top-level node completion, got %#v", items)
+	}
+	if !hasCompletionInsertText(items, "horizontal-gap", "horizontal-gap: ") {
+		t.Fatalf("expected existing key completions to remain, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsTopLevelNodeCompletionsInConnectionEndpoint(t *testing.T) {
+	source := `hoge: {
+  hoge1
+  hoge2
+}
+fuga -> ho`
+	items, err := complete(completeParams{Source: source, Line: 4, Column: len("fuga -> ho")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "hoge", "hoge") {
+		t.Fatalf("expected top-level node completion in connection endpoint, got %#v", items)
+	}
+	if hasCompletionInsertText(items, "horizontal-gap", "horizontal-gap: ") {
+		t.Fatalf("expected connection endpoint completion to exclude property keys, got %#v", items)
+	}
+}
+
 func TestCompleteFiltersChildNodeCompletionsWhileTyping(t *testing.T) {
 	source := `hoge: {
   alpha

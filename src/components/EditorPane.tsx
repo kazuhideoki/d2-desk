@@ -33,7 +33,9 @@ export function EditorPane({
       if (!position || !model) return;
 
       const linePrefix = model.getLineContent(position.lineNumber).slice(0, position.column - 1);
-      if (!/\.[\w-]*$/.test(linePrefix)) return;
+      if (!/(^|[{\s;]|->|--|<->)\s*[\w-]+$/.test(linePrefix) && !/\.[\w-]*$/.test(linePrefix)) {
+        return;
+      }
 
       window.setTimeout(() => {
         editor.trigger("d2-dot-suggest", "editor.action.triggerSuggest", {});
