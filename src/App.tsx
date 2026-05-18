@@ -712,6 +712,12 @@ function App() {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       saveSourceRef.current();
     });
+    editor.addCommand(
+      monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyD,
+      () => {
+        editor.trigger("keyboard", "editor.action.copyLinesDownAction", null);
+      },
+    );
     editor.onDidChangeModelContent((event) => {
       if (isAutoClosingD2Brace) {
         return;
