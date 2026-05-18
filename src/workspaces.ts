@@ -1,5 +1,5 @@
 import { workspacesStorageKey } from "./constants";
-import { createTab } from "./tabs";
+import { createTab, normalizeTab } from "./tabs";
 import type { D2Tab, StoredWorkspaces, Workspace } from "./types";
 
 export function loadWorkspaces(): StoredWorkspaces {
@@ -129,14 +129,7 @@ function isWorkspace(value: unknown): value is Workspace {
 }
 
 function normalizeWorkspace(workspace: Workspace): Workspace {
-  const tabs = workspace.tabs.filter(isTab).map((tab) => ({
-    id: tab.id,
-    fileName: tab.fileName,
-    source: tab.source,
-    savedSource: tab.savedSource ?? (tab.filePath ? tab.source : ""),
-    filePath: tab.filePath ?? null,
-    editorViewState: tab.editorViewState ?? null,
-  }));
+  const tabs = workspace.tabs.filter(isTab).map(normalizeTab);
   const fallbackTabs = tabs.length > 0 ? tabs : [createTab("untitled.d2", "")];
   const activeTabId = fallbackTabs.some((tab) => tab.id === workspace.activeTabId)
     ? workspace.activeTabId
@@ -161,6 +154,7 @@ function isTab(tab: unknown): tab is D2Tab {
     (typeof candidate.filePath === "string" ||
       candidate.filePath === null ||
       candidate.filePath === undefined) &&
+    (typeof candidate.hasUserChanges === "boolean" || candidate.hasUserChanges === undefined) &&
     (typeof candidate.editorViewState === "object" || candidate.editorViewState === undefined)
   );
 }

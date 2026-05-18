@@ -18,7 +18,7 @@ import {
 } from "./d2Language";
 import {
   createEmptyTab,
-  isTabUnsaved,
+  hasTabPendingUserChanges,
   loadActiveTabId,
   loadTabs,
   writeStoredTabs,
@@ -205,7 +205,15 @@ function App() {
   const updateActiveTab = useCallback((updates: Partial<D2Tab>) => {
     setTabs((currentTabs) => {
       const tabId = activeTabIdRef.current;
-      const nextTabs = currentTabs.map((tab) => (tab.id === tabId ? { ...tab, ...updates } : tab));
+      const nextTabs = currentTabs.map((tab) => {
+        if (tab.id !== tabId) return tab;
+
+        const nextTab = { ...tab, ...updates };
+        if ("source" in updates || "savedSource" in updates) {
+          nextTab.hasUserChanges = nextTab.source !== nextTab.savedSource;
+        }
+        return nextTab;
+      });
       tabsRef.current = nextTabs;
       persistTabs(nextTabs, tabId);
       return nextTabs;
@@ -393,7 +401,7 @@ function App() {
       const targetTab = currentTabs.find((tab) => tab.id === tabId);
       if (!targetTab) return;
 
-      if (isTabUnsaved(targetTab)) {
+      if (hasTabPendingUserChanges(targetTab)) {
         const shouldClose = await confirm(
           `${targetTab.fileName} has unsaved changes. Close it anyway?`,
           {
@@ -447,7 +455,7 @@ function App() {
 
     try {
       const currentTabs = persistActiveEditorViewState();
-      const unsavedTabs = currentTabs.filter(isTabUnsaved);
+      const unsavedTabs = currentTabs.filter(hasTabPendingUserChanges);
       if (unsavedTabs.length > 0) {
         const fileList = unsavedTabs.map((tab) => tab.fileName).join(", ");
         const shouldQuit = await confirm(
@@ -506,7 +514,7 @@ function App() {
 
   const confirmLeavingCurrentWorkspace = useCallback(async () => {
     const currentTabs = persistActiveEditorViewState();
-    const unsavedTabs = currentTabs.filter(isTabUnsaved);
+    const unsavedTabs = currentTabs.filter(hasTabPendingUserChanges);
     if (unsavedTabs.length === 0) return currentTabs;
 
     const fileList = unsavedTabs.map((tab) => tab.fileName).join(", ");

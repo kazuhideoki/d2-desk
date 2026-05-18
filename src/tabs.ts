@@ -5,6 +5,10 @@ export function isTabUnsaved(tab: D2Tab) {
   return tab.source !== tab.savedSource;
 }
 
+export function hasTabPendingUserChanges(tab: D2Tab) {
+  return tab.hasUserChanges && isTabUnsaved(tab);
+}
+
 export function loadTabs(): D2Tab[] {
   const fallbackSource = localStorage.getItem("d2-desk:last-source") ?? sampleSource;
   const fallbackTab = createTab("untitled.d2", fallbackSource, "");
@@ -24,16 +28,10 @@ export function loadTabs(): D2Tab[] {
           (typeof tab.filePath === "string" ||
             tab.filePath === null ||
             tab.filePath === undefined) &&
+          (typeof tab.hasUserChanges === "boolean" || tab.hasUserChanges === undefined) &&
           (typeof tab.editorViewState === "object" || tab.editorViewState === undefined),
       )
-      .map((tab) => ({
-        id: tab.id,
-        fileName: tab.fileName,
-        source: tab.source,
-        savedSource: tab.savedSource ?? (tab.filePath ? tab.source : ""),
-        filePath: tab.filePath ?? null,
-        editorViewState: tab.editorViewState ?? null,
-      }));
+      .map(normalizeTab);
     return tabs.length > 0 ? tabs : [fallbackTab];
   } catch {
     return [fallbackTab];
@@ -74,6 +72,7 @@ export function createTab(fileName: string, source: string, savedSource = source
     source,
     savedSource,
     filePath: null,
+    hasUserChanges: false,
     editorViewState: null,
   };
 }
@@ -86,5 +85,33 @@ function createTabId() {
   return (
     globalThis.crypto?.randomUUID?.() ??
     `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+}
+
+export function normalizeTab(tab: D2Tab): D2Tab {
+  const savedSource = tab.savedSource ?? (tab.filePath ? tab.source : "");
+  return {
+    id: tab.id,
+    fileName: tab.fileName,
+    source: tab.source,
+    savedSource,
+    filePath: tab.filePath ?? null,
+    hasUserChanges: tab.hasUserChanges ?? inferLegacyHasUserChanges(tab, savedSource),
+    editorViewState: tab.editorViewState ?? null,
+  };
+}
+
+function inferLegacyHasUserChanges(tab: D2Tab, savedSource: string) {
+  if (tab.source === savedSource) return false;
+  if (isInitialUntitledSample(tab, savedSource)) return false;
+  return true;
+}
+
+function isInitialUntitledSample(tab: D2Tab, savedSource: string) {
+  return (
+    tab.filePath == null &&
+    savedSource === "" &&
+    /^untitled(?:-\d+)?\.d2$/.test(tab.fileName) &&
+    tab.source === sampleSource
   );
 }
