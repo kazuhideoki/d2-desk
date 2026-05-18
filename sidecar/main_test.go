@@ -7,6 +7,149 @@ import (
 	"testing"
 )
 
+func TestHandleDispatchesMethods(t *testing.T) {
+	tests := []struct {
+		name     string
+		request  request
+		validate func(t *testing.T, result any)
+	}{
+		{
+			name: "compile",
+			request: request{
+				Method: "compile",
+				Params: mustParams(t, compileParams{
+					Source: "api -> db",
+					Layout: "dagre",
+					Theme:  4,
+				}),
+			},
+			validate: func(t *testing.T, result any) {
+				compileResult, ok := result.(compileResult)
+				if !ok {
+					t.Fatalf("expected compileResult, got %T", result)
+				}
+				if compileResult.SVG == "" || len(compileResult.Objects) == 0 {
+					t.Fatalf("expected compiled SVG and objects, got %#v", compileResult)
+				}
+			},
+		},
+		{
+			name: "format",
+			request: request{
+				Method: "format",
+				Params: mustParams(t, compileParams{Source: "api: API Server\napi -> db"}),
+			},
+			validate: func(t *testing.T, result any) {
+				formatted, ok := result.(string)
+				if !ok {
+					t.Fatalf("expected string, got %T", result)
+				}
+				if !strings.Contains(formatted, "api") || !strings.Contains(formatted, "db") {
+					t.Fatalf("expected formatted source to preserve identifiers, got %q", formatted)
+				}
+			},
+		},
+		{
+			name: "nodeAt",
+			request: request{
+				Method: "nodeAt",
+				Params: mustParams(t, nodeAtParams{Source: "api -> db", Line: 1, Column: 2}),
+			},
+			validate: func(t *testing.T, result any) {
+				node, ok := result.(map[string]string)
+				if !ok {
+					t.Fatalf("expected node map, got %T", result)
+				}
+				if node["id"] != "api" {
+					t.Fatalf("expected api node, got %#v", node)
+				}
+			},
+		},
+		{
+			name: "complete",
+			request: request{
+				Method: "complete",
+				Params: mustParams(t, completeParams{
+					Source: "direction: ",
+					Line:   0,
+					Column: len("direction: "),
+				}),
+			},
+			validate: func(t *testing.T, result any) {
+				items, ok := result.([]completionItem)
+				if !ok {
+					t.Fatalf("expected completion items, got %T", result)
+				}
+				if !hasCompletion(items, "right") {
+					t.Fatalf("expected direction completions, got %#v", items)
+				}
+			},
+		},
+		{
+			name: "export",
+			request: request{
+				Method: "export",
+				Params: mustParams(t, exportParams{
+					Source: "api -> db",
+					Format: "svg",
+					Layout: "dagre",
+					Theme:  4,
+				}),
+			},
+			validate: func(t *testing.T, result any) {
+				exportResult, ok := result.(exportResult)
+				if !ok {
+					t.Fatalf("expected exportResult, got %T", result)
+				}
+				if exportResult.Format != "svg" || exportResult.Data == "" {
+					t.Fatalf("expected SVG export, got %#v", exportResult)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := handle(tt.request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tt.validate(t, result)
+		})
+	}
+}
+
+func TestHandleRejectsInvalidRequests(t *testing.T) {
+	tests := []struct {
+		name    string
+		request request
+		want    string
+	}{
+		{
+			name:    "unknown method",
+			request: request{Method: "missing", Params: json.RawMessage(`{}`)},
+			want:    `unknown method "missing"`,
+		},
+		{
+			name:    "malformed params",
+			request: request{Method: "compile", Params: json.RawMessage(`{`)},
+			want:    "unexpected end of JSON input",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := handle(tt.request)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if got := err.Error(); !strings.Contains(got, tt.want) {
+				t.Fatalf("expected error containing %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
 func TestCompileProducesSVGAndObjects(t *testing.T) {
 	result, err := compile(compileParams{Source: "api -> db\napi: API\ndb: Database"})
 	if err != nil {
@@ -641,4 +784,13 @@ func completionLabels(items []completionItem) []string {
 		labels = append(labels, item.Label)
 	}
 	return labels
+}
+
+func mustParams(t *testing.T, params any) json.RawMessage {
+	t.Helper()
+	encoded, err := json.Marshal(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }

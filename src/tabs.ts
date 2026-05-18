@@ -1,0 +1,90 @@
+import { sampleSource, tabsStorageKey } from "./constants";
+import type { D2Tab, StoredTabs } from "./types";
+
+export function isTabUnsaved(tab: D2Tab) {
+  return tab.source !== tab.savedSource;
+}
+
+export function loadTabs(): D2Tab[] {
+  const fallbackSource = localStorage.getItem("d2-desk:last-source") ?? sampleSource;
+  const fallbackTab = createTab("untitled.d2", fallbackSource, "");
+  const stored = localStorage.getItem(tabsStorageKey);
+  if (!stored) return [fallbackTab];
+
+  try {
+    const parsed = JSON.parse(stored) as Partial<StoredTabs>;
+    const storedTabs = Array.isArray(parsed.tabs) ? parsed.tabs : [];
+    const tabs = storedTabs
+      .filter(
+        (tab): tab is D2Tab =>
+          typeof tab.id === "string" &&
+          typeof tab.fileName === "string" &&
+          typeof tab.source === "string" &&
+          (typeof tab.savedSource === "string" || tab.savedSource === undefined) &&
+          (typeof tab.filePath === "string" ||
+            tab.filePath === null ||
+            tab.filePath === undefined) &&
+          (typeof tab.editorViewState === "object" || tab.editorViewState === undefined),
+      )
+      .map((tab) => ({
+        id: tab.id,
+        fileName: tab.fileName,
+        source: tab.source,
+        savedSource: tab.savedSource ?? (tab.filePath ? tab.source : ""),
+        filePath: tab.filePath ?? null,
+        editorViewState: tab.editorViewState ?? null,
+      }));
+    return tabs.length > 0 ? tabs : [fallbackTab];
+  } catch {
+    return [fallbackTab];
+  }
+}
+
+export function loadActiveTabId(tabs: D2Tab[]) {
+  const fallbackId = tabs[0]?.id ?? createTabId();
+  const stored = localStorage.getItem(tabsStorageKey);
+  if (!stored) return fallbackId;
+
+  try {
+    const parsed = JSON.parse(stored) as Partial<StoredTabs>;
+    return typeof parsed.activeTabId === "string" &&
+      tabs.some((tab) => tab.id === parsed.activeTabId)
+      ? parsed.activeTabId
+      : fallbackId;
+  } catch {
+    return fallbackId;
+  }
+}
+
+export function createEmptyTab(existingTabs: D2Tab[]) {
+  const usedNames = new Set(existingTabs.map((tab) => tab.fileName));
+  let index = existingTabs.length + 1;
+  let fileName = `untitled-${index}.d2`;
+  while (usedNames.has(fileName)) {
+    index += 1;
+    fileName = `untitled-${index}.d2`;
+  }
+  return createTab(fileName, "", "");
+}
+
+export function createTab(fileName: string, source: string, savedSource = source): D2Tab {
+  return {
+    id: createTabId(),
+    fileName,
+    source,
+    savedSource,
+    filePath: null,
+    editorViewState: null,
+  };
+}
+
+export function writeStoredTabs(tabs: D2Tab[], activeTabId: string) {
+  localStorage.setItem(tabsStorageKey, JSON.stringify({ activeTabId, tabs }));
+}
+
+function createTabId() {
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+}

@@ -1,207 +1,39 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Editor, { type OnMount } from "@monaco-editor/react";
+import type { OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
+import { BottomPanel } from "./components/BottomPanel";
+import { EditorPane } from "./components/EditorPane";
+import { PreviewPane } from "./components/PreviewPane";
+import { TabBar } from "./components/TabBar";
+import { Toolbar } from "./components/Toolbar";
+import { baseEditorFontSize, baseEditorLineHeight, zoomStep } from "./constants";
 import {
-  Download,
-  FileDown,
-  FileInput,
-  FileText,
-  Focus,
-  Plus,
-  Save,
-  Wand2,
-  X,
-  ZoomIn,
-  ZoomOut,
-} from "lucide-react";
+  configureD2Language,
+  getD2CompletionContext,
+  isD2LineCommentPosition,
+} from "./d2Language";
+import {
+  createEmptyTab,
+  isTabUnsaved,
+  loadActiveTabId,
+  loadTabs,
+  writeStoredTabs,
+} from "./tabs";
+import type { CompileResult, D2Tab, ExportResult, OpenedD2File, SavedD2File } from "./types";
+import {
+  baseName,
+  clampZoom,
+  downloadBytes,
+  downloadURL,
+  ensureD2FileName,
+  fileNameFromPath,
+  getDiagramViewBox,
+  normalizeSvgSize,
+} from "./utils";
 import "./App.css";
-
-type SourceRange = {
-  file: string;
-  startLine: number;
-  startColumn: number;
-  endLine: number;
-  endColumn: number;
-};
-
-type D2Object = {
-  id: string;
-  kind: "shape" | "connection";
-  label?: string;
-  sourceRanges?: SourceRange[] | null;
-  preview: {
-    x?: number;
-    y?: number;
-    width?: number;
-    height?: number;
-    route?: { x: number; y: number }[];
-  };
-};
-
-type Diagnostic = {
-  message: string;
-  severity: "error" | "warning" | "info";
-  sourceRange: SourceRange;
-};
-
-type CompileResult = {
-  svg: string;
-  objects: D2Object[];
-  diagnostics: Diagnostic[];
-};
-
-type ExportResult = {
-  format: string;
-  data: string;
-};
-
-type D2CompletionItem = {
-  label: string;
-  kind: "keyword" | "style" | "shape";
-  detail: string;
-  insertText: string;
-};
-
-type D2Tab = {
-  id: string;
-  fileName: string;
-  source: string;
-  savedSource: string;
-  filePath: string | null;
-  editorViewState: Monaco.editor.ICodeEditorViewState | null;
-};
-
-type StoredTabs = {
-  activeTabId: string;
-  tabs: D2Tab[];
-};
-
-type OpenedD2File = {
-  path: string;
-  contents: string;
-};
-
-type SavedD2File = {
-  path: string;
-};
-
-const sampleSource = `direction: right
-
-user: User {
-  shape: person
-}
-
-api: API Server {
-  shape: hexagon
-}
-
-db: Database {
-  shape: cylinder
-}
-
-queue: Queue {
-  shape: queue
-}
-
-user -> api: request
-api -> db: query
-api -> queue: enqueue
-queue -> db: persist`;
-
-const themes = [
-  { id: 4, label: "Grape" },
-  { id: 0, label: "Neutral" },
-  { id: 100, label: "Terminal" },
-  { id: 101, label: "Origami" },
-];
-
-const baseEditorFontSize = 14;
-const baseEditorLineHeight = 20;
-const minZoom = 0.4;
-const maxZoom = 2.2;
-const zoomStep = 0.1;
-const tabsStorageKey = "d2-desk:tabs";
-const d2ValueCompletionPattern =
-  /(?:^|[{\s;])(?:[\w"'-]+(?:\.[\w-]+)*\.)?[\w-]+(?:\.[\w-]+)*\s*:\s*([\w-]*)$/;
-
-let didRegisterD2Completions = false;
-
-type D2CompletionContext = {
-  kind: "key" | "value";
-  typedText: string;
-};
-
-function d2CompletionKindToMonaco(monaco: typeof Monaco, kind: D2CompletionItem["kind"]) {
-  switch (kind) {
-    case "shape":
-      return monaco.languages.CompletionItemKind.EnumMember;
-    case "style":
-      return monaco.languages.CompletionItemKind.Property;
-    default:
-      return monaco.languages.CompletionItemKind.EnumMember;
-  }
-}
-
-function isD2LineCommentPosition(lineContent: string, column: number) {
-  let quote: '"' | "'" | null = null;
-  const linePrefix = lineContent.slice(0, Math.max(0, column - 1));
-
-  for (let index = 0; index < linePrefix.length; index += 1) {
-    const character = linePrefix[index];
-    if (quote) {
-      if (character === "\\") {
-        index += 1;
-      } else if (character === quote) {
-        quote = null;
-      }
-      continue;
-    }
-
-    if (character === "#") {
-      return true;
-    }
-    if (character === '"' || character === "'") {
-      quote = character;
-    }
-  }
-
-  return false;
-}
-
-function getD2CompletionContext(lineContent: string, column: number): D2CompletionContext | null {
-  const linePrefix = lineContent.slice(0, Math.max(0, column - 1));
-  const valueMatch = linePrefix.match(d2ValueCompletionPattern);
-  if (valueMatch) {
-    const typedValue = valueMatch[1];
-    if (typedValue === undefined) return null;
-    return { kind: "value", typedText: typedValue };
-  }
-
-  const keyMatch = linePrefix.match(/[\w-]*$/);
-  if (!keyMatch) return null;
-
-  const typedKey = keyMatch[0];
-  const isDotKeyCompletion = linePrefix.trimEnd().endsWith(".");
-  if (!typedKey && !isDotKeyCompletion) return null;
-
-  const tokenStart = linePrefix.length - typedKey.length;
-  const tokenPrefix = linePrefix.slice(0, tokenStart);
-  if (!isD2KeyCompletionBoundary(tokenPrefix)) return null;
-
-  return { kind: "key", typedText: typedKey };
-}
-
-function isD2KeyCompletionBoundary(prefix: string) {
-  const trimmedPrefix = prefix.trimEnd();
-  if (!trimmedPrefix) return true;
-  if (trimmedPrefix.endsWith(":") || trimmedPrefix.endsWith("->")) return false;
-
-  const lastCharacter = trimmedPrefix[trimmedPrefix.length - 1];
-  return lastCharacter === "{" || lastCharacter === ";" || lastCharacter === ".";
-}
 
 function App() {
   const [tabs, setTabs] = useState<D2Tab[]>(() => loadTabs());
@@ -634,110 +466,6 @@ function App() {
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
   }, [closeActiveTab, createNewTab, openSourceFile, quitApplication, saveSource]);
 
-  const beforeMount = (monaco: typeof Monaco) => {
-    monaco.languages.register({ id: "d2" });
-    monaco.languages.setLanguageConfiguration("d2", {
-      comments: {
-        lineComment: "#",
-      },
-      brackets: [["{", "}"]],
-      autoClosingPairs: [{ open: "{", close: "}", notIn: ["string", "comment"] }],
-      surroundingPairs: [{ open: "{", close: "}" }],
-    });
-    monaco.languages.setMonarchTokensProvider("d2", {
-      tokenizer: {
-        root: [
-          [/#.*$/, "comment"],
-          [/".*?"/, "string"],
-          [/'.*?'/, "string"],
-          [/(->|--)/, "keyword"],
-          [/\b(direction|shape|style|fill|stroke|icon|label|tooltip|near)\b/, "type"],
-          [/[{}:]/, "delimiter"],
-        ],
-      },
-    });
-    if (!didRegisterD2Completions) {
-      didRegisterD2Completions = true;
-      monaco.languages.registerCompletionItemProvider("d2", {
-        triggerCharacters: [":", " ", ".", "d", "s"],
-        async provideCompletionItems(model, position) {
-          const lineContent = model.getLineContent(position.lineNumber);
-          if (isD2LineCommentPosition(lineContent, position.column)) {
-            return { suggestions: [] };
-          }
-
-          const completionContext = getD2CompletionContext(lineContent, position.column);
-          if (!completionContext) {
-            return { suggestions: [] };
-          }
-
-          const lineSuffix = lineContent.slice(position.column - 1);
-          const remainingTextMatch =
-            completionContext.kind === "key"
-              ? lineSuffix.match(/^[\w-]*(?:\s*:\s*)?/)
-              : lineSuffix.match(/^[\w-]*/);
-          const remainingText = remainingTextMatch ? remainingTextMatch[0] : "";
-          const replacementRange = {
-            startLineNumber: position.lineNumber,
-            startColumn: position.column - completionContext.typedText.length,
-            endLineNumber: position.lineNumber,
-            endColumn: position.column + remainingText.length,
-          };
-
-          let completions: D2CompletionItem[];
-          try {
-            completions = await invoke<D2CompletionItem[]>("sidecar_call", {
-              method: "complete",
-              params: {
-                source: model.getValue(),
-                line: position.lineNumber - 1,
-                column: position.column - 1,
-              },
-            });
-          } catch {
-            completions = [];
-          }
-
-          return {
-            suggestions: completions.map((completion) => ({
-              label: completion.label,
-              kind: d2CompletionKindToMonaco(monaco, completion.kind),
-              insertText: completion.insertText || completion.label,
-              detail: completion.detail ? `D2 ${completion.detail}` : "D2 completion",
-              range: replacementRange,
-              ...(completionContext.kind === "key"
-                ? {
-                    command: {
-                      id: "editor.action.triggerSuggest",
-                      title: "Trigger value suggestions",
-                    },
-                  }
-                : {}),
-            })),
-          };
-        },
-      });
-    }
-    monaco.editor.defineTheme("d2-dark", {
-      base: "vs-dark",
-      inherit: true,
-      rules: [
-        { token: "", foreground: "d4d4d4" },
-        { token: "comment", foreground: "6a9955" },
-        { token: "keyword", foreground: "4fc1ff" },
-        { token: "type", foreground: "4ec9b0" },
-        { token: "string", foreground: "ce9178" },
-        { token: "delimiter", foreground: "d4d4d4" },
-      ],
-      colors: {
-        "editor.background": "#1e1e1e",
-        "editor.foreground": "#d4d4d4",
-        "editorLineNumber.foreground": "#858585",
-        "editorCursor.foreground": "#f8fafc",
-      },
-    });
-  };
-
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
@@ -944,339 +672,65 @@ function App() {
 
   return (
     <main className="app-shell">
-      <header className="topbar">
-        <div className="brand">
-          <FileText size={20} />
-          <span>D2 Desk</span>
-        </div>
-        <div className="toolbar" role="toolbar">
-          <button title="Open D2 file (Command/Ctrl + O)" onClick={openSourceFile}>
-            <FileInput size={16} />
-          </button>
-          <button title="Save D2 source (Command/Ctrl + S)" onClick={saveSource}>
-            <Save size={16} />
-          </button>
-          <button title="Format document" onClick={formatDocument}>
-            <Wand2 size={16} />
-          </button>
-          <span className="divider" />
-          <select value={theme} onChange={(event) => setTheme(Number(event.target.value))}>
-            {themes.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-          <select value={layout} onChange={(event) => setLayout(event.target.value)}>
-            <option value="dagre">dagre</option>
-          </select>
-          <span className="divider" />
-          <button title="Zoom out (Command/Ctrl + -)" onClick={zoomOut}>
-            <ZoomOut size={16} />
-          </button>
-          <button title="Reset zoom (Command/Ctrl + 0)" onClick={resetView}>
-            <Focus size={16} />
-          </button>
-          <button title="Zoom in (Command/Ctrl + +)" onClick={zoomIn}>
-            <ZoomIn size={16} />
-          </button>
-          <span className="divider" />
-          <button title="Export SVG" onClick={exportSVG}>
-            <Download size={16} />
-          </button>
-          <button title="Export PNG" onClick={exportPNG}>
-            <FileDown size={16} />
-          </button>
-        </div>
-      </header>
+      <Toolbar
+        theme={theme}
+        layout={layout}
+        onThemeChange={setTheme}
+        onLayoutChange={setLayout}
+        onOpen={openSourceFile}
+        onSave={saveSource}
+        onFormat={formatDocument}
+        onZoomOut={zoomOut}
+        onResetView={resetView}
+        onZoomIn={zoomIn}
+        onExportSvg={exportSVG}
+        onExportPng={exportPNG}
+      />
 
-      <nav className="tabbar" aria-label="Open D2 files">
-        <div className="tabs" role="tablist">
-          {tabs.map((tab) => (
-            <div
-              key={tab.id}
-              className={tab.id === activeTabId ? "tab active" : "tab"}
-              title={tab.fileName}
-            >
-              <button
-                className="tab-label"
-                type="button"
-                role="tab"
-                aria-selected={tab.id === activeTabId}
-                onClick={() => {
-                  activateTab(tab.id);
-                }}
-              >
-                <FileText size={14} />
-                <span>{isTabUnsaved(tab) ? `${tab.fileName} *` : tab.fileName}</span>
-              </button>
-              <button
-                className="tab-close"
-                type="button"
-                aria-label={`Close ${tab.fileName}`}
-                title={`Close ${tab.fileName}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void closeTab(tab.id);
-                }}
-              >
-                <X size={14} />
-              </button>
-            </div>
-          ))}
-        </div>
-        <button className="tab-add" title="New tab (Command/Ctrl + T)" onClick={createNewTab}>
-          <Plus size={16} />
-        </button>
-      </nav>
+      <TabBar
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onActivateTab={activateTab}
+        onCloseTab={(tabId) => {
+          void closeTab(tabId);
+        }}
+        onCreateTab={createNewTab}
+      />
 
       <section className="workspace">
-        <section className="editor-pane">
-          <div className="pane-title">
-            <span>{fileName}</span>
-            <span>{source.split("\n").length} lines</span>
-          </div>
-          <Editor
-            key={activeTabId}
-            height="100%"
-            language="d2"
-            theme="d2-dark"
-            value={source}
-            beforeMount={beforeMount}
-            onMount={handleMount}
-            onChange={(value) => updateActiveTab({ source: value ?? "" })}
-            options={{
-              fontSize: editorFontSize,
-              lineHeight: editorLineHeight,
-              fontLigatures: true,
-              minimap: { enabled: false },
-              scrollBeyondLastLine: false,
-              wordWrap: "on",
-              tabSize: 2,
-              automaticLayout: true,
-            }}
-          />
-        </section>
+        <EditorPane
+          activeTabId={activeTabId}
+          fileName={fileName}
+          source={source}
+          editorFontSize={editorFontSize}
+          editorLineHeight={editorLineHeight}
+          beforeMount={configureD2Language}
+          onMount={handleMount}
+          onChange={(value) => updateActiveTab({ source: value })}
+        />
 
-        <section className="preview-pane">
-          <div className="pane-title">
-            <span>Preview</span>
-            <span>{Math.round(zoom * 100)}%</span>
-          </div>
-          <div className="preview-viewport">
-            <div className="preview-canvas" style={{ transform: `scale(${zoom})` }}>
-              <div className="svg-output" dangerouslySetInnerHTML={{ __html: renderedSvg }} />
-              <svg className="overlay" viewBox={overlayViewBox}>
-                {compileResult.objects.map((object) => {
-                  const isFocused = object.id === (hoverId ?? activeId);
-                  return object.kind === "shape" ? (
-                    <g key={object.id}>
-                      {isFocused ? (
-                        <rect
-                          className="focus-indicator"
-                          x={object.preview.x}
-                          y={object.preview.y}
-                          width={object.preview.width}
-                          height={object.preview.height}
-                          rx={8}
-                        />
-                      ) : null}
-                      <rect
-                        className="hit-target"
-                        x={object.preview.x}
-                        y={object.preview.y}
-                        width={object.preview.width}
-                        height={object.preview.height}
-                        rx={8}
-                        onMouseEnter={() => setHoverId(object.id)}
-                        onMouseLeave={() => setHoverId(null)}
-                        onClick={() => {
-                          setActiveId(object.id);
-                          highlightObject(object.id, true);
-                        }}
-                      />
-                    </g>
-                  ) : (
-                    <g key={object.id}>
-                      {isFocused ? (
-                        <path
-                          className="focus-indicator connection"
-                          d={routePath(object.preview.route ?? [])}
-                        />
-                      ) : null}
-                      <path
-                        className="hit-target"
-                        d={routePath(object.preview.route ?? [])}
-                        onMouseEnter={() => setHoverId(object.id)}
-                        onMouseLeave={() => setHoverId(null)}
-                        onClick={() => {
-                          setActiveId(object.id);
-                          highlightObject(object.id, true);
-                        }}
-                      />
-                    </g>
-                  );
-                })}
-              </svg>
-            </div>
-          </div>
-        </section>
+        <PreviewPane
+          objects={compileResult.objects}
+          renderedSvg={renderedSvg}
+          overlayViewBox={overlayViewBox}
+          zoom={zoom}
+          activeId={activeId}
+          hoverId={hoverId}
+          onHover={setHoverId}
+          onSelect={(id) => {
+            setActiveId(id);
+            highlightObject(id, true);
+          }}
+        />
       </section>
 
-      <footer className="bottom-panel">
-        <div>
-          <strong>{status}</strong>
-          {activeObject ? <span className="object-chip">{activeObject.kind}: {activeObject.id}</span> : null}
-        </div>
-        <div className="diagnostics">
-          {compileResult.diagnostics.length === 0
-            ? "No diagnostics"
-            : compileResult.diagnostics.map((diagnostic) => diagnostic.message).join(" | ")}
-        </div>
-      </footer>
+      <BottomPanel
+        status={status}
+        activeObject={activeObject}
+        diagnostics={compileResult.diagnostics}
+      />
     </main>
   );
-}
-
-function routePath(route: { x: number; y: number }[]) {
-  if (route.length === 0) return "";
-  return route.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
-}
-
-function baseName(name: string) {
-  return name.replace(/\.[^.]+$/, "");
-}
-
-function fileNameFromPath(path: string) {
-  return path.split(/[\\/]/).pop() || "untitled.d2";
-}
-
-function ensureD2FileName(name: string) {
-  return name.endsWith(".d2") ? name : `${name}.d2`;
-}
-
-function isTabUnsaved(tab: D2Tab) {
-  return tab.source !== tab.savedSource;
-}
-
-function clampZoom(value: number) {
-  return Number(Math.min(maxZoom, Math.max(minZoom, value)).toFixed(2));
-}
-
-function loadTabs(): D2Tab[] {
-  const fallbackSource = localStorage.getItem("d2-desk:last-source") ?? sampleSource;
-  const fallbackTab = createTab("untitled.d2", fallbackSource, "");
-  const stored = localStorage.getItem(tabsStorageKey);
-  if (!stored) return [fallbackTab];
-
-  try {
-    const parsed = JSON.parse(stored) as Partial<StoredTabs>;
-    const storedTabs = Array.isArray(parsed.tabs) ? parsed.tabs : [];
-    const tabs = storedTabs
-      .filter(
-        (tab): tab is D2Tab =>
-          typeof tab.id === "string" &&
-          typeof tab.fileName === "string" &&
-          typeof tab.source === "string" &&
-          (typeof tab.savedSource === "string" || tab.savedSource === undefined) &&
-          (typeof tab.filePath === "string" || tab.filePath === null || tab.filePath === undefined) &&
-          (typeof tab.editorViewState === "object" || tab.editorViewState === undefined),
-      )
-      .map((tab) => ({
-        id: tab.id,
-        fileName: tab.fileName,
-        source: tab.source,
-        savedSource: tab.savedSource ?? (tab.filePath ? tab.source : ""),
-        filePath: tab.filePath ?? null,
-        editorViewState: tab.editorViewState ?? null,
-      }));
-    return tabs.length > 0 ? tabs : [fallbackTab];
-  } catch {
-    return [fallbackTab];
-  }
-}
-
-function loadActiveTabId(tabs: D2Tab[]) {
-  const fallbackId = tabs[0]?.id ?? createTabId();
-  const stored = localStorage.getItem(tabsStorageKey);
-  if (!stored) return fallbackId;
-
-  try {
-    const parsed = JSON.parse(stored) as Partial<StoredTabs>;
-    return typeof parsed.activeTabId === "string" && tabs.some((tab) => tab.id === parsed.activeTabId)
-      ? parsed.activeTabId
-      : fallbackId;
-  } catch {
-    return fallbackId;
-  }
-}
-
-function createEmptyTab(existingTabs: D2Tab[]) {
-  const usedNames = new Set(existingTabs.map((tab) => tab.fileName));
-  let index = existingTabs.length + 1;
-  let fileName = `untitled-${index}.d2`;
-  while (usedNames.has(fileName)) {
-    index += 1;
-    fileName = `untitled-${index}.d2`;
-  }
-  return createTab(fileName, "", "");
-}
-
-function createTab(fileName: string, source: string, savedSource = source): D2Tab {
-  return {
-    id: createTabId(),
-    fileName,
-    source,
-    savedSource,
-    filePath: null,
-    editorViewState: null,
-  };
-}
-
-function writeStoredTabs(tabs: D2Tab[], activeTabId: string) {
-  localStorage.setItem(tabsStorageKey, JSON.stringify({ activeTabId, tabs }));
-}
-
-function createTabId() {
-  return globalThis.crypto?.randomUUID?.() ?? `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function normalizeSvgSize(svg: string) {
-  if (!svg || /<svg[^>]*\swidth=/.test(svg)) return svg;
-  const match = svg.match(/<svg([^>]*)viewBox="([^"]+)"([^>]*)>/);
-  if (!match) return svg;
-  const [, before, viewBox, after] = match;
-  const parts = viewBox.split(/\s+/).map(Number);
-  if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) return svg;
-  const [, , width, height] = parts;
-  return svg.replace(
-    match[0],
-    `<svg${before}viewBox="${viewBox}" width="${Math.ceil(width)}" height="${Math.ceil(height)}"${after}>`,
-  );
-}
-
-function getDiagramViewBox(svg: string) {
-  const innerSvgMatch = svg.match(/<svg[^>]*\bd2-svg\b[^>]*\sviewBox="([^"]+)"/);
-  if (innerSvgMatch?.[1]) return innerSvgMatch[1];
-  const outerSvgMatch = svg.match(/<svg[^>]*\sviewBox="([^"]+)"/);
-  return outerSvgMatch?.[1] ?? "0 0 800 600";
-}
-
-function downloadBytes(name: string, base64Data: string, type: string) {
-  const binary = atob(base64Data);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  downloadURL(name, URL.createObjectURL(new Blob([bytes], { type })));
-}
-
-function downloadURL(name: string, url: string) {
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = name;
-  anchor.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export default App;
