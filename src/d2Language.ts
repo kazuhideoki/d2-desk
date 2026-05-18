@@ -6,6 +6,12 @@ const d2ValueCompletionPattern =
   /(?:^|[{\s;])(?:[\w"'-]+(?:\.[\w-]+)*\.)?[\w-]+(?:\.[\w-]+)*\s*:\s*([\w-]*)$/;
 
 let didRegisterD2Completions = false;
+const d2CompletionTriggerCharacters = [
+  ":",
+  " ",
+  ".",
+  ..."-_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+];
 
 type D2CompletionContext = {
   kind: "key" | "value";
@@ -28,7 +34,7 @@ export function configureD2Language(monaco: typeof Monaco) {
         [/#.*$/, "comment"],
         [/".*?"/, "string"],
         [/'.*?'/, "string"],
-        [/(->|--)/, "keyword"],
+        [/(<->|<-|->|--)/, "keyword"],
         [/\b(direction|shape|style|fill|stroke|icon|label|tooltip|near)\b/, "type"],
         [/[{}:]/, "delimiter"],
       ],
@@ -37,7 +43,7 @@ export function configureD2Language(monaco: typeof Monaco) {
   if (!didRegisterD2Completions) {
     didRegisterD2Completions = true;
     monaco.languages.registerCompletionItemProvider("d2", {
-      triggerCharacters: [":", " ", ".", "d", "s"],
+      triggerCharacters: d2CompletionTriggerCharacters,
       async provideCompletionItems(model, position) {
         const lineContent = model.getLineContent(position.lineNumber);
         if (isD2LineCommentPosition(lineContent, position.column)) {
@@ -75,6 +81,16 @@ export function configureD2Language(monaco: typeof Monaco) {
         } catch {
           completions = [];
         }
+        if (completions.length === 0 && completionContext.kind === "key") {
+          completions = getD2ChildNodeCompletions(model.getValue(), lineContent, position.column);
+          if (completions.length === 0) {
+            completions = getD2TopLevelNodeCompletions(
+              model.getValue(),
+              lineContent,
+              position.column,
+            );
+          }
+        }
 
         return {
           suggestions: completions.map((completion) => ({
@@ -94,7 +110,7 @@ export function configureD2Language(monaco: typeof Monaco) {
                 ? { value: `D2 ${completion.detail}` }
                 : undefined,
             range: replacementRange,
-            ...(completionContext.kind === "key"
+            ...(completionContext.kind === "key" && (completion.insertText || "").endsWith(": ")
               ? {
                   command: {
                     id: "editor.action.triggerSuggest",
@@ -193,8 +209,227 @@ function d2CompletionKindToMonaco(monaco: typeof Monaco, kind: D2CompletionItem[
 function isD2KeyCompletionBoundary(prefix: string) {
   const trimmedPrefix = prefix.trimEnd();
   if (!trimmedPrefix) return true;
-  if (trimmedPrefix.endsWith(":") || trimmedPrefix.endsWith("->")) return false;
+  if (trimmedPrefix.endsWith(":")) return false;
+  if (
+    trimmedPrefix.endsWith("->") ||
+    trimmedPrefix.endsWith("<-") ||
+    trimmedPrefix.endsWith("--") ||
+    trimmedPrefix.endsWith("<->")
+  ) {
+    return true;
+  }
 
   const lastCharacter = trimmedPrefix[trimmedPrefix.length - 1];
   return lastCharacter === "{" || lastCharacter === ";" || lastCharacter === ".";
+}
+
+function getD2ChildNodeCompletions(
+  source: string,
+  lineContent: string,
+  column: number,
+): D2CompletionItem[] {
+  const linePrefix = lineContent.slice(0, Math.max(0, column - 1));
+  const typedChild = linePrefix.match(/[\w-]*$/)?.[0] ?? "";
+  const parentPrefix = linePrefix.slice(0, linePrefix.length - typedChild.length).trimEnd();
+  if (!parentPrefix.endsWith(".")) return [];
+
+  const parentPath = extractD2Path(parentPrefix.slice(0, -1));
+  if (parentPath.length === 0) return [];
+
+  const children = collectD2ChildNodes(source);
+  const labels = children.get(parentPath.join("\0")) ?? [];
+  const completions: D2CompletionItem[] = labels
+    .filter((label) => label.startsWith(typedChild))
+    .map((label) => ({
+      label,
+      kind: "shape",
+      detail: "child node",
+      description: "子ノードを参照",
+      documentation: "子ノードをドット記法で参照",
+      insertText: label,
+    }));
+  return completions.length > 0 ? completions : [];
+}
+
+function getD2TopLevelNodeCompletions(
+  source: string,
+  lineContent: string,
+  column: number,
+): D2CompletionItem[] {
+  const linePrefix = lineContent.slice(0, Math.max(0, column - 1));
+  const typedKey = linePrefix.match(/[\w-]*$/)?.[0] ?? "";
+  const tokenPrefix = linePrefix.slice(0, linePrefix.length - typedKey.length);
+  if (!typedKey || tokenPrefix.trimEnd().endsWith(".")) return [];
+  if (!isD2KeyCompletionBoundary(tokenPrefix)) return [];
+
+  const children = collectD2ChildNodes(source);
+  const labels = children.get("") ?? [];
+  return labels
+    .filter((label) => label.startsWith(typedKey))
+    .map((label) => ({
+      label,
+      kind: "shape" as const,
+      detail: "node",
+      description: "既存ノードを参照",
+      documentation: "既存ノードを参照",
+      insertText: label,
+    }));
+}
+
+function collectD2ChildNodes(source: string) {
+  const children = new Map<string, Set<string>>();
+  const context: string[] = [];
+  let ignoredMapDepth = 0;
+
+  const addPath = (path: string[]) => {
+    for (let index = 0; index < path.length; index += 1) {
+      const parentKey = path.slice(0, index).join("\0");
+      const child = path[index];
+      const existing = children.get(parentKey) ?? new Set<string>();
+      existing.add(child);
+      children.set(parentKey, existing);
+    }
+  };
+
+  for (const rawLine of source.split("\n")) {
+    const line = stripD2LineComment(rawLine);
+    let quote: string | null = null;
+    let statementStart = 0;
+
+    const flushStatement = (end: number) => {
+      if (ignoredMapDepth !== 0) return;
+      for (const path of nodePathsFromStatement(line.slice(statementStart, end))) {
+        if (isReservedD2NodePath(path)) continue;
+        addPath([...context, ...path]);
+      }
+    };
+
+    for (let index = 0; index < line.length; index += 1) {
+      const character = line[index];
+      if (quote) {
+        if (character === "\\") {
+          index += 1;
+        } else if (character === quote) {
+          quote = null;
+        }
+        continue;
+      }
+      if (character === '"' || character === "'") {
+        quote = character;
+        continue;
+      }
+
+      if (character === "{") {
+        if (ignoredMapDepth > 0) {
+          ignoredMapDepth += 1;
+          statementStart = index + 1;
+          continue;
+        }
+
+        const path = nodePathsFromStatement(line.slice(statementStart, index))[0] ?? [];
+        if (path.length === 0 || isReservedD2NodePath(path)) {
+          ignoredMapDepth = 1;
+          statementStart = index + 1;
+          continue;
+        }
+        const fullPath = [...context, ...path];
+        addPath(fullPath);
+        context.splice(0, context.length, ...fullPath);
+        statementStart = index + 1;
+      } else if (character === "}") {
+        if (ignoredMapDepth > 0) {
+          ignoredMapDepth -= 1;
+          statementStart = index + 1;
+          continue;
+        }
+        flushStatement(index);
+        context.pop();
+        statementStart = index + 1;
+      } else if (character === ";") {
+        flushStatement(index);
+        statementStart = index + 1;
+      }
+    }
+    flushStatement(line.length);
+  }
+
+  return new Map([...children].map(([key, values]) => [key, [...values].sort()]));
+}
+
+function nodePathsFromStatement(statement: string): string[][] {
+  const keyText = statement.split(":", 1)[0].trim();
+  if (!keyText) return [];
+  return keyText
+    .split("<->")
+    .join("->")
+    .split("<-")
+    .join("->")
+    .split("--")
+    .join("->")
+    .split("->")
+    .map(extractD2Path)
+    .filter((path) => path.length > 0);
+}
+
+function extractD2Path(text: string) {
+  const match = text.trimEnd().match(/[\w-]+(?:\.[\w-]+)*\.?$/);
+  return match ? match[0].replace(/\.$/, "").split(".").filter(Boolean) : [];
+}
+
+function stripD2LineComment(text: string) {
+  let quote: string | null = null;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === "#" || (character === "/" && text[index + 1] === "/")) {
+      return text.slice(0, index);
+    }
+  }
+  return text;
+}
+
+function isReservedD2NodePath(path: string[]) {
+  const reserved = new Set([
+    "label",
+    "shape",
+    "icon",
+    "constraint",
+    "tooltip",
+    "link",
+    "near",
+    "width",
+    "height",
+    "direction",
+    "top",
+    "left",
+    "grid-rows",
+    "grid-columns",
+    "grid-gap",
+    "vertical-gap",
+    "horizontal-gap",
+    "class",
+    "vars",
+    "style",
+    "source-arrowhead",
+    "target-arrowhead",
+    "classes",
+    "layers",
+    "scenarios",
+    "steps",
+    "theme-overrides",
+    "dark-theme-overrides",
+    "d2-config",
+  ]);
+  return path.length === 0 || reserved.has(path[0]);
 }
