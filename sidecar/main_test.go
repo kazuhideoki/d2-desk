@@ -314,7 +314,8 @@ func TestScanSourceRangesIgnoresConnectionLabelArrows(t *testing.T) {
 }
 
 func TestCompileReturnsDiagnosticsForInvalidSource(t *testing.T) {
-	result, err := compile(compileParams{Source: "api -> {"})
+	source := "api\nservice\napi.style.fill-pattern: bogus\n"
+	result, err := compile(compileParams{Source: source})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,6 +324,26 @@ func TestCompileReturnsDiagnosticsForInvalidSource(t *testing.T) {
 	}
 	if result.Diagnostics[0].Severity != "error" {
 		t.Fatalf("expected error diagnostic, got %#v", result.Diagnostics[0])
+	}
+	gotRange := result.Diagnostics[0].SourceRange
+	if gotRange.StartLine != 3 || gotRange.StartColumn != 25 || gotRange.EndLine != 3 || gotRange.EndColumn != 30 {
+		t.Fatalf("expected diagnostic source range at invalid value, got %#v", gotRange)
+	}
+	if result.SVG == "" {
+		t.Fatal("expected fallback or partial SVG")
+	}
+}
+
+func TestCompileReturnsDiagnosticsForInvalidSyntax(t *testing.T) {
+	result, err := compile(compileParams{Source: "api -> {"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Diagnostics) == 0 {
+		t.Fatal("expected diagnostics")
+	}
+	if !hasDiagnosticRange(result.Diagnostics, 1, 8, 9) {
+		t.Fatalf("expected diagnostic source range at unterminated map, got %#v", result.Diagnostics)
 	}
 	if result.SVG == "" {
 		t.Fatal("expected fallback or partial SVG")
@@ -744,6 +765,16 @@ func findConnectionByID(objects []objectMap, id string) *objectMap {
 
 func hasRange(ranges []sourceRange, line, startColumn, endColumn int) bool {
 	for _, r := range ranges {
+		if r.StartLine == line && r.EndLine == line && r.StartColumn == startColumn && r.EndColumn == endColumn {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDiagnosticRange(diagnostics []diagnostic, line, startColumn, endColumn int) bool {
+	for _, diagnostic := range diagnostics {
+		r := diagnostic.SourceRange
 		if r.StartLine == line && r.EndLine == line && r.StartColumn == startColumn && r.EndColumn == endColumn {
 			return true
 		}
