@@ -312,6 +312,39 @@ func TestCompleteReturnsShapeCompletionsForInlineMap(t *testing.T) {
 	}
 }
 
+func TestCompleteReturnsKeyCompletions(t *testing.T) {
+	source := "dir"
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len(source)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "direction", "direction: ") {
+		t.Fatalf("expected direction key completion with colon and space, got %#v", items)
+	}
+}
+
+func TestCompleteReturnsNestedKeyCompletions(t *testing.T) {
+	source := "api: {\n  sh\n}"
+	items, err := complete(completeParams{Source: source, Line: 1, Column: len("  sh")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "shape", "shape: ") {
+		t.Fatalf("expected nested shape key completion with colon and space, got %#v", items)
+	}
+}
+
+func TestCompleteDoesNotReturnKeyCompletionsInValuePosition(t *testing.T) {
+	source := "label: sh"
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len(source)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasCompletion(items, "shape") {
+		t.Fatalf("expected no key completions in value position, got %#v", items)
+	}
+}
+
 func TestExportSVGReturnsBase64SVG(t *testing.T) {
 	result, err := export(exportParams{Source: "api -> db", Format: "svg", Layout: "dagre", Theme: 4})
 	if err != nil {
@@ -387,6 +420,15 @@ func hasCompletion(items []completionItem, label string) bool {
 func hasCompletionKind(items []completionItem, label, kind string) bool {
 	for _, item := range items {
 		if item.Label == label && item.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCompletionInsertText(items []completionItem, label, insertText string) bool {
+	for _, item := range items {
+		if item.Label == label && item.InsertText == insertText {
 			return true
 		}
 	}

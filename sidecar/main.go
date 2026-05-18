@@ -68,6 +68,11 @@ type completionItem struct {
 	InsertText string `json:"insertText"`
 }
 
+var d2KeyCompletionItems = []completionItem{
+	{Label: "direction", Kind: "keyword", Detail: "property", InsertText: "direction: "},
+	{Label: "shape", Kind: "keyword", Detail: "property", InsertText: "shape: "},
+}
+
 type diagnostic struct {
 	Message     string      `json:"message"`
 	Severity    string      `json:"severity"`
@@ -185,6 +190,12 @@ func complete(params completeParams) ([]completionItem, error) {
 			}
 		}
 	}
+	if len(items) == 0 {
+		completions := d2KeyCompletions(params)
+		if len(completions) > 0 {
+			return completions, nil
+		}
+	}
 
 	completions := make([]completionItem, 0, len(items))
 	for _, item := range items {
@@ -196,6 +207,48 @@ func complete(params completeParams) ([]completionItem, error) {
 		})
 	}
 	return completions, nil
+}
+
+func d2KeyCompletions(params completeParams) []completionItem {
+	lines := strings.Split(params.Source, "\n")
+	if params.Line < 0 || params.Line >= len(lines) {
+		return nil
+	}
+
+	lineText := lines[params.Line]
+	column := clamp(params.Column, 0, len(lineText))
+	start := column
+	for start > 0 && isCompletionValueChar(lineText[start-1]) {
+		start--
+	}
+	if start == column || !isD2KeyCompletionBoundary(lineText[:start]) {
+		return nil
+	}
+
+	typedKey := lineText[start:column]
+	completions := make([]completionItem, 0, len(d2KeyCompletionItems))
+	for _, item := range d2KeyCompletionItems {
+		if strings.HasPrefix(item.Label, typedKey) {
+			completions = append(completions, item)
+		}
+	}
+	return completions
+}
+
+func isD2KeyCompletionBoundary(prefix string) bool {
+	trimmedPrefix := strings.TrimRight(prefix, " \t")
+	if trimmedPrefix == "" {
+		return true
+	}
+	if strings.HasSuffix(trimmedPrefix, ":") || strings.HasSuffix(trimmedPrefix, "->") {
+		return false
+	}
+	switch trimmedPrefix[len(trimmedPrefix)-1] {
+	case '{', ';', '.':
+		return true
+	default:
+		return false
+	}
 }
 
 func completionProbeWithoutCurrentValue(source string, line, column int) (string, int) {

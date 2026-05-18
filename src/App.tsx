@@ -125,8 +125,14 @@ const maxZoom = 2.2;
 const zoomStep = 0.1;
 const tabsStorageKey = "d2-desk:tabs";
 const d2ValueCompletionPattern = /(?:^|[{\s;])(?:[\w"'-]+(?:\.[\w-]+)*\.)?(direction|shape)\s*:\s*([\w-]*)$/;
+const d2KeyCompletionLabels = ["direction", "shape"];
 
 let didRegisterD2Completions = false;
+
+type D2CompletionContext = {
+  kind: "key" | "value";
+  typedText: string;
+};
 
 function d2CompletionKindToMonaco(monaco: typeof Monaco, kind: D2CompletionItem["kind"]) {
   switch (kind) {
@@ -163,6 +169,42 @@ function isD2LineCommentPosition(lineContent: string, column: number) {
   }
 
   return false;
+}
+
+function getD2CompletionContext(lineContent: string, column: number): D2CompletionContext | null {
+  const linePrefix = lineContent.slice(0, Math.max(0, column - 1));
+  const valueMatch = linePrefix.match(d2ValueCompletionPattern);
+  if (valueMatch) {
+    const typedValue = valueMatch[2];
+    if (typedValue === undefined) return null;
+    return { kind: "value", typedText: typedValue };
+  }
+
+  const keyMatch = linePrefix.match(/[\w-]*$/);
+  if (!keyMatch) return null;
+
+  const typedKey = keyMatch[0];
+  if (!typedKey) return null;
+
+  const tokenStart = linePrefix.length - typedKey.length;
+  const tokenPrefix = linePrefix.slice(0, tokenStart);
+  if (!isD2KeyCompletionBoundary(tokenPrefix)) return null;
+  if (!isD2SupportedKeyPrefix(typedKey)) return null;
+
+  return { kind: "key", typedText: typedKey };
+}
+
+function isD2KeyCompletionBoundary(prefix: string) {
+  const trimmedPrefix = prefix.trimEnd();
+  if (!trimmedPrefix) return true;
+  if (trimmedPrefix.endsWith(":") || trimmedPrefix.endsWith("->")) return false;
+
+  const lastCharacter = trimmedPrefix[trimmedPrefix.length - 1];
+  return lastCharacter === "{" || lastCharacter === ";" || lastCharacter === ".";
+}
+
+function isD2SupportedKeyPrefix(typedKey: string) {
+  return d2KeyCompletionLabels.some((label) => label.startsWith(typedKey));
 }
 
 function App() {
@@ -621,24 +663,29 @@ function App() {
     if (!didRegisterD2Completions) {
       didRegisterD2Completions = true;
       monaco.languages.registerCompletionItemProvider("d2", {
-        triggerCharacters: [":", " "],
+        triggerCharacters: [":", " ", "d", "s"],
         async provideCompletionItems(model, position) {
           const lineContent = model.getLineContent(position.lineNumber);
-          const linePrefix = lineContent.slice(0, position.column - 1);
-          const valueMatch = linePrefix.match(d2ValueCompletionPattern);
-          if (!valueMatch) {
+          if (isD2LineCommentPosition(lineContent, position.column)) {
             return { suggestions: [] };
           }
 
-          const typedValue = valueMatch[2] ?? "";
+          const completionContext = getD2CompletionContext(lineContent, position.column);
+          if (!completionContext) {
+            return { suggestions: [] };
+          }
+
           const lineSuffix = lineContent.slice(position.column - 1);
-          const remainingValueMatch = lineSuffix.match(/^[\w-]*/);
-          const remainingValue = remainingValueMatch?.[0] ?? "";
+          const remainingTextMatch =
+            completionContext.kind === "key"
+              ? lineSuffix.match(/^[\w-]*(?:\s*:\s*)?/)
+              : lineSuffix.match(/^[\w-]*/);
+          const remainingText = remainingTextMatch ? remainingTextMatch[0] : "";
           const replacementRange = {
             startLineNumber: position.lineNumber,
-            startColumn: position.column - typedValue.length,
+            startColumn: position.column - completionContext.typedText.length,
             endLineNumber: position.lineNumber,
-            endColumn: position.column + remainingValue.length,
+            endColumn: position.column + remainingText.length,
           };
 
           let completions: D2CompletionItem[];
@@ -662,6 +709,14 @@ function App() {
               insertText: completion.insertText || completion.label,
               detail: completion.detail ? `D2 ${completion.detail}` : "D2 completion",
               range: replacementRange,
+              ...(completionContext.kind === "key"
+                ? {
+                    command: {
+                      id: "editor.action.triggerSuggest",
+                      title: "Trigger value suggestions",
+                    },
+                  }
+                : {}),
             })),
           };
         },
@@ -748,18 +803,23 @@ function App() {
         }
       }
 
-      const linePrefix = editor
-        .getModel()
-        ?.getLineContent(editor.getPosition()?.lineNumber ?? position.lineNumber)
-        .slice(0, position.column - 1);
-      if (!linePrefix || !d2ValueCompletionPattern.test(linePrefix)) return;
+      const currentPosition = editor.getPosition();
+      if (!currentPosition) return;
 
-      const shouldTriggerD2ValueSuggest = event.changes.some(
+      const lineContent = model.getLineContent(currentPosition.lineNumber);
+      if (isD2LineCommentPosition(lineContent, currentPosition.column)) return;
+
+      const completionContext = getD2CompletionContext(lineContent, currentPosition.column);
+      if (!completionContext) return;
+
+      const shouldTriggerD2Suggest = event.changes.some(
         (change) => change.text === ":" || change.text === " " || /^[\w-]$/.test(change.text),
       );
-      if (shouldTriggerD2ValueSuggest) {
+      if (shouldTriggerD2Suggest) {
+        const triggerSource =
+          completionContext.kind === "key" ? "d2-key-completion" : "d2-value-completion";
         window.setTimeout(() => {
-          editor.trigger("d2-value-completion", "editor.action.triggerSuggest", {});
+          editor.trigger(triggerSource, "editor.action.triggerSuggest", {});
         }, 0);
       }
     });
