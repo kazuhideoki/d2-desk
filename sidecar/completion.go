@@ -10,10 +10,12 @@ import (
 )
 
 type completionItem struct {
-	Label      string `json:"label"`
-	Kind       string `json:"kind"`
-	Detail     string `json:"detail"`
-	InsertText string `json:"insertText"`
+	Label         string `json:"label"`
+	Kind          string `json:"kind"`
+	Detail        string `json:"detail"`
+	Description   string `json:"description"`
+	Documentation string `json:"documentation"`
+	InsertText    string `json:"insertText"`
 }
 
 var d2KeyCompletionItems = buildD2KeyCompletionItems()
@@ -62,8 +64,9 @@ func complete(params completeParams) ([]completionItem, error) {
 			}
 		}
 	}
+	context := completionKeyContext(params.Source, params.Line, params.Column)
 	if completions := d2ContextValueCompletions(params); completions != nil {
-		return completions, nil
+		return enrichCompletionItems(completions, context), nil
 	}
 	if len(items) == 0 {
 		completions := d2KeyCompletions(params)
@@ -80,7 +83,7 @@ func complete(params completeParams) ([]completionItem, error) {
 			InsertText: item.InsertText,
 		})
 	}
-	return completions, nil
+	return enrichCompletionItems(completions, context), nil
 }
 
 func mergeCompletionItems(primary, supplemental []completionItem) []completionItem {
@@ -162,11 +165,12 @@ func d2KeyCompletions(params completeParams) []completionItem {
 	}
 
 	typedKey := lineText[start:column]
-	items := d2KeyItemsForContext(completionKeyContext(params.Source, params.Line, start))
+	context := completionKeyContext(params.Source, params.Line, start)
+	items := d2KeyItemsForContext(context)
 	completions := make([]completionItem, 0, len(items))
 	for _, item := range items {
 		if strings.HasPrefix(item.Label, typedKey) {
-			completions = append(completions, item)
+			completions = append(completions, enrichCompletionItem(item, context))
 		}
 	}
 	return completions
@@ -303,6 +307,330 @@ func completionItemsWithInsertText(labels []string, detail, kind string) []compl
 		})
 	}
 	return items
+}
+
+func enrichCompletionItems(items []completionItem, context []string) []completionItem {
+	enriched := make([]completionItem, 0, len(items))
+	for _, item := range items {
+		enriched = append(enriched, enrichCompletionItem(item, context))
+	}
+	return enriched
+}
+
+func enrichCompletionItem(item completionItem, context []string) completionItem {
+	if item.Description == "" {
+		item.Description = completionDescription(item, context)
+	}
+	if item.Documentation == "" {
+		item.Documentation = completionDocumentation(item)
+	}
+	return item
+}
+
+func completionDescription(item completionItem, context []string) string {
+	if hasTrailingContext(context, "source-arrowhead") || hasTrailingContext(context, "target-arrowhead") {
+		if description, ok := arrowheadKeyDescriptions[item.Label]; ok {
+			return description
+		}
+	}
+	if hasTrailingContext(context, "label") || hasTrailingContext(context, "icon") || hasTrailingContext(context, "tooltip") {
+		if description, ok := labelIconTooltipKeyDescriptions[item.Label]; ok {
+			return description
+		}
+	}
+	if hasTrailingContext(context, "vars", "d2-config") {
+		if description, ok := configKeyDescriptions[item.Label]; ok {
+			return description
+		}
+	}
+	if hasTrailingContext(context, "theme-overrides") || hasTrailingContext(context, "dark-theme-overrides") {
+		return "テーマ色スロットを指定"
+	}
+	if hasTrailingContext(context, "style") {
+		if description, ok := styleKeyDescriptions[item.Label]; ok {
+			return description
+		}
+	}
+
+	if len(context) > 0 {
+		last := context[len(context)-1]
+		switch {
+		case last == "direction":
+			if description, ok := directionValueDescriptions[item.Label]; ok {
+				return description
+			}
+		case last == "shape":
+			if description, ok := shapeValueDescriptions[item.Label]; ok {
+				return description
+			}
+		case last == "fill-pattern":
+			if description, ok := fillPatternValueDescriptions[item.Label]; ok {
+				return description
+			}
+		case last == "text-transform":
+			if description, ok := textTransformValueDescriptions[item.Label]; ok {
+				return description
+			}
+		case last == "font":
+			if description, ok := fontValueDescriptions[item.Label]; ok {
+				return description
+			}
+		case hasTrailingContext(context, "source-arrowhead", "shape"),
+			hasTrailingContext(context, "target-arrowhead", "shape"):
+			if description, ok := arrowheadShapeValueDescriptions[item.Label]; ok {
+				return description
+			}
+		case hasTrailingContext(context, "label", "near"),
+			hasTrailingContext(context, "icon", "near"),
+			hasTrailingContext(context, "tooltip", "near"),
+			last == "near":
+			if description := nearPositionDescription(item.Label); description != "" {
+				return description
+			}
+		}
+	}
+
+	if item.Detail == "boolean" {
+		if item.Label == "true" {
+			return "有効にする"
+		}
+		if item.Label == "false" {
+			return "無効にする"
+		}
+	}
+	if description, ok := keyDescriptions[item.Label]; ok {
+		return description
+	}
+	return ""
+}
+
+func completionDocumentation(item completionItem) string {
+	if item.Description == "" && item.Detail == "" {
+		return ""
+	}
+	if item.Description == "" {
+		return "D2 " + item.Detail
+	}
+	if item.Detail == "" {
+		return item.Description
+	}
+	return item.Description + "\n\n種類: D2 " + item.Detail
+}
+
+func nearPositionDescription(label string) string {
+	switch label {
+	case "top-left":
+		return "左上に配置"
+	case "top-center":
+		return "上中央に配置"
+	case "top-right":
+		return "右上に配置"
+	case "center-left":
+		return "中央左に配置"
+	case "center-center":
+		return "中央に配置"
+	case "center-right":
+		return "中央右に配置"
+	case "bottom-left":
+		return "左下に配置"
+	case "bottom-center":
+		return "下中央に配置"
+	case "bottom-right":
+		return "右下に配置"
+	case "outside-top-left":
+		return "外側の左上に配置"
+	case "outside-top-center":
+		return "外側の上中央に配置"
+	case "outside-top-right":
+		return "外側の右上に配置"
+	case "outside-left-top":
+		return "外側の左上寄りに配置"
+	case "outside-left-center":
+		return "外側の左中央に配置"
+	case "outside-left-bottom":
+		return "外側の左下寄りに配置"
+	case "outside-right-top":
+		return "外側の右上寄りに配置"
+	case "outside-right-center":
+		return "外側の右中央に配置"
+	case "outside-right-bottom":
+		return "外側の右下寄りに配置"
+	case "outside-bottom-left":
+		return "外側の左下に配置"
+	case "outside-bottom-center":
+		return "外側の下中央に配置"
+	case "outside-bottom-right":
+		return "外側の右下に配置"
+	case "border-top-left":
+		return "境界線の左上に配置"
+	case "border-top-center":
+		return "境界線の上中央に配置"
+	case "border-top-right":
+		return "境界線の右上に配置"
+	case "border-left-top":
+		return "境界線の左上寄りに配置"
+	case "border-left-center":
+		return "境界線の左中央に配置"
+	case "border-left-bottom":
+		return "境界線の左下寄りに配置"
+	case "border-right-top":
+		return "境界線の右上寄りに配置"
+	case "border-right-center":
+		return "境界線の右中央に配置"
+	case "border-right-bottom":
+		return "境界線の右下寄りに配置"
+	case "border-bottom-left":
+		return "境界線の左下に配置"
+	case "border-bottom-center":
+		return "境界線の下中央に配置"
+	case "border-bottom-right":
+		return "境界線の右下に配置"
+	default:
+		return ""
+	}
+}
+
+var keyDescriptions = map[string]string{
+	"label":            "表示する文字を指定",
+	"shape":            "図形の形を指定",
+	"icon":             "アイコン画像を表示",
+	"constraint":       "配置時の制約を指定",
+	"tooltip":          "ホバー時の説明を設定",
+	"link":             "クリック時のリンク先を指定",
+	"near":             "別要素の近くに配置",
+	"width":            "幅をピクセルで指定",
+	"height":           "高さをピクセルで指定",
+	"direction":        "全体のレイアウト方向を指定",
+	"top":              "上からの位置を指定",
+	"left":             "左からの位置を指定",
+	"grid-rows":        "グリッドの行数を指定",
+	"grid-columns":     "グリッドの列数を指定",
+	"grid-gap":         "グリッドの間隔を指定",
+	"vertical-gap":     "縦方向の間隔を指定",
+	"horizontal-gap":   "横方向の間隔を指定",
+	"class":            "適用するクラスを指定",
+	"vars":             "変数やD2設定を定義",
+	"style":            "見た目の設定をまとめる",
+	"source-arrowhead": "接続元の矢印端を設定",
+	"target-arrowhead": "接続先の矢印端を設定",
+	"classes":          "再利用するスタイルを定義",
+	"layers":           "レイヤーを定義",
+	"scenarios":        "シナリオを定義",
+	"steps":            "ステップを定義",
+}
+
+var styleKeyDescriptions = map[string]string{
+	"opacity":        "透明度を指定",
+	"stroke":         "枠線の色を指定",
+	"fill":           "塗り色を指定",
+	"fill-pattern":   "塗りパターンを指定",
+	"stroke-width":   "枠線の太さを指定",
+	"stroke-dash":    "破線の間隔を指定",
+	"border-radius":  "角丸の大きさを指定",
+	"font":           "文字フォントを指定",
+	"font-size":      "文字サイズを指定",
+	"font-color":     "文字色を指定",
+	"bold":           "文字を太字にする",
+	"italic":         "文字を斜体にする",
+	"underline":      "文字に下線を付ける",
+	"text-transform": "英字の大文字小文字を変換",
+	"shadow":         "影を表示",
+	"multiple":       "複数要素風に表示",
+	"double-border":  "二重線の枠を表示",
+	"3d":             "立体風に表示",
+	"animated":       "接続線をアニメーション表示",
+	"filled":         "矢印端を塗りつぶす",
+}
+
+var arrowheadKeyDescriptions = map[string]string{
+	"shape":        "矢印端の形を指定",
+	"label":        "矢印端のラベルを指定",
+	"style.filled": "矢印端を塗りつぶす",
+}
+
+var labelIconTooltipKeyDescriptions = map[string]string{
+	"near": "表示位置を指定",
+}
+
+var configKeyDescriptions = map[string]string{
+	"sketch":               "手描き風表示を切り替え",
+	"theme-id":             "ライトテーマを指定",
+	"dark-theme-id":        "ダークテーマを指定",
+	"pad":                  "図全体の余白を指定",
+	"layout-engine":        "レイアウトエンジンを指定",
+	"center":               "図を中央寄せにする",
+	"theme-overrides":      "ライトテーマ色を上書き",
+	"dark-theme-overrides": "ダークテーマ色を上書き",
+	"data":                 "設定用データを渡す",
+}
+
+var directionValueDescriptions = map[string]string{
+	"up":    "上方向に並べる",
+	"down":  "下方向に並べる",
+	"right": "右方向に並べる",
+	"left":  "左方向に並べる",
+}
+
+var shapeValueDescriptions = map[string]string{
+	"rectangle":        "長方形の図形",
+	"square":           "正方形の図形",
+	"page":             "ページ形の図形",
+	"parallelogram":    "平行四辺形の図形",
+	"document":         "書類形の図形",
+	"cylinder":         "データベース風の図形",
+	"queue":            "キュー風の図形",
+	"package":          "パッケージ風の図形",
+	"step":             "ステップ形の図形",
+	"callout":          "吹き出し形の図形",
+	"stored_data":      "保存データ風の図形",
+	"person":           "人物を表す図形",
+	"c4-person":        "C4モデルの人物図形",
+	"diamond":          "ひし形の図形",
+	"oval":             "楕円の図形",
+	"circle":           "円形の図形",
+	"hexagon":          "六角形の図形",
+	"cloud":            "クラウド形の図形",
+	"text":             "テキストだけを表示",
+	"code":             "コードブロック風に表示",
+	"class":            "クラス図風に表示",
+	"sql_table":        "SQLテーブル風に表示",
+	"image":            "画像を表示する図形",
+	"sequence_diagram": "シーケンス図として表示",
+	"hierarchy":        "階層図として表示",
+}
+
+var fillPatternValueDescriptions = map[string]string{
+	"none":  "塗りパターンなし",
+	"dots":  "ドット柄で塗る",
+	"lines": "線柄で塗る",
+	"grain": "粒状の質感で塗る",
+	"paper": "紙の質感で塗る",
+}
+
+var textTransformValueDescriptions = map[string]string{
+	"none":       "文字変換なし",
+	"uppercase":  "英字を大文字に変換",
+	"lowercase":  "英字を小文字に変換",
+	"capitalize": "単語の先頭を大文字に変換",
+}
+
+var fontValueDescriptions = map[string]string{
+	"default": "標準フォントを使う",
+	"mono":    "等幅フォントを使う",
+}
+
+var arrowheadShapeValueDescriptions = map[string]string{
+	"none":             "矢印端を表示しない",
+	"arrow":            "通常の矢印端",
+	"triangle":         "三角形の矢印端",
+	"diamond":          "ひし形の矢印端",
+	"circle":           "円形の矢印端",
+	"box":              "四角形の矢印端",
+	"cf-one":           "Crow's Footの1を表す",
+	"cf-many":          "Crow's Footの多を表す",
+	"cf-one-required":  "必須の1を表す",
+	"cf-many-required": "必須の多を表す",
+	"cross":            "交差印の矢印端",
 }
 
 func isD2KeyCompletionBoundary(prefix string) bool {

@@ -418,6 +418,61 @@ func TestCompleteReturnsDirectionCompletionsWhileTypingValue(t *testing.T) {
 	}
 }
 
+func TestCompleteReturnsLearningDescriptions(t *testing.T) {
+	tests := []struct {
+		name        string
+		source      string
+		line        int
+		column      int
+		label       string
+		description string
+	}{
+		{
+			name:        "key",
+			source:      "dir",
+			line:        0,
+			column:      len("dir"),
+			label:       "direction",
+			description: "全体のレイアウト方向を指定",
+		},
+		{
+			name:        "style key",
+			source:      "api: {\n  style: {\n    fill-p\n  }\n}",
+			line:        2,
+			column:      len("    fill-p"),
+			label:       "fill-pattern",
+			description: "塗りパターンを指定",
+		},
+		{
+			name:        "value",
+			source:      "shape: he",
+			line:        0,
+			column:      len("shape: he"),
+			label:       "hexagon",
+			description: "六角形の図形",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			items, err := complete(completeParams{Source: tt.source, Line: tt.line, Column: tt.column})
+			if err != nil {
+				t.Fatal(err)
+			}
+			item := completionByLabel(items, tt.label)
+			if item == nil {
+				t.Fatalf("expected %q completion, got %#v", tt.label, items)
+			}
+			if item.Description != tt.description {
+				t.Fatalf("expected description %q, got %#v", tt.description, item)
+			}
+			if !strings.Contains(item.Documentation, item.Detail) {
+				t.Fatalf("expected documentation to preserve detail %q, got %#v", item.Detail, item)
+			}
+		})
+	}
+}
+
 func TestCompleteReturnsShapeCompletions(t *testing.T) {
 	source := "shape: "
 	items, err := complete(completeParams{Source: source, Line: 0, Column: len(source)})
@@ -783,12 +838,7 @@ func hasDiagnosticRange(diagnostics []diagnostic, line, startColumn, endColumn i
 }
 
 func hasCompletion(items []completionItem, label string) bool {
-	for _, item := range items {
-		if item.Label == label {
-			return true
-		}
-	}
-	return false
+	return completionByLabel(items, label) != nil
 }
 
 func hasCompletionKind(items []completionItem, label, kind string) bool {
@@ -807,6 +857,15 @@ func hasCompletionInsertText(items []completionItem, label, insertText string) b
 		}
 	}
 	return false
+}
+
+func completionByLabel(items []completionItem, label string) *completionItem {
+	for i := range items {
+		if items[i].Label == label {
+			return &items[i]
+		}
+	}
+	return nil
 }
 
 func completionLabels(items []completionItem) []string {

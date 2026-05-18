@@ -48,6 +48,8 @@ export type D2CompletionItem = {
   label: string;
   kind: "keyword" | "style" | "shape";
   detail: string;
+  description: string;
+  documentation: string;
   insertText: string;
 };
 
