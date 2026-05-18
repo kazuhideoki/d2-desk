@@ -9,6 +9,7 @@ import { EditorPane } from "./components/EditorPane";
 import { PreviewPane } from "./components/PreviewPane";
 import { TabBar } from "./components/TabBar";
 import { Toolbar } from "./components/Toolbar";
+import { WorkspaceManager } from "./components/WorkspaceManager";
 import { baseEditorFontSize, baseEditorLineHeight, zoomStep } from "./constants";
 import {
   configureD2Language,
@@ -22,7 +23,14 @@ import {
   loadTabs,
   writeStoredTabs,
 } from "./tabs";
-import type { CompileResult, D2Tab, ExportResult, OpenedD2File, SavedD2File } from "./types";
+import type {
+  CompileResult,
+  D2Tab,
+  ExportResult,
+  OpenedD2File,
+  SavedD2File,
+  StoredWorkspaces,
+} from "./types";
 import {
   baseName,
   clampZoom,
@@ -33,11 +41,56 @@ import {
   getDiagramViewBox,
   normalizeSvgSize,
 } from "./utils";
+import {
+  activateWorkspace,
+  addOrTouchWorkspace,
+  getActiveWorkspace,
+  loadWorkspaceActiveTabId,
+  loadWorkspaces,
+  loadWorkspaceTabs,
+  removeWorkspace,
+  writeWorkspaceTabs,
+} from "./workspaces";
 import "./App.css";
 
+type InitialSession = {
+  workspaceState: StoredWorkspaces;
+  tabs: D2Tab[];
+  activeTabId: string;
+};
+
+function loadInitialSession(): InitialSession {
+  const workspaceState = loadWorkspaces();
+  const activeWorkspace = getActiveWorkspace(workspaceState);
+  if (activeWorkspace) {
+    const tabs = loadWorkspaceTabs(activeWorkspace);
+    return {
+      workspaceState,
+      tabs,
+      activeTabId: loadWorkspaceActiveTabId(activeWorkspace, tabs),
+    };
+  }
+
+  const tabs = loadTabs();
+  return {
+    workspaceState,
+    tabs,
+    activeTabId: loadActiveTabId(tabs),
+  };
+}
+
 function App() {
-  const [tabs, setTabs] = useState<D2Tab[]>(() => loadTabs());
-  const [activeTabId, setActiveTabId] = useState(() => loadActiveTabId(tabs));
+  const initialSessionRef = useRef<InitialSession | null>(null);
+  if (!initialSessionRef.current) {
+    initialSessionRef.current = loadInitialSession();
+  }
+
+  const [workspaceState, setWorkspaceState] = useState(
+    () => initialSessionRef.current!.workspaceState,
+  );
+  const [workspaceManagerOpen, setWorkspaceManagerOpen] = useState(false);
+  const [tabs, setTabs] = useState<D2Tab[]>(() => initialSessionRef.current!.tabs);
+  const [activeTabId, setActiveTabId] = useState(() => initialSessionRef.current!.activeTabId);
   const [compileResult, setCompileResult] = useState<CompileResult>({
     svg: "",
     objects: [],
@@ -57,6 +110,8 @@ function App() {
   const saveSourceRef = useRef<() => void>(() => undefined);
   const closeActiveTabRef = useRef<() => void>(() => undefined);
   const quitApplicationRef = useRef<() => void>(() => undefined);
+  const workspaceStateRef = useRef(workspaceState);
+  const activeWorkspaceIdRef = useRef(workspaceState.activeWorkspaceId);
   const tabsRef = useRef(tabs);
   const activeTabIdRef = useRef(activeTabId);
   const editorTabIdRef = useRef(activeTabId);
@@ -86,12 +141,40 @@ function App() {
   const editorLineHeight = Math.round(baseEditorLineHeight * zoom);
 
   useEffect(() => {
+    workspaceStateRef.current = workspaceState;
+    activeWorkspaceIdRef.current = workspaceState.activeWorkspaceId;
+  }, [workspaceState]);
+
+  useEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
 
   useEffect(() => {
     activeTabIdRef.current = activeTabId;
   }, [activeTabId]);
+
+  const persistTabs = useCallback((nextTabs: D2Tab[], nextActiveTabId: string) => {
+    const workspaceId = activeWorkspaceIdRef.current;
+    if (!workspaceId) {
+      writeStoredTabs(nextTabs, nextActiveTabId);
+      return;
+    }
+
+    const hasWorkspace = workspaceStateRef.current.workspaces.some(
+      (workspace) => workspace.id === workspaceId,
+    );
+    if (!hasWorkspace) {
+      writeStoredTabs(nextTabs, nextActiveTabId);
+      return;
+    }
+
+    workspaceStateRef.current = writeWorkspaceTabs(
+      workspaceStateRef.current,
+      workspaceId,
+      nextTabs,
+      nextActiveTabId,
+    );
+  }, []);
 
   const persistActiveEditorViewState = useCallback(() => {
     const editor = editorRef.current;
@@ -108,9 +191,9 @@ function App() {
     );
     tabsRef.current = nextTabs;
     setTabs(nextTabs);
-    writeStoredTabs(nextTabs, tabId);
+    persistTabs(nextTabs, tabId);
     return nextTabs;
-  }, []);
+  }, [persistTabs]);
 
   const activateTab = useCallback((tabId: string) => {
     activeTabIdRef.current = tabId;
@@ -124,10 +207,10 @@ function App() {
       const tabId = activeTabIdRef.current;
       const nextTabs = currentTabs.map((tab) => (tab.id === tabId ? { ...tab, ...updates } : tab));
       tabsRef.current = nextTabs;
-      writeStoredTabs(nextTabs, tabId);
+      persistTabs(nextTabs, tabId);
       return nextTabs;
     });
-  }, []);
+  }, [persistTabs]);
 
   const createNewTab = useCallback(() => {
     const nextTab = createEmptyTab(tabsRef.current);
@@ -136,11 +219,11 @@ function App() {
     activeTabIdRef.current = nextTab.id;
     setTabs(nextTabs);
     setActiveTabId(nextTab.id);
-    writeStoredTabs(nextTabs, nextTab.id);
+    persistTabs(nextTabs, nextTab.id);
     setActiveId(null);
     setHoverId(null);
     setStatus(`Created ${nextTab.fileName}`);
-  }, []);
+  }, [persistTabs]);
 
   const compile = useCallback(
     async (nextSource: string, tabId: string, requestId: number) => {
@@ -203,8 +286,8 @@ function App() {
   );
 
   useEffect(() => {
-    writeStoredTabs(tabs, activeTabId);
-  }, [activeTabId, tabs]);
+    persistTabs(tabs, activeTabId);
+  }, [activeTabId, persistTabs, tabs]);
 
   useEffect(() => {
     localStorage.setItem("d2-desk:last-source", source);
@@ -347,12 +430,12 @@ function App() {
       }
       tabsRef.current = nextTabs;
       setTabs(nextTabs);
-      writeStoredTabs(nextTabs, activeTabIdRef.current);
+      persistTabs(nextTabs, activeTabIdRef.current);
       setStatus(`Closed ${targetTab.fileName}`);
     } finally {
       closeTabInFlightRef.current = false;
     }
-  }, [persistActiveEditorViewState]);
+  }, [persistActiveEditorViewState, persistTabs]);
 
   const closeActiveTab = useCallback(() => {
     void closeTab(activeTabId);
@@ -392,6 +475,145 @@ function App() {
       quitInFlightRef.current = false;
     }
   }, [persistActiveEditorViewState]);
+
+  const applyWorkspaceSelection = useCallback(
+    (
+      nextWorkspaceState: StoredWorkspaces,
+      workspaceId: string | null,
+      tabOverride?: { tabs: D2Tab[]; activeTabId: string },
+    ) => {
+      const workspace = workspaceId
+        ? nextWorkspaceState.workspaces.find((item) => item.id === workspaceId)
+        : null;
+      const nextTabs = tabOverride?.tabs ?? (workspace ? loadWorkspaceTabs(workspace) : loadTabs());
+      const nextActiveTabId =
+        tabOverride?.activeTabId ??
+        (workspace ? loadWorkspaceActiveTabId(workspace, nextTabs) : loadActiveTabId(nextTabs));
+
+      workspaceStateRef.current = nextWorkspaceState;
+      activeWorkspaceIdRef.current = workspaceId;
+      tabsRef.current = nextTabs;
+      activeTabIdRef.current = nextActiveTabId;
+      editorTabIdRef.current = nextActiveTabId;
+      setWorkspaceState(nextWorkspaceState);
+      setTabs(nextTabs);
+      setActiveTabId(nextActiveTabId);
+      setActiveId(null);
+      setHoverId(null);
+    },
+    [],
+  );
+
+  const confirmLeavingCurrentWorkspace = useCallback(async () => {
+    const currentTabs = persistActiveEditorViewState();
+    const unsavedTabs = currentTabs.filter(isTabUnsaved);
+    if (unsavedTabs.length === 0) return currentTabs;
+
+    const fileList = unsavedTabs.map((tab) => tab.fileName).join(", ");
+    const shouldSwitch = await confirm(
+      `${fileList} ${unsavedTabs.length === 1 ? "has" : "have"} unsaved changes. Switch workspace anyway?`,
+      {
+        title: "Unsaved changes",
+        kind: "warning",
+        okLabel: "Switch without saving",
+        cancelLabel: "Cancel",
+      },
+    );
+    if (!shouldSwitch) {
+      setStatus("Workspace switch canceled");
+      return null;
+    }
+    return currentTabs;
+  }, [persistActiveEditorViewState]);
+
+  const switchWorkspace = useCallback(
+    async (workspaceId: string | null) => {
+      if (workspaceId === activeWorkspaceIdRef.current) return;
+      if (
+        workspaceId &&
+        !workspaceStateRef.current.workspaces.some((workspace) => workspace.id === workspaceId)
+      ) {
+        setStatus("Workspace not found");
+        return;
+      }
+
+      if (!(await confirmLeavingCurrentWorkspace())) return;
+
+      const nextWorkspaceState = activateWorkspace(workspaceStateRef.current, workspaceId);
+      applyWorkspaceSelection(nextWorkspaceState, workspaceId);
+      const workspace = workspaceId
+        ? nextWorkspaceState.workspaces.find((item) => item.id === workspaceId)
+        : null;
+      setStatus(workspace ? `Switched to ${workspace.name}` : "Switched to No Workspace");
+    },
+    [applyWorkspaceSelection, confirmLeavingCurrentWorkspace],
+  );
+
+  const openWorkspaceFolder = useCallback(async () => {
+    try {
+      const selected = await open({
+        title: "Open Workspace Folder",
+        directory: true,
+        multiple: false,
+      });
+      if (!selected || Array.isArray(selected)) {
+        setStatus("Open workspace canceled");
+        return;
+      }
+
+      if (!(await confirmLeavingCurrentWorkspace())) return;
+
+      const result = addOrTouchWorkspace(workspaceStateRef.current, selected);
+      applyWorkspaceSelection(result.state, result.workspaceId);
+      const workspace = result.state.workspaces.find((item) => item.id === result.workspaceId);
+      setStatus(
+        workspace
+          ? `${result.created ? "Registered" : "Switched to"} ${workspace.name}`
+          : "Workspace updated",
+      );
+    } catch (error) {
+      setStatus(String(error));
+    }
+  }, [applyWorkspaceSelection, confirmLeavingCurrentWorkspace]);
+
+  const removeRegisteredWorkspace = useCallback(
+    async (workspaceId: string) => {
+      const workspace = workspaceStateRef.current.workspaces.find((item) => item.id === workspaceId);
+      if (!workspace) return;
+
+      const shouldRemove = await confirm(
+        `Remove ${workspace.name} from D2 Desk? Files in the folder will not be deleted.`,
+        {
+          title: "Remove workspace",
+          kind: "warning",
+          okLabel: "Remove",
+          cancelLabel: "Cancel",
+        },
+      );
+      if (!shouldRemove) {
+        setStatus("Remove workspace canceled");
+        return;
+      }
+
+      const wasActive = workspaceId === activeWorkspaceIdRef.current;
+      const currentTabs = wasActive ? persistActiveEditorViewState() : tabsRef.current;
+      const currentActiveTabId = activeTabIdRef.current;
+      const nextWorkspaceState = removeWorkspace(workspaceStateRef.current, workspaceId);
+
+      if (wasActive) {
+        writeStoredTabs(currentTabs, currentActiveTabId);
+        applyWorkspaceSelection(nextWorkspaceState, null, {
+          tabs: currentTabs,
+          activeTabId: currentActiveTabId,
+        });
+      } else {
+        workspaceStateRef.current = nextWorkspaceState;
+        setWorkspaceState(nextWorkspaceState);
+      }
+      setStatus(`Removed ${workspace.name}`);
+    },
+    [applyWorkspaceSelection, persistActiveEditorViewState],
+  );
 
   useEffect(() => {
     openSourceFileRef.current = () => {
@@ -673,8 +895,17 @@ function App() {
   return (
     <main className="app-shell">
       <Toolbar
+        workspaces={workspaceState.workspaces}
+        activeWorkspaceId={workspaceState.activeWorkspaceId}
         theme={theme}
         layout={layout}
+        onWorkspaceChange={(workspaceId) => {
+          void switchWorkspace(workspaceId);
+        }}
+        onOpenWorkspace={() => {
+          void openWorkspaceFolder();
+        }}
+        onManageWorkspaces={() => setWorkspaceManagerOpen(true)}
         onThemeChange={setTheme}
         onLayoutChange={setLayout}
         onOpen={openSourceFile}
@@ -686,6 +917,17 @@ function App() {
         onExportSvg={exportSVG}
         onExportPng={exportPNG}
       />
+
+      {workspaceManagerOpen ? (
+        <WorkspaceManager
+          workspaces={workspaceState.workspaces}
+          activeWorkspaceId={workspaceState.activeWorkspaceId}
+          onClose={() => setWorkspaceManagerOpen(false)}
+          onRemoveWorkspace={(workspaceId) => {
+            void removeRegisteredWorkspace(workspaceId);
+          }}
+        />
+      ) : null}
 
       <TabBar
         tabs={tabs}

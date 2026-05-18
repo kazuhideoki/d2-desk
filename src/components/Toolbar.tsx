@@ -1,19 +1,28 @@
 import {
+  Briefcase,
   Download,
   FileDown,
   FileInput,
   FileText,
+  FolderPlus,
   Focus,
+  Settings,
   Save,
   Wand2,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import { themes } from "../constants";
+import type { Workspace } from "../types";
 
 type ToolbarProps = {
+  workspaces: Workspace[];
+  activeWorkspaceId: string | null;
   theme: number;
   layout: string;
+  onWorkspaceChange: (workspaceId: string | null) => void;
+  onOpenWorkspace: () => void;
+  onManageWorkspaces: () => void;
   onThemeChange: (theme: number) => void;
   onLayoutChange: (layout: string) => void;
   onOpen: () => void;
@@ -27,8 +36,13 @@ type ToolbarProps = {
 };
 
 export function Toolbar({
+  workspaces,
+  activeWorkspaceId,
   theme,
   layout,
+  onWorkspaceChange,
+  onOpenWorkspace,
+  onManageWorkspaces,
   onThemeChange,
   onLayoutChange,
   onOpen,
@@ -45,6 +59,27 @@ export function Toolbar({
       <div className="brand">
         <FileText size={20} />
         <span>D2 Desk</span>
+      </div>
+      <div className="workspace-switcher">
+        <Briefcase size={16} />
+        <select
+          aria-label="Workspace"
+          value={activeWorkspaceId ?? ""}
+          onChange={(event) => onWorkspaceChange(event.target.value || null)}
+        >
+          <option value="">No Workspace</option>
+          {workspaces.map((workspace) => (
+            <option key={workspace.id} value={workspace.id}>
+              {workspace.name}
+            </option>
+          ))}
+        </select>
+        <button title="Open workspace folder" onClick={onOpenWorkspace}>
+          <FolderPlus size={16} />
+        </button>
+        <button title="Manage workspaces" onClick={onManageWorkspaces}>
+          <Settings size={16} />
+        </button>
       </div>
       <div className="toolbar" role="toolbar">
         <button title="Open D2 file (Command/Ctrl + O)" onClick={onOpen}>

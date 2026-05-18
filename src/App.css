@@ -79,15 +79,29 @@ select {
 
 .brand {
   display: flex;
-  min-width: 132px;
+  min-width: 118px;
   align-items: center;
   gap: 8px;
   font-weight: 700;
   color: #0f3d3e;
 }
 
+.workspace-switcher {
+  display: flex;
+  min-width: 240px;
+  align-items: center;
+  gap: 8px;
+  color: #41565e;
+}
+
+.workspace-switcher select {
+  width: min(240px, 24vw);
+  min-width: 144px;
+}
+
 .toolbar {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 8px;
 }
@@ -100,6 +114,91 @@ select {
 
 .hidden-input {
   display: none;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.workspace-manager {
+  display: grid;
+  grid-template-rows: 48px minmax(0, 1fr);
+  width: min(720px, 100%);
+  max-height: min(520px, calc(100vh - 48px));
+  border: 1px solid #c7d2d6;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.22);
+}
+
+.workspace-manager-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 14px 0 16px;
+  border-bottom: 1px solid #d8e0e2;
+}
+
+.workspace-manager-header h2 {
+  margin: 0;
+  font-size: 15px;
+  color: #172026;
+}
+
+.workspace-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.workspace-empty {
+  margin: 4px;
+  color: #5b6d74;
+}
+
+.workspace-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid #d8e0e2;
+  border-radius: 6px;
+  background: #f8faf9;
+}
+
+.workspace-row-main {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.workspace-row-main strong,
+.workspace-row-main span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-row-main strong {
+  color: #172026;
+}
+
+.workspace-row-main span {
+  font-size: 12px;
+  color: #5b6d74;
 }
 
 .tabbar {

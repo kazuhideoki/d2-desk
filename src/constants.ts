@@ -34,3 +34,4 @@ export const minZoom = 0.4;
 export const maxZoom = 2.2;
 export const zoomStep = 0.1;
 export const tabsStorageKey = "d2-desk:tabs";
+export const workspacesStorageKey = "d2-desk:workspaces";

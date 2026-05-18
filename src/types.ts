@@ -67,6 +67,21 @@ export type StoredTabs = {
   tabs: D2Tab[];
 };
 
+export type Workspace = {
+  id: string;
+  name: string;
+  rootPath: string;
+  createdAt: string;
+  lastOpenedAt: string;
+  activeTabId: string;
+  tabs: D2Tab[];
+};
+
+export type StoredWorkspaces = {
+  activeWorkspaceId: string | null;
+  workspaces: Workspace[];
+};
+
 export type OpenedD2File = {
   path: string;
   contents: string;
