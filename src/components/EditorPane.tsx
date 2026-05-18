@@ -33,7 +33,7 @@ export function EditorPane({
       if (!position || !model) return;
 
       const linePrefix = model.getLineContent(position.lineNumber).slice(0, position.column - 1);
-      if (!/(^|[{\s;]|->|--|<->)\s*[\w-]+$/.test(linePrefix) && !/\.[\w-]*$/.test(linePrefix)) {
+      if (!/(^|[{\s;]|->|<-|--|<->)\s*[\w-]+$/.test(linePrefix) && !/\.[\w-]*$/.test(linePrefix)) {
         return;
       }
 

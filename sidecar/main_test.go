@@ -714,6 +714,36 @@ fuga -> ho`
 	}
 }
 
+func TestCompleteReturnsTopLevelNodeCompletionsInReverseConnectionEndpoint(t *testing.T) {
+	source := `hoge: {
+  hoge1
+  hoge2
+}
+fuga <- ho`
+	items, err := complete(completeParams{Source: source, Line: 4, Column: len("fuga <- ho")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "hoge", "hoge") {
+		t.Fatalf("expected top-level node completion in reverse connection endpoint, got %#v", items)
+	}
+	if hasCompletionInsertText(items, "horizontal-gap", "horizontal-gap: ") {
+		t.Fatalf("expected reverse connection endpoint completion to exclude property keys, got %#v", items)
+	}
+}
+
+func TestCompleteCollectsTopLevelNodesFromReverseConnections(t *testing.T) {
+	source := `alpha <- beta
+al`
+	items, err := complete(completeParams{Source: source, Line: 1, Column: len("al")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "alpha", "alpha") {
+		t.Fatalf("expected source endpoint from reverse connection to be collected, got %#v", items)
+	}
+}
+
 func TestCompleteFiltersChildNodeCompletionsWhileTyping(t *testing.T) {
 	source := `hoge: {
   alpha

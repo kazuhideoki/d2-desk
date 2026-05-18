@@ -34,7 +34,7 @@ export function configureD2Language(monaco: typeof Monaco) {
         [/#.*$/, "comment"],
         [/".*?"/, "string"],
         [/'.*?'/, "string"],
-        [/(->|--)/, "keyword"],
+        [/(<->|<-|->|--)/, "keyword"],
         [/\b(direction|shape|style|fill|stroke|icon|label|tooltip|near)\b/, "type"],
         [/[{}:]/, "delimiter"],
       ],
@@ -212,6 +212,7 @@ function isD2KeyCompletionBoundary(prefix: string) {
   if (trimmedPrefix.endsWith(":")) return false;
   if (
     trimmedPrefix.endsWith("->") ||
+    trimmedPrefix.endsWith("<-") ||
     trimmedPrefix.endsWith("--") ||
     trimmedPrefix.endsWith("<->")
   ) {
@@ -360,6 +361,8 @@ function nodePathsFromStatement(statement: string): string[][] {
   if (!keyText) return [];
   return keyText
     .split("<->")
+    .join("->")
+    .split("<-")
     .join("->")
     .split("--")
     .join("->")

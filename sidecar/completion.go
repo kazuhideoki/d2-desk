@@ -747,7 +747,10 @@ func isD2KeyCompletionBoundary(prefix string) bool {
 
 func isD2ConnectionEndpointCompletionBoundary(prefix string) bool {
 	trimmedPrefix := strings.TrimRight(prefix, " \t")
-	return strings.HasSuffix(trimmedPrefix, "->") || strings.HasSuffix(trimmedPrefix, "--") || strings.HasSuffix(trimmedPrefix, "<->")
+	return strings.HasSuffix(trimmedPrefix, "->") ||
+		strings.HasSuffix(trimmedPrefix, "<-") ||
+		strings.HasSuffix(trimmedPrefix, "--") ||
+		strings.HasSuffix(trimmedPrefix, "<->")
 }
 
 type completionContextFrame struct {
@@ -1047,6 +1050,7 @@ func nodePathsFromStatement(statement string) [][]string {
 		statement = statement[:colonIndex]
 	}
 	normalized := strings.ReplaceAll(statement, "<->", "->")
+	normalized = strings.ReplaceAll(normalized, "<-", "->")
 	normalized = strings.ReplaceAll(normalized, "--", "->")
 	parts := strings.Split(normalized, "->")
 	paths := make([][]string, 0, len(parts))
