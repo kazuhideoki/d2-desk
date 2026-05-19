@@ -778,6 +778,66 @@ hoge.hoge1.`
 	}
 }
 
+func TestCompleteReturnsRelativeNestedChildNodeCompletionsAfterDot(t *testing.T) {
+	source := `ocpp_server: OCPP サーバー {
+  endpoint: エンドポイント
+  adaptor: {
+    1_6: OCPP1.6
+    2: OCPP2.0.1
+  }
+
+  endpoint.`
+	items, err := complete(completeParams{Source: source, Line: 7, Column: len("  endpoint.")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "adaptor", "adaptor") {
+		t.Fatalf("expected relative nested child node completion after dot, got %#v", items)
+	}
+}
+
+func TestCompleteDoesNotReturnSiblingNodeCompletionsForUnknownRelativeNodeAfterDot(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+	}{
+		{
+			name: "unknown node",
+			source: `ocpp_server: OCPP サーバー {
+  endpoint: エンドポイント
+  adaptor: {
+    1_6: OCPP1.6
+    2: OCPP2.0.1
+  }
+
+  unknown.`,
+		},
+		{
+			name: "reserved property",
+			source: `ocpp_server: OCPP サーバー {
+  endpoint: エンドポイント
+  adaptor: {
+    1_6: OCPP1.6
+    2: OCPP2.0.1
+  }
+
+  shape.`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			items, err := complete(completeParams{Source: tt.source, Line: 7, Column: len(tt.source) - strings.LastIndex(tt.source, "\n") - 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if hasCompletion(items, "endpoint") || hasCompletion(items, "adaptor") {
+				t.Fatalf("expected no sibling node completions for unknown relative node after dot, got %#v", items)
+			}
+		})
+	}
+}
+
 func TestCompleteReturnsInlineMapKeyCompletionsAfterCompletedValue(t *testing.T) {
 	source := "api: { label: hello; sh }"
 	items, err := complete(completeParams{Source: source, Line: 0, Column: len("api: { label: hello; sh")})
