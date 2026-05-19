@@ -29,6 +29,7 @@ import type {
   ExportResult,
   OpenedD2File,
   SavedD2File,
+  SourceRange,
   StoredWorkspaces,
 } from "./types";
 import {
@@ -59,6 +60,11 @@ type InitialSession = {
   activeTabId: string;
 };
 
+type CursorObjectLookup = {
+  modelVersionId: number | null;
+  objects: CompileResult["objects"];
+};
+
 function loadInitialSession(): InitialSession {
   const workspaceState = loadWorkspaces();
   const activeWorkspace = getActiveWorkspace(workspaceState);
@@ -77,6 +83,34 @@ function loadInitialSession(): InitialSession {
     tabs,
     activeTabId: loadActiveTabId(tabs),
   };
+}
+
+function sourceRangeContains(range: SourceRange, lineNumber: number, column: number) {
+  if (lineNumber < range.startLine || lineNumber > range.endLine) {
+    return false;
+  }
+  if (lineNumber === range.startLine && column < range.startColumn) {
+    return false;
+  }
+  if (lineNumber === range.endLine && column > range.endColumn) {
+    return false;
+  }
+  return true;
+}
+
+function objectIdAtPosition(
+  objects: CompileResult["objects"],
+  lineNumber: number,
+  column: number,
+) {
+  for (const object of objects) {
+    for (const range of object.sourceRanges ?? []) {
+      if (sourceRangeContains(range, lineNumber, column)) {
+        return object.id;
+      }
+    }
+  }
+  return null;
 }
 
 function App() {
@@ -116,6 +150,11 @@ function App() {
   const tabsRef = useRef(tabs);
   const activeTabIdRef = useRef(activeTabId);
   const editorTabIdRef = useRef(activeTabId);
+  const objectLookupRef = useRef<CursorObjectLookup>({
+    modelVersionId: null,
+    objects: [],
+  });
+  const activeCursorLookupRequestId = useRef(0);
   const closeTabInFlightRef = useRef(false);
   const quitInFlightRef = useRef(false);
 
@@ -153,6 +192,10 @@ function App() {
   useEffect(() => {
     activeTabIdRef.current = activeTabId;
   }, [activeTabId]);
+
+  function invalidateCursorLookup() {
+    activeCursorLookupRequestId.current += 1;
+  }
 
   const persistTabs = useCallback((nextTabs: D2Tab[], nextActiveTabId: string) => {
     const workspaceId = activeWorkspaceIdRef.current;
@@ -197,6 +240,7 @@ function App() {
   }, [persistTabs]);
 
   const activateTab = useCallback((tabId: string) => {
+    invalidateCursorLookup();
     activeTabIdRef.current = tabId;
     setActiveTabId(tabId);
     setActiveId(null);
@@ -204,6 +248,9 @@ function App() {
   }, []);
 
   const updateActiveTab = useCallback((updates: Partial<D2Tab>) => {
+    if ("source" in updates) {
+      invalidateCursorLookup();
+    }
     setTabs((currentTabs) => {
       const tabId = activeTabIdRef.current;
       const nextTabs = currentTabs.map((tab) => {
@@ -226,6 +273,7 @@ function App() {
     const nextTabs = [...tabsRef.current, nextTab];
     tabsRef.current = nextTabs;
     activeTabIdRef.current = nextTab.id;
+    invalidateCursorLookup();
     setTabs(nextTabs);
     setActiveTabId(nextTab.id);
     persistTabs(nextTabs, nextTab.id);
@@ -259,6 +307,10 @@ function App() {
           setStatus("Diagnostics updated; preview kept from last valid compile");
           return;
         }
+        objectLookupRef.current = {
+          modelVersionId: editorRef.current?.getModel()?.getVersionId() ?? null,
+          objects: result.objects,
+        };
         setCompileResult(result);
         setStatus("Compiled");
       } catch (error) {
@@ -476,6 +528,7 @@ function App() {
       if (tabId === activeTabIdRef.current) {
         const nextActiveTab = nextTabs[Math.min(targetIndex, nextTabs.length - 1)] ?? nextTabs[0];
         activeTabIdRef.current = nextActiveTab.id;
+        invalidateCursorLookup();
         setActiveTabId(nextActiveTab.id);
         setActiveId(null);
         setHoverId(null);
@@ -547,6 +600,7 @@ function App() {
       tabsRef.current = nextTabs;
       activeTabIdRef.current = nextActiveTabId;
       editorTabIdRef.current = nextActiveTabId;
+      invalidateCursorLookup();
       setWorkspaceState(nextWorkspaceState);
       setTabs(nextTabs);
       setActiveTabId(nextActiveTabId);
@@ -837,8 +891,8 @@ function App() {
         }, 0);
       }
     });
-    editor.onDidChangeCursorPosition(async (event) => {
-      await updateFocusedObjectFromPosition(editor, event.position);
+    editor.onDidChangeCursorPosition((event) => {
+      void updateFocusedObjectFromPosition(editor, event.position);
     });
   };
 
@@ -846,18 +900,45 @@ function App() {
     editor: Monaco.editor.IStandaloneCodeEditor,
     position: Monaco.IPosition,
   ) {
+    const requestId = activeCursorLookupRequestId.current + 1;
+    activeCursorLookupRequestId.current = requestId;
+    const tabId = activeTabIdRef.current;
+    const model = editor.getModel();
+    const modelVersionId = model?.getVersionId() ?? null;
+    const lookup = objectLookupRef.current;
+
+    const nextActiveId =
+      modelVersionId !== null && modelVersionId === lookup.modelVersionId
+        ? objectIdAtPosition(lookup.objects, position.lineNumber, position.column)
+        : await objectIdAtCurrentPosition(editor.getValue(), position);
+    if (requestId !== activeCursorLookupRequestId.current) {
+      return;
+    }
+    if (
+      tabId !== activeTabIdRef.current ||
+      model !== editor.getModel() ||
+      modelVersionId !== (editor.getModel()?.getVersionId() ?? null)
+    ) {
+      return;
+    }
+    setActiveId((currentActiveId) =>
+      currentActiveId === nextActiveId ? currentActiveId : nextActiveId,
+    );
+  }
+
+  async function objectIdAtCurrentPosition(source: string, position: Monaco.IPosition) {
     try {
       const result = await invoke<{ id?: string }>("sidecar_call", {
         method: "nodeAt",
         params: {
-          source: editor.getValue(),
+          source,
           line: position.lineNumber,
           column: position.column,
         },
       });
-      setActiveId(result.id ?? null);
+      return result.id ?? null;
     } catch {
-      setActiveId(null);
+      return null;
     }
   }
 
@@ -1010,6 +1091,7 @@ function App() {
           hoverId={hoverId}
           onHover={setHoverId}
           onSelect={(id) => {
+            invalidateCursorLookup();
             setActiveId(id);
             highlightObject(id, true);
           }}
