@@ -76,6 +76,25 @@ type RenameDialogState = {
   error: string | null;
 };
 
+type InternalSuggestCompletionItem = {
+  completion: Monaco.languages.CompletionItem;
+};
+
+type InternalSuggestFocusEvent = {
+  item?: InternalSuggestCompletionItem;
+};
+
+type InternalSuggestWidget = {
+  onDidFocus?: (listener: (event: InternalSuggestFocusEvent) => void) => Monaco.IDisposable;
+  onDidHide?: (listener: () => void) => Monaco.IDisposable;
+};
+
+type InternalSuggestController = {
+  widget?: {
+    value?: InternalSuggestWidget;
+  };
+};
+
 const nodeRenamePattern = /^[A-Za-z0-9_-]+$/;
 
 function lastD2IdSegment(id: string) {
@@ -138,6 +157,37 @@ function objectIdAtPosition(
   return bestMatch?.id ?? null;
 }
 
+function completionPreviewSource(
+  monaco: typeof Monaco,
+  model: Monaco.editor.ITextModel,
+  completion: Monaco.languages.CompletionItem,
+) {
+  if (
+    completion.insertTextRules &&
+    completion.insertTextRules & monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+  ) {
+    return null;
+  }
+  if (completion.additionalTextEdits?.length) {
+    return null;
+  }
+
+  const completionRange =
+    "replace" in completion.range ? completion.range.replace : completion.range;
+  const range = model.validateRange(completionRange);
+  const source = model.getValue();
+  const startOffset = model.getOffsetAt({
+    lineNumber: range.startLineNumber,
+    column: range.startColumn,
+  });
+  const endOffset = model.getOffsetAt({
+    lineNumber: range.endLineNumber,
+    column: range.endColumn,
+  });
+
+  return `${source.slice(0, startOffset)}${completion.insertText}${source.slice(endOffset)}`;
+}
+
 function App() {
   const initialSessionRef = useRef<InitialSession | null>(null);
   if (!initialSessionRef.current) {
@@ -155,6 +205,7 @@ function App() {
     objects: [],
     diagnostics: [],
   });
+  const [suggestPreviewResult, setSuggestPreviewResult] = useState<CompileResult | null>(null);
   const [status, setStatus] = useState("Ready");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
@@ -166,6 +217,8 @@ function App() {
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decorationIds = useRef<string[]>([]);
   const activeCompileRequestId = useRef(0);
+  const activeSuggestPreviewRequestId = useRef(0);
+  const suggestPreviewTimeoutRef = useRef<number | null>(null);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const openSourceFileRef = useRef<() => void>(() => undefined);
   const saveSourceRef = useRef<() => void>(() => undefined);
@@ -196,13 +249,19 @@ function App() {
   const currentFilePath = activeTab?.filePath ?? null;
   const latestCompileInputsRef = useRef({ tabId: activeTabId, source, layout, theme });
   latestCompileInputsRef.current = { tabId: activeTabId, source, layout, theme };
+  const visibleCompileResult = suggestPreviewResult ?? compileResult;
 
   const activeObject = useMemo(
-    () => compileResult.objects.find((object) => object.id === (hoverId ?? activeId)),
-    [activeId, compileResult.objects, hoverId],
+    () => visibleCompileResult.objects.find((object) => object.id === (hoverId ?? activeId)),
+    [activeId, hoverId, visibleCompileResult.objects],
   );
 
-  const renderedSvg = useMemo(() => normalizeSvgSize(compileResult.svg), [compileResult.svg]);
+  const renderedSvg = useMemo(
+    () => normalizeSvgSize(visibleCompileResult.svg),
+    [visibleCompileResult.svg],
+  );
+
+  const exportRenderedSvg = useMemo(() => normalizeSvgSize(compileResult.svg), [compileResult.svg]);
 
   const overlayViewBox = useMemo(() => getDiagramViewBox(renderedSvg), [renderedSvg]);
 
@@ -327,6 +386,64 @@ function App() {
     setStatus(`Created ${nextTab.fileName}`);
   }, [persistTabs]);
 
+  const clearSuggestPreview = useCallback(() => {
+    activeSuggestPreviewRequestId.current += 1;
+    if (suggestPreviewTimeoutRef.current !== null) {
+      window.clearTimeout(suggestPreviewTimeoutRef.current);
+      suggestPreviewTimeoutRef.current = null;
+    }
+    setSuggestPreviewResult(null);
+  }, []);
+
+  const scheduleSuggestPreview = useCallback(
+    (previewSource: string, modelVersionId: number) => {
+      const latestInputs = latestCompileInputsRef.current;
+      if (previewSource === latestInputs.source) {
+        clearSuggestPreview();
+        return;
+      }
+
+      const requestId = activeSuggestPreviewRequestId.current + 1;
+      activeSuggestPreviewRequestId.current = requestId;
+      if (suggestPreviewTimeoutRef.current !== null) {
+        window.clearTimeout(suggestPreviewTimeoutRef.current);
+      }
+
+      const tabId = latestInputs.tabId;
+      const previewLayout = latestInputs.layout;
+      const previewTheme = latestInputs.theme;
+      suggestPreviewTimeoutRef.current = window.setTimeout(() => {
+        suggestPreviewTimeoutRef.current = null;
+        void (async () => {
+          try {
+            const result = await invoke<CompileResult>("sidecar_call", {
+              method: "compile",
+              params: { source: previewSource, layout: previewLayout, theme: previewTheme },
+            });
+            const currentInputs = latestCompileInputsRef.current;
+            const currentModelVersionId = editorRef.current?.getModel()?.getVersionId() ?? null;
+            if (
+              requestId !== activeSuggestPreviewRequestId.current ||
+              tabId !== currentInputs.tabId ||
+              previewLayout !== currentInputs.layout ||
+              previewTheme !== currentInputs.theme ||
+              modelVersionId !== currentModelVersionId
+            ) {
+              return;
+            }
+            if (result.diagnostics.length > 0) {
+              return;
+            }
+            setSuggestPreviewResult(result);
+          } catch {
+            // Keep the current valid preview when a transient candidate cannot compile.
+          }
+        })();
+      }, 100);
+    },
+    [clearSuggestPreview],
+  );
+
   const compile = useCallback(
     async (nextSource: string, tabId: string, requestId: number) => {
       try {
@@ -397,6 +514,7 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem("d2-desk:last-source", source);
+    clearSuggestPreview();
     const requestId = activeCompileRequestId.current + 1;
     activeCompileRequestId.current = requestId;
     setStatus("Compiling");
@@ -404,7 +522,7 @@ function App() {
       void compile(source, activeTabId, requestId);
     }, 220);
     return () => window.clearTimeout(timeout);
-  }, [activeTabId, compile, source]);
+  }, [activeTabId, clearSuggestPreview, compile, source]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -426,7 +544,7 @@ function App() {
 
   useEffect(() => {
     highlightObject(hoverId ?? activeId, false);
-  }, [activeId, hoverId, compileResult.objects]);
+  }, [activeId, hoverId, visibleCompileResult.objects]);
 
   const openSourceFile = useCallback(async () => {
     try {
@@ -979,6 +1097,40 @@ function App() {
         editor.trigger("keyboard", "editor.action.copyLinesDownAction", null);
       },
     );
+    const suggestController = editor.getContribution(
+      "editor.contrib.suggestController",
+    ) as InternalSuggestController | null;
+    const suggestWidget = suggestController?.widget?.value;
+    const suggestPreviewDisposables: Monaco.IDisposable[] = [];
+    if (suggestWidget?.onDidFocus) {
+      suggestPreviewDisposables.push(
+        suggestWidget.onDidFocus((event) => {
+          const model = editor.getModel();
+          const completion = event.item?.completion;
+          if (!model || !completion) {
+            clearSuggestPreview();
+            return;
+          }
+
+          const previewSource = completionPreviewSource(monaco, model, completion);
+          if (!previewSource) {
+            clearSuggestPreview();
+            return;
+          }
+          scheduleSuggestPreview(previewSource, model.getVersionId());
+        }),
+      );
+    }
+    if (suggestWidget?.onDidHide) {
+      suggestPreviewDisposables.push(suggestWidget.onDidHide(clearSuggestPreview));
+    }
+    editor.onDidDispose(() => {
+      for (const disposable of suggestPreviewDisposables) {
+        disposable.dispose();
+      }
+      clearSuggestPreview();
+    });
+
     editor.onDidChangeModelContent((event) => {
       if (isAutoClosingD2Brace) {
         return;
@@ -1134,7 +1286,7 @@ function App() {
 
   async function exportPNG() {
     const image = new Image();
-    const svgBlob = new Blob([renderedSvg], { type: "image/svg+xml" });
+    const svgBlob = new Blob([exportRenderedSvg], { type: "image/svg+xml" });
     const url = URL.createObjectURL(svgBlob);
     image.onload = () => {
       const canvas = document.createElement("canvas");
@@ -1282,7 +1434,7 @@ function App() {
         />
 
         <PreviewPane
-          objects={compileResult.objects}
+          objects={visibleCompileResult.objects}
           renderedSvg={renderedSvg}
           overlayViewBox={overlayViewBox}
           zoom={zoom}
