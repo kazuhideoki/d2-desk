@@ -267,11 +267,26 @@ select {
   background: transparent;
 }
 
-.tab-label span {
+.tab-file-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tab-unsaved-indicator {
+  display: inline-grid;
+  width: 8px;
+  min-width: 8px;
+  place-items: center;
+}
+
+.tab-unsaved-indicator span {
+  width: 6px;
+  height: 6px;
+  min-width: 6px;
+  border-radius: 50%;
+  background: #2563eb;
 }
 
 .tab-close {
