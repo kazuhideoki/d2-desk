@@ -390,6 +390,36 @@ function App() {
     }
   }, [currentFilePath, fileName, source, updateActiveTab]);
 
+  const openWithEditor = useCallback(async () => {
+    try {
+      const path =
+        currentFilePath ??
+        (await save({
+          title: "Save D2 file before opening with $EDITOR",
+          filters: [{ name: "D2", extensions: ["d2"] }],
+          defaultPath: ensureD2FileName(fileName),
+        }));
+      if (!path) {
+        setStatus("Open with editor canceled");
+        return;
+      }
+
+      const result = await invoke<SavedD2File>("write_d2_file", {
+        path,
+        contents: source,
+      });
+      updateActiveTab({
+        fileName: fileNameFromPath(result.path),
+        filePath: result.path,
+        savedSource: source,
+      });
+      await invoke("open_file_with_editor", { path: result.path });
+      setStatus(`Opened with $EDITOR: ${result.path}`);
+    } catch (error) {
+      setStatus(String(error));
+    }
+  }, [currentFilePath, fileName, source, updateActiveTab]);
+
   const formatDocument = useCallback(async () => {
     try {
       const formatted = await invoke<string>("sidecar_call", {
@@ -929,6 +959,7 @@ function App() {
         onLayoutChange={setLayout}
         onOpen={openSourceFile}
         onSave={saveSource}
+        onOpenWithEditor={openWithEditor}
         onFormat={formatDocument}
         onZoomOut={zoomOut}
         onResetView={resetView}

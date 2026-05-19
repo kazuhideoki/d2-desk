@@ -40,8 +40,8 @@ fn sidecar_call(method: String, params: Value) -> Result<Value, String> {
     let request = SidecarRequest { method, params };
     let input = serde_json::to_vec(&request).map_err(|err| err.to_string())?;
     let output = run_sidecar(input)?;
-    let response: SidecarResponse =
-        serde_json::from_slice(&output).map_err(|err| format!("invalid sidecar response: {err}"))?;
+    let response: SidecarResponse = serde_json::from_slice(&output)
+        .map_err(|err| format!("invalid sidecar response: {err}"))?;
 
     if let Some(error) = response.error {
         Err(error)
@@ -74,14 +74,46 @@ fn write_d2_file(path: String, contents: String) -> Result<SavedD2File, String> 
 }
 
 #[tauri::command]
+fn open_file_with_editor(path: String) -> Result<(), String> {
+    let editor = std::env::var("EDITOR").map_err(|_| "$EDITOR is not set".to_string())?;
+    if editor.trim().is_empty() {
+        return Err("$EDITOR is empty".to_string());
+    }
+
+    let path = PathBuf::from(path);
+    if !path.exists() {
+        return Err(format!("file does not exist: {}", path.display()));
+    }
+
+    Command::new("sh")
+        .arg("-lc")
+        .arg("exec ${EDITOR:?} \"$1\"")
+        .arg("d2-desk-editor")
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| format!("failed to open $EDITOR: {err}"))?;
+
+    Ok(())
+}
+
+#[tauri::command]
 fn close_current_window(window: tauri::Window, exit_state: State<ExitState>) -> Result<(), String> {
-    *exit_state.allow_exit.lock().map_err(|err| err.to_string())? = true;
+    *exit_state
+        .allow_exit
+        .lock()
+        .map_err(|err| err.to_string())? = true;
     window.close().map_err(|err| err.to_string())
 }
 
 #[tauri::command]
 fn quit_application(app: tauri::AppHandle, exit_state: State<ExitState>) -> Result<(), String> {
-    *exit_state.allow_exit.lock().map_err(|err| err.to_string())? = true;
+    *exit_state
+        .allow_exit
+        .lock()
+        .map_err(|err| err.to_string())? = true;
     app.exit(0);
     Ok(())
 }
@@ -267,6 +299,7 @@ pub fn run() {
             sidecar_call,
             read_d2_file,
             write_d2_file,
+            open_file_with_editor,
             close_current_window,
             quit_application
         ])

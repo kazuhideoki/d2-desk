@@ -6,6 +6,7 @@ import {
   FileText,
   FolderPlus,
   Focus,
+  SquareArrowOutUpRight,
   Settings,
   Save,
   Wand2,
@@ -27,6 +28,7 @@ type ToolbarProps = {
   onLayoutChange: (layout: string) => void;
   onOpen: () => void;
   onSave: () => void;
+  onOpenWithEditor: () => void;
   onFormat: () => void;
   onZoomOut: () => void;
   onResetView: () => void;
@@ -47,6 +49,7 @@ export function Toolbar({
   onLayoutChange,
   onOpen,
   onSave,
+  onOpenWithEditor,
   onFormat,
   onZoomOut,
   onResetView,
@@ -87,6 +90,9 @@ export function Toolbar({
         </button>
         <button title="Save D2 source (Command/Ctrl + S)" onClick={onSave}>
           <Save size={16} />
+        </button>
+        <button title="Open current D2 file with $EDITOR" onClick={onOpenWithEditor}>
+          <SquareArrowOutUpRight size={16} />
         </button>
         <button title="Format document (Command/Ctrl + Shift + I)" onClick={onFormat}>
           <Wand2 size={16} />
