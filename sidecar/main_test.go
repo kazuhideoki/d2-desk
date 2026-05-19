@@ -300,6 +300,66 @@ b: {
 	}
 }
 
+func TestCompileMapsNestedConnectionToCompoundEndpoint(t *testing.T) {
+	source := `ocpp_server: {
+  endpoint
+  switcher
+  adaptor: {
+    1_6
+  }
+
+  switcher -> adaptor.1_6
+}
+`
+	result, err := compile(compileParams{Source: source, Layout: "dagre", Theme: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	connection := findConnectionByEndpoints(result.Objects, "ocpp_server.switcher", "ocpp_server.adaptor.1_6")
+	if connection == nil {
+		t.Fatalf("expected nested switcher to adaptor.1_6 connection in %#v", result.Objects)
+	}
+	if !hasRange(connection.SourceRanges, 8, 12, 14) {
+		t.Fatalf("expected connection to include nested compound endpoint arrow range, got %#v", connection.SourceRanges)
+	}
+
+	cursor := nodeAt(nodeAtParams{Source: source, Line: 8, Column: 13})
+	if cursor["id"] != connection.ID {
+		t.Fatalf("expected cursor on nested compound endpoint arrow to focus connection, got %#v", cursor)
+	}
+}
+
+func TestCompileMapsRepeatedLabeledConnectionsByOccurrence(t *testing.T) {
+	source := `a -> b: first
+a -> b: second
+`
+	result, err := compile(compileParams{Source: source, Layout: "dagre", Theme: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := findConnection(result.Objects, "first")
+	if first == nil {
+		t.Fatalf("expected first labeled connection in %#v", result.Objects)
+	}
+	second := findConnection(result.Objects, "second")
+	if second == nil {
+		t.Fatalf("expected second labeled connection in %#v", result.Objects)
+	}
+	if !containsAny(first.SourceRanges, 1, 9) {
+		t.Fatalf("expected first connection to include first label range, got %#v", first.SourceRanges)
+	}
+	if !containsAny(second.SourceRanges, 2, 9) {
+		t.Fatalf("expected second connection to include second label range, got %#v", second.SourceRanges)
+	}
+
+	cursor := nodeAt(nodeAtParams{Source: source, Line: 2, Column: 9})
+	if cursor["id"] != second.ID {
+		t.Fatalf("expected cursor on second repeated connection label to focus second connection, got %#v", cursor)
+	}
+}
+
 func TestCompileMapsBidirectionalNestedParentEndpoint(t *testing.T) {
 	source := `direction: right
 
@@ -1220,6 +1280,15 @@ func findConnection(objects []objectMap, label string) *objectMap {
 func findConnectionByID(objects []objectMap, id string) *objectMap {
 	for i := range objects {
 		if objects[i].Kind == "connection" && objects[i].ID == id {
+			return &objects[i]
+		}
+	}
+	return nil
+}
+
+func findConnectionByEndpoints(objects []objectMap, src, dst string) *objectMap {
+	for i := range objects {
+		if objects[i].Kind == "connection" && objects[i].Src == src && objects[i].Dst == dst {
 			return &objects[i]
 		}
 	}
