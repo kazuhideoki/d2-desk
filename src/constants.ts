@@ -30,8 +30,8 @@ export const themes = [
 
 export const baseEditorFontSize = 14;
 export const baseEditorLineHeight = 20;
-export const minZoom = 0.4;
-export const maxZoom = 2.2;
+export const minZoom = 0.1;
+export const maxZoom = 10;
 export const zoomStep = 0.1;
 export const tabsStorageKey = "d2-desk:tabs";
 export const workspacesStorageKey = "d2-desk:workspaces";
