@@ -17,6 +17,8 @@ export type D2Object = {
   id: string;
   kind: "shape" | "connection";
   label?: string;
+  src?: string;
+  dst?: string;
   sourceRanges?: SourceRange[] | null;
   preview: {
     x?: number;

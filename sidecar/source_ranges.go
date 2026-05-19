@@ -13,6 +13,7 @@ type connectionSourceRange struct {
 	Src   string
 	Dst   string
 	Range sourceRange
+	Scope sourceRange
 }
 
 func contains(r sourceRange, line, column int) bool {
@@ -139,6 +140,78 @@ func addD2NodeRangesFromStatement(
 	}
 }
 
+func scanNodeScopeRanges(source string) map[string][]sourceRange {
+	out := map[string][]sourceRange{}
+	lines := strings.Split(source, "\n")
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		if strings.Contains(line, "->") {
+			continue
+		}
+		terminator := strings.IndexAny(line, ":{")
+		if terminator < 0 {
+			continue
+		}
+		pathRange, ok := sourcePathRange(line[:terminator], i+1, 0, false)
+		if !ok {
+			continue
+		}
+		endLine, endColumn := nodeScopeEnd(lines, i)
+		out[strings.Join(pathRange.path, ".")] = append(out[strings.Join(pathRange.path, ".")], sourceRange{
+			File:        "main.d2",
+			StartLine:   i + 1,
+			StartColumn: pathRange.rangeValue.StartColumn,
+			EndLine:     endLine,
+			EndColumn:   endColumn,
+		})
+	}
+	return out
+}
+
+func nodeScopeEnd(lines []string, startLine int) (int, int) {
+	depth := 0
+	seenBlock := false
+	for i := startLine; i < len(lines); i++ {
+		line := stripD2LineComment(lines[i])
+		quote := byte(0)
+		for j := 0; j < len(line); j++ {
+			char := line[j]
+			if quote != 0 {
+				if char == '\\' {
+					j++
+				} else if char == quote {
+					quote = 0
+				}
+				continue
+			}
+			if char == '"' || char == '\'' {
+				quote = char
+				continue
+			}
+			switch char {
+			case '{':
+				depth++
+				seenBlock = true
+			case '}':
+				if depth > 0 {
+					depth--
+				}
+				if seenBlock && depth == 0 {
+					return i + 1, j + 2
+				}
+			}
+		}
+		if !seenBlock {
+			return i + 1, len(lines[i]) + 1
+		}
+	}
+	return len(lines), len(lines[len(lines)-1]) + 1
+}
+
 func addScannedRange(out map[string][]sourceRange, path []string, rangeValue sourceRange) {
 	if len(path) == 0 {
 		return
@@ -216,8 +289,16 @@ func scanConnectionSourceRanges(source string) []connectionSourceRange {
 }
 
 func addConnectionRangesFromStatement(out *[]connectionSourceRange, context []string, statement string, lineNumber int, baseColumn int) {
+	fullStatement := statement
 	if colonIndex := indexD2StatementColon(statement); colonIndex >= 0 {
 		statement = statement[:colonIndex]
+	}
+	scopeRange := sourceRange{
+		File:        "main.d2",
+		StartLine:   lineNumber,
+		StartColumn: baseColumn + firstNonSpaceIndex(fullStatement) + 1,
+		EndLine:     lineNumber,
+		EndColumn:   baseColumn + len(fullStatement) + 1,
 	}
 
 	cursor := 0
@@ -261,6 +342,7 @@ func addConnectionRangesFromStatement(out *[]connectionSourceRange, context []st
 				EndLine:     lineNumber,
 				EndColumn:   baseColumn + operatorEnd + 1,
 			},
+			Scope: scopeRange,
 		})
 
 		previousPath = rightRange.path
@@ -529,6 +611,12 @@ func rangesFor(id string, ranges map[string][]sourceRange) []sourceRange {
 	return nil
 }
 
+func rangesForShape(id string, tokenRanges, scopeRanges map[string][]sourceRange) []sourceRange {
+	combined := append([]sourceRange{}, rangesFor(id, tokenRanges)...)
+	combined = append(combined, rangesFor(id, scopeRanges)...)
+	return combined
+}
+
 func nonNilRanges(ranges []sourceRange) []sourceRange {
 	if ranges == nil {
 		return []sourceRange{}
@@ -544,7 +632,7 @@ func rangesForConnection(id, src, dst string, connectionRanges []connectionSourc
 			continue
 		}
 		if matched == index {
-			return []sourceRange{candidate.Range}
+			return []sourceRange{candidate.Range, candidate.Scope}
 		}
 		matched++
 	}

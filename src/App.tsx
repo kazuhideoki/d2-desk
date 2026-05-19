@@ -121,14 +121,21 @@ function objectIdAtPosition(
   lineNumber: number,
   column: number,
 ) {
+  let bestMatch: { id: string; size: number } | null = null;
   for (const object of objects) {
     for (const range of object.sourceRanges ?? []) {
       if (sourceRangeContains(range, lineNumber, column)) {
-        return object.id;
+        const size =
+          range.startLine === range.endLine
+            ? range.endColumn - range.startColumn
+            : (range.endLine - range.startLine) * 10000 + range.endColumn - range.startColumn;
+        if (!bestMatch || size < bestMatch.size) {
+          bestMatch = { id: object.id, size };
+        }
       }
     }
   }
-  return null;
+  return bestMatch?.id ?? null;
 }
 
 function App() {
