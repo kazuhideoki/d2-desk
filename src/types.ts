@@ -93,3 +93,10 @@ export type OpenedD2File = {
 export type SavedD2File = {
   path: string;
 };
+
+export type WorkspaceFileEntry = {
+  path: string;
+  relativePath: string;
+  fileName: string;
+  directory: string;
+};
