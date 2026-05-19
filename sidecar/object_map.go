@@ -8,6 +8,7 @@ import (
 
 func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
 	sourceRanges := scanSourceRanges(source)
+	connectionRanges := scanConnectionSourceRanges(source)
 	if diagram == nil {
 		return nil
 	}
@@ -36,7 +37,7 @@ func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
 			Kind:         "connection",
 			BoardPath:    []string{},
 			Label:        conn.Label,
-			SourceRanges: nonNilRanges(rangesForConnection(conn.Src, conn.Dst, sourceRanges)),
+			SourceRanges: nonNilRanges(rangesForConnection(conn.ID, conn.Src, conn.Dst, connectionRanges, sourceRanges)),
 			Preview:      previewBox{Route: route},
 		})
 	}

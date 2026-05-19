@@ -2,10 +2,18 @@ package main
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 )
 
 var identifierRE = regexp.MustCompile(`[A-Za-z0-9_.$-]+`)
+var connectionIndexRE = regexp.MustCompile(`\[(\d+)\]$`)
+
+type connectionSourceRange struct {
+	Src   string
+	Dst   string
+	Range sourceRange
+}
 
 func contains(r sourceRange, line, column int) bool {
 	if line < r.StartLine || line > r.EndLine {
@@ -41,23 +49,163 @@ func scanSourceRanges(source string) map[string][]sourceRange {
 	return out
 }
 
+func scanConnectionSourceRanges(source string) []connectionSourceRange {
+	var out []connectionSourceRange
+	var context []string
+	lines := strings.Split(source, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		context = popClosedContexts(context, trimmed)
+		out = append(out, scanConnectionLineSourceRanges(line, i+1, context)...)
+		context = pushOpenedContext(context, line)
+	}
+	return out
+}
+
 func scanConnectionTokenRanges(out map[string][]sourceRange, line string, lineNumber int) {
 	start := 0
 	for {
 		segment := line[start:]
-		idx := strings.Index(segment, "->")
+		idx, operator, ok := nextConnectionOperator(segment)
 		if terminator := strings.IndexAny(segment, ":{"); terminator >= 0 && (idx < 0 || terminator < idx) {
 			addTokenRange(out, segment[:terminator], lineNumber, start)
 			return
 		}
-		if idx < 0 {
+		if !ok {
 			addTokenRange(out, segment, lineNumber, start)
 			return
 		}
 		arrow := start + idx
 		addTokenRange(out, line[start:arrow], lineNumber, start)
-		start = arrow + 2
+		start = arrow + len(operator)
 	}
+}
+
+func scanConnectionLineSourceRanges(line string, lineNumber int, context []string) []connectionSourceRange {
+	var out []connectionSourceRange
+	cursor := 0
+	var previousToken string
+
+	for {
+		segment := line[cursor:]
+		idx, operator, ok := nextConnectionOperator(segment)
+		if !ok {
+			return out
+		}
+
+		operatorStart := cursor + idx
+		operatorEnd := operatorStart + len(operator)
+		leftToken := previousToken
+		if leftToken == "" {
+			token, _, _, ok := sourceTokenRange(line[cursor:operatorStart])
+			if !ok {
+				cursor = operatorEnd
+				continue
+			}
+			leftToken = token
+		}
+
+		rightSegment := line[operatorEnd:]
+		rightEnd := connectionEndpointSegmentEnd(rightSegment)
+		rightToken, _, _, ok := sourceTokenRange(rightSegment[:rightEnd])
+		if !ok {
+			return out
+		}
+
+		src, dst := directedConnectionEndpoints(
+			qualifyConnectionEndpoint(leftToken, context),
+			qualifyConnectionEndpoint(rightToken, context),
+			operator,
+		)
+		out = append(out, connectionSourceRange{
+			Src: src,
+			Dst: dst,
+			Range: sourceRange{
+				File:        "main.d2",
+				StartLine:   lineNumber,
+				StartColumn: operatorStart + 1,
+				EndLine:     lineNumber,
+				EndColumn:   operatorEnd + 1,
+			},
+		})
+
+		previousToken = rightToken
+		cursor = operatorEnd
+	}
+}
+
+func popClosedContexts(context []string, trimmedLine string) []string {
+	for strings.HasPrefix(trimmedLine, "}") && len(context) > 0 {
+		context = context[:len(context)-1]
+		trimmedLine = strings.TrimSpace(strings.TrimPrefix(trimmedLine, "}"))
+	}
+	return context
+}
+
+func pushOpenedContext(context []string, line string) []string {
+	if _, _, ok := nextConnectionOperator(line); ok {
+		return context
+	}
+	openBrace := strings.Index(line, "{")
+	if openBrace < 0 {
+		return context
+	}
+	token, _, _, ok := sourceTokenRange(line[:openBrace])
+	if !ok {
+		return context
+	}
+	return append(context, token)
+}
+
+func qualifyConnectionEndpoint(token string, context []string) string {
+	if token == "" || strings.Contains(token, ".") || len(context) == 0 {
+		return token
+	}
+	return strings.Join(append(append([]string{}, context...), token), ".")
+}
+
+func nextConnectionOperator(text string) (int, string, bool) {
+	for i := 0; i < len(text); i++ {
+		switch text[i] {
+		case ':', '{':
+			return -1, "", false
+		case '<':
+			if strings.HasPrefix(text[i:], "<->") {
+				return i, "<->", true
+			}
+			if strings.HasPrefix(text[i:], "<-") {
+				return i, "<-", true
+			}
+		case '-':
+			if strings.HasPrefix(text[i:], "->") {
+				return i, "->", true
+			}
+			if strings.HasPrefix(text[i:], "--") {
+				return i, "--", true
+			}
+		}
+	}
+	return -1, "", false
+}
+
+func connectionEndpointSegmentEnd(text string) int {
+	if idx, _, ok := nextConnectionOperator(text); ok {
+		return idx
+	}
+	if idx := strings.IndexAny(text, ":{"); idx >= 0 {
+		return idx
+	}
+	return len(text)
+}
+
+func directedConnectionEndpoints(leftToken, rightToken, operator string) (string, string) {
+	if operator == "<-" {
+		return rightToken, leftToken
+	}
+	return leftToken, rightToken
 }
 
 func addTokenRange(out map[string][]sourceRange, text string, line int, baseColumn int) {
@@ -154,8 +302,40 @@ func nonNilRanges(ranges []sourceRange) []sourceRange {
 	return ranges
 }
 
-func rangesForConnection(src, dst string, ranges map[string][]sourceRange) []sourceRange {
-	combined := append([]sourceRange{}, rangesFor(src, ranges)...)
-	combined = append(combined, rangesFor(dst, ranges)...)
+func rangesForConnection(id, src, dst string, connectionRanges []connectionSourceRange, tokenRanges map[string][]sourceRange) []sourceRange {
+	index := connectionIndex(id)
+	matched := 0
+	for _, candidate := range connectionRanges {
+		if !endpointMatches(candidate.Src, src) || !endpointMatches(candidate.Dst, dst) {
+			continue
+		}
+		if matched == index {
+			return []sourceRange{candidate.Range}
+		}
+		matched++
+	}
+
+	combined := append([]sourceRange{}, rangesFor(src, tokenRanges)...)
+	combined = append(combined, rangesFor(dst, tokenRanges)...)
 	return combined
+}
+
+func connectionIndex(id string) int {
+	match := connectionIndexRE.FindStringSubmatch(id)
+	if len(match) != 2 {
+		return 0
+	}
+	index, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0
+	}
+	return index
+}
+
+func endpointMatches(sourceToken, objectID string) bool {
+	if sourceToken == objectID {
+		return true
+	}
+	parts := strings.Split(objectID, ".")
+	return len(parts) > 0 && sourceToken == parts[len(parts)-1]
 }
