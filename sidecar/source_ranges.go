@@ -2,12 +2,10 @@ package main
 
 import (
 	"regexp"
-	"strconv"
 	"strings"
 )
 
 var identifierRE = regexp.MustCompile(`[A-Za-z0-9_.$-]+`)
-var connectionIndexRE = regexp.MustCompile(`\[(\d+)\]$`)
 
 type connectionSourceRange struct {
 	Src   string
@@ -354,7 +352,7 @@ func qualifiedConnectionPath(context []string, path []string) string {
 	if len(path) == 0 {
 		return ""
 	}
-	if len(path) > 1 || len(context) == 0 {
+	if len(context) == 0 || hasPathPrefix(path, context) {
 		return strings.Join(path, ".")
 	}
 	return strings.Join(appendPath(context, path), ".")
@@ -624,8 +622,7 @@ func nonNilRanges(ranges []sourceRange) []sourceRange {
 	return ranges
 }
 
-func rangesForConnection(id, src, dst string, connectionRanges []connectionSourceRange, tokenRanges map[string][]sourceRange) []sourceRange {
-	index := connectionIndex(id)
+func rangesForConnection(src, dst string, index int, connectionRanges []connectionSourceRange, tokenRanges map[string][]sourceRange) []sourceRange {
 	matched := 0
 	for _, candidate := range connectionRanges {
 		if !endpointMatches(candidate.Src, src) || !endpointMatches(candidate.Dst, dst) {
@@ -640,18 +637,6 @@ func rangesForConnection(id, src, dst string, connectionRanges []connectionSourc
 	combined := append([]sourceRange{}, rangesFor(src, tokenRanges)...)
 	combined = append(combined, rangesFor(dst, tokenRanges)...)
 	return combined
-}
-
-func connectionIndex(id string) int {
-	match := connectionIndexRE.FindStringSubmatch(id)
-	if len(match) != 2 {
-		return 0
-	}
-	index, err := strconv.Atoi(match[1])
-	if err != nil {
-		return 0
-	}
-	return index
 }
 
 func endpointMatches(sourceToken, objectID string) bool {

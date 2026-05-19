@@ -26,6 +26,7 @@ func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
 			Preview:      previewBox{X: &x, Y: &y, Width: &w, Height: &h},
 		})
 	}
+	connectionOccurrences := map[string]int{}
 	for _, conn := range diagram.Connections {
 		route := make([]point, 0, len(conn.Route))
 		for _, p := range conn.Route {
@@ -33,6 +34,9 @@ func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
 				route = append(route, point{X: p.X, Y: p.Y})
 			}
 		}
+		connectionKey := conn.Src + "\x00" + conn.Dst
+		connectionIndex := connectionOccurrences[connectionKey]
+		connectionOccurrences[connectionKey]++
 		objects = append(objects, objectMap{
 			ID:           conn.ID,
 			Kind:         "connection",
@@ -40,7 +44,7 @@ func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
 			Label:        conn.Label,
 			Src:          conn.Src,
 			Dst:          conn.Dst,
-			SourceRanges: nonNilRanges(rangesForConnection(conn.ID, conn.Src, conn.Dst, connectionRanges, sourceRanges)),
+			SourceRanges: nonNilRanges(rangesForConnection(conn.Src, conn.Dst, connectionIndex, connectionRanges, sourceRanges)),
 			Preview:      previewBox{Route: route},
 		})
 	}
