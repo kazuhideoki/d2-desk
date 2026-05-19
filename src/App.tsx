@@ -233,7 +233,7 @@ function App() {
       renameInputRef.current?.focus();
       renameInputRef.current?.select();
     });
-  }, [renameDialog]);
+  }, [renameDialog?.id]);
 
   const persistTabs = useCallback((nextTabs: D2Tab[], nextActiveTabId: string) => {
     const workspaceId = activeWorkspaceIdRef.current;
