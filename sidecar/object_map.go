@@ -92,6 +92,6 @@ func sourceRangeSize(r sourceRange) int {
 }
 
 func nilFallbackDiagram(source string) *d2target.Diagram {
-	diagram, _, _ := render(source, "dagre", 0)
+	diagram, _, _ := render(source)
 	return diagram
 }

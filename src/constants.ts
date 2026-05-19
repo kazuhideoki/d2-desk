@@ -21,13 +21,6 @@ api -> db: query
 api -> queue: enqueue
 queue -> db: persist`;
 
-export const themes = [
-  { id: 4, label: "Grape" },
-  { id: 0, label: "Neutral" },
-  { id: 100, label: "Terminal" },
-  { id: 101, label: "Origami" },
-];
-
 export const baseEditorFontSize = 14;
 export const baseEditorLineHeight = 20;
 export const minZoom = 0.1;

@@ -212,8 +212,6 @@ function App() {
   const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
   const [editorZoom, setEditorZoom] = useState(1);
   const [previewZoom, setPreviewZoom] = useState(1);
-  const [theme, setTheme] = useState(4);
-  const [layout, setLayout] = useState("dagre");
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decorationIds = useRef<string[]>([]);
@@ -248,8 +246,8 @@ function App() {
   const source = activeTab?.source ?? "";
   const fileName = activeTab?.fileName ?? "untitled.d2";
   const currentFilePath = activeTab?.filePath ?? null;
-  const latestCompileInputsRef = useRef({ tabId: activeTabId, source, layout, theme });
-  latestCompileInputsRef.current = { tabId: activeTabId, source, layout, theme };
+  const latestCompileInputsRef = useRef({ tabId: activeTabId, source });
+  latestCompileInputsRef.current = { tabId: activeTabId, source };
   const visibleCompileResult = suggestPreviewResult ?? compileResult;
 
   const activeObject = useMemo(
@@ -411,23 +409,19 @@ function App() {
       }
 
       const tabId = latestInputs.tabId;
-      const previewLayout = latestInputs.layout;
-      const previewTheme = latestInputs.theme;
       suggestPreviewTimeoutRef.current = window.setTimeout(() => {
         suggestPreviewTimeoutRef.current = null;
         void (async () => {
           try {
             const result = await invoke<CompileResult>("sidecar_call", {
               method: "compile",
-              params: { source: previewSource, layout: previewLayout, theme: previewTheme },
+              params: { source: previewSource },
             });
             const currentInputs = latestCompileInputsRef.current;
             const currentModelVersionId = editorRef.current?.getModel()?.getVersionId() ?? null;
             if (
               requestId !== activeSuggestPreviewRequestId.current ||
               tabId !== currentInputs.tabId ||
-              previewLayout !== currentInputs.layout ||
-              previewTheme !== currentInputs.theme ||
               modelVersionId !== currentModelVersionId
             ) {
               return;
@@ -450,15 +444,13 @@ function App() {
       try {
         const result = await invoke<CompileResult>("sidecar_call", {
           method: "compile",
-          params: { source: nextSource, layout, theme },
+          params: { source: nextSource },
         });
         const latestInputs = latestCompileInputsRef.current;
         if (
           requestId !== activeCompileRequestId.current ||
           tabId !== latestInputs.tabId ||
-          nextSource !== latestInputs.source ||
-          layout !== latestInputs.layout ||
-          theme !== latestInputs.theme
+          nextSource !== latestInputs.source
         ) {
           return;
         }
@@ -481,9 +473,7 @@ function App() {
         if (
           requestId !== activeCompileRequestId.current ||
           tabId !== latestInputs.tabId ||
-          nextSource !== latestInputs.source ||
-          layout !== latestInputs.layout ||
-          theme !== latestInputs.theme
+          nextSource !== latestInputs.source
         ) {
           return;
         }
@@ -506,7 +496,7 @@ function App() {
         setStatus("Compile failed; preview kept from last valid compile");
       }
     },
-    [layout, theme],
+    [],
   );
 
   useEffect(() => {
@@ -1276,7 +1266,7 @@ function App() {
     try {
       const result = await invoke<ExportResult>("sidecar_call", {
         method: "export",
-        params: { source, format: "svg", layout, theme },
+        params: { source, format: "svg" },
       });
       downloadBytes(`${baseName(fileName)}.svg`, result.data, "image/svg+xml");
       setStatus("Exported SVG");
@@ -1351,8 +1341,6 @@ function App() {
       <Toolbar
         workspaces={workspaceState.workspaces}
         activeWorkspaceId={workspaceState.activeWorkspaceId}
-        theme={theme}
-        layout={layout}
         onWorkspaceChange={(workspaceId) => {
           void switchWorkspace(workspaceId);
         }}
@@ -1360,8 +1348,6 @@ function App() {
           void openWorkspaceFolder();
         }}
         onManageWorkspaces={() => setWorkspaceManagerOpen(true)}
-        onThemeChange={setTheme}
-        onLayoutChange={setLayout}
         onOpen={openSourceFile}
         onSave={saveSource}
         onOpenWithEditor={openWithEditor}
