@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
@@ -33,6 +33,15 @@ struct OpenedD2File {
 #[derive(Debug, Serialize)]
 struct SavedD2File {
     path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceFileEntry {
+    path: String,
+    relative_path: String,
+    file_name: String,
+    directory: String,
 }
 
 #[tauri::command]
@@ -100,6 +109,74 @@ fn open_file_with_editor(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn list_workspace_files(root_path: String) -> Result<Vec<WorkspaceFileEntry>, String> {
+    let root = PathBuf::from(root_path);
+    let root = root
+        .canonicalize()
+        .map_err(|err| format!("failed to open workspace folder {}: {err}", root.display()))?;
+    if !root.is_dir() {
+        return Err(format!("workspace is not a folder: {}", root.display()));
+    }
+
+    let mut files = Vec::new();
+    let mut pending = vec![root.clone()];
+
+    while let Some(directory) = pending.pop() {
+        let mut entries = fs::read_dir(&directory)
+            .map_err(|err| format!("failed to read {}: {err}", directory.display()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| format!("failed to read {}: {err}", directory.display()))?;
+        entries.sort_by_key(|entry| entry.file_name());
+
+        for entry in entries {
+            let file_type = entry
+                .file_type()
+                .map_err(|err| format!("failed to inspect {}: {err}", entry.path().display()))?;
+            if file_type.is_symlink() {
+                continue;
+            }
+
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if file_type.is_dir() {
+                if should_skip_workspace_directory(&name) {
+                    continue;
+                }
+                pending.push(entry.path());
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+
+            let path = entry.path();
+            let relative_path = path
+                .strip_prefix(&root)
+                .map(relative_path_to_string)
+                .unwrap_or_else(|_| path_to_string(path.clone()));
+            let directory = Path::new(&relative_path)
+                .parent()
+                .map(relative_path_to_string)
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| ".".to_string());
+
+            files.push(WorkspaceFileEntry {
+                path: path_to_string(path),
+                relative_path,
+                file_name: name,
+                directory,
+            });
+            if files.len() >= 5000 {
+                files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+                return Ok(files);
+            }
+        }
+    }
+
+    files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    Ok(files)
+}
+
+#[tauri::command]
 fn close_current_window(window: tauri::Window, exit_state: State<ExitState>) -> Result<(), String> {
     *exit_state
         .allow_exit
@@ -128,6 +205,29 @@ fn ensure_d2_extension(path: PathBuf) -> PathBuf {
 
 fn path_to_string(path: PathBuf) -> String {
     path.to_string_lossy().into_owned()
+}
+
+fn relative_path_to_string(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn should_skip_workspace_directory(name: &str) -> bool {
+    matches!(
+        name,
+        ".git"
+            | ".next"
+            | ".tmp"
+            | ".turbo"
+            | ".vite"
+            | "build"
+            | "coverage"
+            | "dist"
+            | "node_modules"
+            | "target"
+    )
 }
 
 fn run_sidecar(input: Vec<u8>) -> Result<Vec<u8>, String> {
@@ -236,6 +336,10 @@ pub fn run() {
             let open = MenuItemBuilder::with_id("open-file", "Open...")
                 .accelerator("CmdOrCtrl+O")
                 .build(handle)?;
+            let open_workspace_file =
+                MenuItemBuilder::with_id("open-workspace-file", "Open Workspace File...")
+                    .accelerator("CmdOrCtrl+P")
+                    .build(handle)?;
             let save = MenuItemBuilder::with_id("save-file", "Save")
                 .accelerator("CmdOrCtrl+S")
                 .build(handle)?;
@@ -251,6 +355,7 @@ pub fn run() {
             let separator = PredefinedMenuItem::separator(handle)?;
             let file_menu = SubmenuBuilder::new(handle, "File")
                 .item(&open)
+                .item(&open_workspace_file)
                 .item(&save)
                 .separator()
                 .item(&close_tab)
@@ -274,6 +379,8 @@ pub fn run() {
         .on_menu_event(|app, event| {
             if event.id() == "open-file" {
                 let _ = app.emit_to("main", "d2-desk-open", ());
+            } else if event.id() == "open-workspace-file" {
+                let _ = app.emit_to("main", "d2-desk-open-workspace-file", ());
             } else if event.id() == "save-file" {
                 let _ = app.emit_to("main", "d2-desk-save", ());
             } else if event.id() == "close-tab" {
@@ -299,6 +406,7 @@ pub fn run() {
             sidecar_call,
             read_d2_file,
             write_d2_file,
+            list_workspace_files,
             open_file_with_editor,
             close_current_window,
             quit_application
