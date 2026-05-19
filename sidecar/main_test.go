@@ -223,8 +223,8 @@ api -> db: query`
 	if len(connection.Preview.Route) == 0 {
 		t.Fatal("expected connection route")
 	}
-	if len(connection.SourceRanges) < 2 {
-		t.Fatalf("expected connection to include source ranges for both endpoints, got %#v", connection.SourceRanges)
+	if !hasRange(connection.SourceRanges, 11, 5, 7) {
+		t.Fatalf("expected connection to include arrow operator range, got %#v", connection.SourceRanges)
 	}
 }
 
@@ -261,8 +261,42 @@ func TestCompileDoesNotMarshalNullSourceRanges(t *testing.T) {
 	if connection == nil {
 		t.Fatalf("expected fuga to piyo connection in %#v", result.Objects)
 	}
-	if len(connection.SourceRanges) < 2 {
-		t.Fatalf("expected fuga to piyo connection to include both endpoint ranges, got %#v", connection.SourceRanges)
+	if !hasRange(connection.SourceRanges, 3, 14, 16) {
+		t.Fatalf("expected fuga to piyo connection to include its arrow operator range, got %#v", connection.SourceRanges)
+	}
+}
+
+func TestCompileMapsRepeatedNestedConnectionOperators(t *testing.T) {
+	source := `a: {
+  x
+  y
+  x -> y
+}
+b: {
+  x
+  y
+  x -> y
+}
+`
+	result, err := compile(compileParams{Source: source, Layout: "dagre", Theme: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aConnection := findConnectionByID(result.Objects, "a.(x -> y)[0]")
+	if aConnection == nil {
+		t.Fatalf("expected a.x to a.y connection in %#v", result.Objects)
+	}
+	if !hasRange(aConnection.SourceRanges, 4, 5, 7) {
+		t.Fatalf("expected a.x to a.y connection to include first nested arrow operator range, got %#v", aConnection.SourceRanges)
+	}
+
+	bConnection := findConnectionByID(result.Objects, "b.(x -> y)[0]")
+	if bConnection == nil {
+		t.Fatalf("expected b.x to b.y connection in %#v", result.Objects)
+	}
+	if !hasRange(bConnection.SourceRanges, 9, 5, 7) {
+		t.Fatalf("expected b.x to b.y connection to include second nested arrow operator range, got %#v", bConnection.SourceRanges)
 	}
 }
 
@@ -467,6 +501,13 @@ func TestRenameNodeRejectsInvalidName(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "letters, numbers") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNodeAtFindsConnectionOperator(t *testing.T) {
+	result := nodeAt(nodeAtParams{Source: "api -> db", Line: 1, Column: 6})
+	if result["id"] != "(api -> db)[0]" {
+		t.Fatalf("expected connection at arrow operator, got %#v", result)
 	}
 }
 

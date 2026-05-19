@@ -2,10 +2,18 @@ package main
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 )
 
 var identifierRE = regexp.MustCompile(`[A-Za-z0-9_.$-]+`)
+var connectionIndexRE = regexp.MustCompile(`\[(\d+)\]$`)
+
+type connectionSourceRange struct {
+	Src   string
+	Dst   string
+	Range sourceRange
+}
 
 func contains(r sourceRange, line, column int) bool {
 	if line < r.StartLine || line > r.EndLine {
@@ -136,6 +144,183 @@ func addScannedRange(out map[string][]sourceRange, path []string, rangeValue sou
 		return
 	}
 	out[strings.Join(path, ".")] = append(out[strings.Join(path, ".")], rangeValue)
+}
+
+func scanConnectionSourceRanges(source string) []connectionSourceRange {
+	var out []connectionSourceRange
+	context := []string{}
+	ignoredMapDepth := 0
+
+	for i, line := range strings.Split(source, "\n") {
+		text := stripD2LineComment(line)
+		quote := byte(0)
+		statementStart := 0
+
+		for index := 0; index < len(text); index++ {
+			char := text[index]
+			if quote != 0 {
+				if char == '\\' {
+					index++
+				} else if char == quote {
+					quote = 0
+				}
+				continue
+			}
+			if char == '"' || char == '\'' {
+				quote = char
+				continue
+			}
+
+			switch char {
+			case '{':
+				if ignoredMapDepth > 0 {
+					ignoredMapDepth++
+					statementStart = index + 1
+					continue
+				}
+
+				pathRange, ok := nodePathRangeFromStatement(text[statementStart:index], i+1, statementStart, false)
+				if !ok || isD2ReservedNodePath(pathRange.path) {
+					ignoredMapDepth = 1
+					statementStart = index + 1
+					continue
+				}
+
+				context = appendPath(context, pathRange.path)
+				statementStart = index + 1
+			case '}':
+				if ignoredMapDepth > 0 {
+					ignoredMapDepth--
+					statementStart = index + 1
+					continue
+				}
+
+				addConnectionRangesFromStatement(&out, context, text[statementStart:index], i+1, statementStart)
+				if len(context) > 0 {
+					context = context[:len(context)-1]
+				}
+				statementStart = index + 1
+			case ';':
+				if ignoredMapDepth == 0 {
+					addConnectionRangesFromStatement(&out, context, text[statementStart:index], i+1, statementStart)
+				}
+				statementStart = index + 1
+			}
+		}
+
+		if ignoredMapDepth == 0 {
+			addConnectionRangesFromStatement(&out, context, text[statementStart:], i+1, statementStart)
+		}
+	}
+	return out
+}
+
+func addConnectionRangesFromStatement(out *[]connectionSourceRange, context []string, statement string, lineNumber int, baseColumn int) {
+	if colonIndex := indexD2StatementColon(statement); colonIndex >= 0 {
+		statement = statement[:colonIndex]
+	}
+
+	cursor := 0
+	var previousPath []string
+	for {
+		operatorIndex, operator, ok := nextConnectionOperator(statement[cursor:])
+		if !ok {
+			return
+		}
+
+		operatorStart := cursor + operatorIndex
+		operatorEnd := operatorStart + len(operator)
+		leftPath := previousPath
+		if len(leftPath) == 0 {
+			pathRange, ok := sourcePathRange(statement[cursor:operatorStart], lineNumber, baseColumn+cursor, false)
+			if !ok {
+				cursor = operatorEnd
+				continue
+			}
+			leftPath = pathRange.path
+		}
+
+		rightEnd := connectionEndpointSegmentEnd(statement[operatorEnd:])
+		rightRange, ok := sourcePathRange(statement[operatorEnd:operatorEnd+rightEnd], lineNumber, baseColumn+operatorEnd, false)
+		if !ok {
+			return
+		}
+
+		src, dst := directedConnectionEndpoints(
+			qualifiedConnectionPath(context, leftPath),
+			qualifiedConnectionPath(context, rightRange.path),
+			operator,
+		)
+		*out = append(*out, connectionSourceRange{
+			Src: src,
+			Dst: dst,
+			Range: sourceRange{
+				File:        "main.d2",
+				StartLine:   lineNumber,
+				StartColumn: baseColumn + operatorStart + 1,
+				EndLine:     lineNumber,
+				EndColumn:   baseColumn + operatorEnd + 1,
+			},
+		})
+
+		previousPath = rightRange.path
+		cursor = operatorEnd
+	}
+}
+
+func qualifiedConnectionPath(context []string, path []string) string {
+	if len(path) == 0 {
+		return ""
+	}
+	if len(path) > 1 || len(context) == 0 {
+		return strings.Join(path, ".")
+	}
+	return strings.Join(appendPath(context, path), ".")
+}
+
+func nextConnectionOperator(text string) (int, string, bool) {
+	quote := byte(0)
+	for index := 0; index < len(text); index++ {
+		char := text[index]
+		if quote != 0 {
+			if char == '\\' {
+				index++
+			} else if char == quote {
+				quote = 0
+			}
+			continue
+		}
+		if char == '"' || char == '\'' {
+			quote = char
+			continue
+		}
+
+		switch {
+		case strings.HasPrefix(text[index:], "<->"):
+			return index, "<->", true
+		case strings.HasPrefix(text[index:], "->"):
+			return index, "->", true
+		case strings.HasPrefix(text[index:], "<-"):
+			return index, "<-", true
+		case strings.HasPrefix(text[index:], "--"):
+			return index, "--", true
+		}
+	}
+	return -1, "", false
+}
+
+func connectionEndpointSegmentEnd(text string) int {
+	if idx, _, ok := nextConnectionOperator(text); ok {
+		return idx
+	}
+	return len(text)
+}
+
+func directedConnectionEndpoints(leftPath, rightPath, operator string) (string, string) {
+	if operator == "<-" {
+		return rightPath, leftPath
+	}
+	return leftPath, rightPath
 }
 
 func nodePathRangeFromStatement(statement string, lineNumber int, baseColumn int, finalSegmentOnly bool) (nodePathRange, bool) {
@@ -351,8 +536,40 @@ func nonNilRanges(ranges []sourceRange) []sourceRange {
 	return ranges
 }
 
-func rangesForConnection(src, dst string, ranges map[string][]sourceRange) []sourceRange {
-	combined := append([]sourceRange{}, rangesFor(src, ranges)...)
-	combined = append(combined, rangesFor(dst, ranges)...)
+func rangesForConnection(id, src, dst string, connectionRanges []connectionSourceRange, tokenRanges map[string][]sourceRange) []sourceRange {
+	index := connectionIndex(id)
+	matched := 0
+	for _, candidate := range connectionRanges {
+		if !endpointMatches(candidate.Src, src) || !endpointMatches(candidate.Dst, dst) {
+			continue
+		}
+		if matched == index {
+			return []sourceRange{candidate.Range}
+		}
+		matched++
+	}
+
+	combined := append([]sourceRange{}, rangesFor(src, tokenRanges)...)
+	combined = append(combined, rangesFor(dst, tokenRanges)...)
 	return combined
+}
+
+func connectionIndex(id string) int {
+	match := connectionIndexRE.FindStringSubmatch(id)
+	if len(match) != 2 {
+		return 0
+	}
+	index, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0
+	}
+	return index
+}
+
+func endpointMatches(sourceToken, objectID string) bool {
+	if sourceToken == objectID {
+		return true
+	}
+	parts := strings.Split(objectID, ".")
+	return len(parts) > 0 && sourceToken == parts[len(parts)-1]
 }
