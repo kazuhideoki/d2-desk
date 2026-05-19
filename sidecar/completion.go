@@ -193,8 +193,8 @@ func d2ChildNodeCompletions(params completeParams) []completionItem {
 		return nil
 	}
 
-	children := collectD2ChildNodes(sourceWithoutCurrentCompletionToken(params.Source, params.Line, params.Column))
-	labels := children[completionPathKey(parentPath)]
+	children := collectD2ChildNodes(sourceWithoutCurrentDotCompletion(params.Source, params.Line, params.Column))
+	labels := completionChildNodeLabels(params, children, parentPath)
 	if len(labels) == 0 {
 		return nil
 	}
@@ -214,6 +214,75 @@ func d2ChildNodeCompletions(params completeParams) []completionItem {
 		})
 	}
 	return completions
+}
+
+func completionChildNodeLabels(params completeParams, children map[string][]string, parentPath []string) []string {
+	context := completionKeyContext(params.Source, params.Line, params.Column)
+	context = trimPathSuffix(context, parentPath)
+
+	if len(context) > 0 && !hasPathPrefix(parentPath, context) {
+		relativePath := appendPath(context, parentPath)
+		if labels := children[completionPathKey(relativePath)]; len(labels) > 0 {
+			return labels
+		}
+	}
+
+	if labels := children[completionPathKey(parentPath)]; len(labels) > 0 {
+		return labels
+	}
+
+	if len(context) == 0 || len(parentPath) != 1 {
+		return nil
+	}
+	contextLabels := children[completionPathKey(context)]
+	if !containsCompletionLabel(contextLabels, parentPath[0]) {
+		return nil
+	}
+	return siblingCompletionLabels(contextLabels, parentPath[0])
+}
+
+func siblingCompletionLabels(labels []string, current string) []string {
+	siblings := make([]string, 0, len(labels))
+	for _, label := range labels {
+		if label != current {
+			siblings = append(siblings, label)
+		}
+	}
+	return siblings
+}
+
+func containsCompletionLabel(labels []string, target string) bool {
+	for _, label := range labels {
+		if label == target {
+			return true
+		}
+	}
+	return false
+}
+
+func trimPathSuffix(path, suffix []string) []string {
+	if len(suffix) == 0 || len(suffix) > len(path) {
+		return path
+	}
+	offset := len(path) - len(suffix)
+	for index := range suffix {
+		if path[offset+index] != suffix[index] {
+			return path
+		}
+	}
+	return path[:offset]
+}
+
+func hasPathPrefix(path, prefix []string) bool {
+	if len(prefix) > len(path) {
+		return false
+	}
+	for index := range prefix {
+		if path[index] != prefix[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func d2TopLevelNodeCompletions(params completeParams) []completionItem {
@@ -940,6 +1009,41 @@ func sourceWithoutCurrentCompletionToken(source string, line, column int) string
 	}
 
 	lines[line] = lineText[:start] + lineText[end:]
+	return strings.Join(lines, "\n")
+}
+
+func sourceWithoutCurrentDotCompletion(source string, line, column int) string {
+	lines := strings.Split(source, "\n")
+	if line < 0 || line >= len(lines) {
+		return source
+	}
+
+	lineText := lines[line]
+	column = clamp(column, 0, len(lineText))
+	start := column
+	for start > 0 && isCompletionValueChar(lineText[start-1]) {
+		start--
+	}
+	end := column
+	for end < len(lineText) && isCompletionValueChar(lineText[end]) {
+		end++
+	}
+
+	prefix := strings.TrimRight(lineText[:start], " \t")
+	if !strings.HasSuffix(prefix, ".") {
+		return sourceWithoutCurrentCompletionToken(source, line, column)
+	}
+	parentEnd := len(prefix) - 1
+	parentStart := parentEnd
+	for parentStart > 0 {
+		char := lineText[parentStart-1]
+		if isCompletionValueChar(char) || char == '.' {
+			parentStart--
+			continue
+		}
+		break
+	}
+	lines[line] = lineText[:parentStart] + lineText[end:]
 	return strings.Join(lines, "\n")
 }
 

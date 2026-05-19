@@ -82,7 +82,12 @@ export function configureD2Language(monaco: typeof Monaco) {
           completions = [];
         }
         if (completions.length === 0 && completionContext.kind === "key") {
-          completions = getD2ChildNodeCompletions(model.getValue(), lineContent, position.column);
+          completions = getD2ChildNodeCompletions(
+            model.getValue(),
+            position.lineNumber - 1,
+            lineContent,
+            position.column,
+          );
           if (completions.length === 0) {
             completions = getD2TopLevelNodeCompletions(
               model.getValue(),
@@ -225,6 +230,7 @@ function isD2KeyCompletionBoundary(prefix: string) {
 
 function getD2ChildNodeCompletions(
   source: string,
+  lineIndex: number,
   lineContent: string,
   column: number,
 ): D2CompletionItem[] {
@@ -236,8 +242,14 @@ function getD2ChildNodeCompletions(
   const parentPath = extractD2Path(parentPrefix.slice(0, -1));
   if (parentPath.length === 0) return [];
 
-  const children = collectD2ChildNodes(source);
-  const labels = children.get(parentPath.join("\0")) ?? [];
+  const children = collectD2ChildNodes(sourceWithoutCurrentDotCompletion(source, lineIndex, column));
+  const labels = getD2CompletionChildNodeLabels(
+    source,
+    lineIndex,
+    column,
+    children,
+    parentPath,
+  );
   const completions: D2CompletionItem[] = labels
     .filter((label) => label.startsWith(typedChild))
     .map((label) => ({
@@ -249,6 +261,102 @@ function getD2ChildNodeCompletions(
       insertText: label,
     }));
   return completions.length > 0 ? completions : [];
+}
+
+function getD2CompletionChildNodeLabels(
+  source: string,
+  lineIndex: number,
+  column: number,
+  children: Map<string, string[]>,
+  parentPath: string[],
+) {
+  const context = trimPathSuffix(getD2KeyContext(source, lineIndex, column), parentPath);
+  if (context.length > 0 && !hasPathPrefix(parentPath, context)) {
+    const relativePath = [...context, ...parentPath];
+    const labels = children.get(relativePath.join("\0")) ?? [];
+    if (labels.length > 0) return labels;
+  }
+
+  const labels = children.get(parentPath.join("\0")) ?? [];
+  if (labels.length > 0) return labels;
+
+  if (context.length === 0 || parentPath.length !== 1) return [];
+  const contextLabels = children.get(context.join("\0")) ?? [];
+  if (!contextLabels.includes(parentPath[0])) return [];
+  return contextLabels.filter((label) => label !== parentPath[0]);
+}
+
+function sourceWithoutCurrentDotCompletion(source: string, lineIndex: number, column: number) {
+  const lines = source.split("\n");
+  if (lineIndex < 0 || lineIndex >= lines.length) return source;
+
+  const lineText = lines[lineIndex];
+  const clampedColumn = Math.min(Math.max(0, column - 1), lineText.length);
+  let start = clampedColumn;
+  while (start > 0 && /[\w-]/.test(lineText[start - 1])) start -= 1;
+  let end = clampedColumn;
+  while (end < lineText.length && /[\w-]/.test(lineText[end])) end += 1;
+
+  const prefix = lineText.slice(0, start).trimEnd();
+  if (!prefix.endsWith(".")) return source;
+
+  let parentStart = prefix.length - 1;
+  while (parentStart > 0 && /[\w-.]/.test(lineText[parentStart - 1])) parentStart -= 1;
+  lines[lineIndex] = lineText.slice(0, parentStart) + lineText.slice(end);
+  return lines.join("\n");
+}
+
+function trimPathSuffix(path: string[], suffix: string[]) {
+  if (suffix.length === 0 || suffix.length > path.length) return path;
+  const offset = path.length - suffix.length;
+  return suffix.every((part, index) => path[offset + index] === part) ? path.slice(0, offset) : path;
+}
+
+function hasPathPrefix(path: string[], prefix: string[]) {
+  if (prefix.length > path.length) return false;
+  return prefix.every((part, index) => path[index] === part);
+}
+
+function getD2KeyContext(source: string, lineIndex: number, column: number) {
+  const lines = source.split("\n");
+  if (lineIndex < 0 || lineIndex >= lines.length) return [];
+
+  const frames: string[][] = [];
+  for (let index = 0; index <= lineIndex; index += 1) {
+    const limit = index === lineIndex ? Math.max(0, column - 1) : lines[index].length;
+    scanD2ContextLine(frames, lines[index], limit);
+  }
+  return frames.flat();
+}
+
+function scanD2ContextLine(frames: string[][], text: string, limit: number) {
+  let quote: string | null = null;
+  for (let index = 0; index < limit; index += 1) {
+    const character = text[index];
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === "#" || (character === "/" && text[index + 1] === "/")) return;
+
+    if (character === "{") {
+      const prefix = text.slice(0, index);
+      const colonIndex = prefix.lastIndexOf(":");
+      if (colonIndex < 0) continue;
+      const path = extractD2Path(prefix.slice(0, colonIndex));
+      if (path.length > 0) frames.push(path);
+    } else if (character === "}") {
+      frames.pop();
+    }
+  }
 }
 
 function getD2TopLevelNodeCompletions(
