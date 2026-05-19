@@ -8,6 +8,8 @@ import (
 
 func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
 	sourceRanges := scanSourceRanges(source)
+	nodeScopeRanges := scanNodeScopeRanges(source)
+	connectionScopeRanges := scanConnectionScopeRanges(source)
 	if diagram == nil {
 		return nil
 	}
@@ -20,7 +22,7 @@ func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
 			Kind:         "shape",
 			BoardPath:    []string{},
 			Label:        shape.Label,
-			SourceRanges: nonNilRanges(rangesFor(shape.ID, sourceRanges)),
+			SourceRanges: nonNilRanges(rangesForShape(shape.ID, sourceRanges, nodeScopeRanges)),
 			Preview:      previewBox{X: &x, Y: &y, Width: &w, Height: &h},
 		})
 	}
@@ -36,7 +38,9 @@ func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
 			Kind:         "connection",
 			BoardPath:    []string{},
 			Label:        conn.Label,
-			SourceRanges: nonNilRanges(rangesForConnection(conn.Src, conn.Dst, sourceRanges)),
+			Src:          conn.Src,
+			Dst:          conn.Dst,
+			SourceRanges: nonNilRanges(rangesForConnection(conn.Src, conn.Dst, sourceRanges, connectionScopeRanges)),
 			Preview:      previewBox{Route: route},
 		})
 	}
@@ -50,12 +54,21 @@ func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
 }
 
 func nodeAt(params nodeAtParams) map[string]string {
+	var bestID string
+	var bestRange *sourceRange
 	for _, obj := range buildObjectMap(params.Source, nilFallbackDiagram(params.Source)) {
 		for _, r := range obj.SourceRanges {
 			if contains(r, params.Line, params.Column) {
-				return map[string]string{"id": obj.ID}
+				if bestRange == nil || sourceRangeSize(r) < sourceRangeSize(*bestRange) {
+					bestID = obj.ID
+					rangeCopy := r
+					bestRange = &rangeCopy
+				}
 			}
 		}
+	}
+	if bestID != "" {
+		return map[string]string{"id": bestID}
 	}
 	for id, ranges := range scanSourceRanges(params.Source) {
 		for _, r := range ranges {
@@ -65,6 +78,13 @@ func nodeAt(params nodeAtParams) map[string]string {
 		}
 	}
 	return map[string]string{}
+}
+
+func sourceRangeSize(r sourceRange) int {
+	if r.StartLine == r.EndLine {
+		return r.EndColumn - r.StartColumn
+	}
+	return (r.EndLine-r.StartLine)*10000 + r.EndColumn - r.StartColumn
 }
 
 func nilFallbackDiagram(source string) *d2target.Diagram {

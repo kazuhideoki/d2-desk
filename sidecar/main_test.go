@@ -279,6 +279,62 @@ hoge <-> fuga -> piyo
 	}
 }
 
+func TestCompileMapsNodeLabelAndBlockBody(t *testing.T) {
+	source := `api: API Server {
+  style: {
+    font-size: 35
+    italic: true
+  }
+}
+`
+	result, err := compile(compileParams{Source: source, Layout: "dagre", Theme: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	api := findObject(result.Objects, "api")
+	if api == nil {
+		t.Fatalf("expected api object in %#v", result.Objects)
+	}
+	labelColumn := strings.Index(source, "API Server") + 1
+	if !containsAny(api.SourceRanges, 1, labelColumn) {
+		t.Fatalf("expected api range to include label, got %#v", api.SourceRanges)
+	}
+	if !containsAny(api.SourceRanges, 3, 5) {
+		t.Fatalf("expected api range to include block body, got %#v", api.SourceRanges)
+	}
+
+	cursor := nodeAt(nodeAtParams{Source: source, Line: 4, Column: 5})
+	if cursor["id"] != "api" {
+		t.Fatalf("expected cursor in api block to focus api, got %#v", cursor)
+	}
+}
+
+func TestCompileMapsConnectionLabelAndEndpoints(t *testing.T) {
+	source := "api -> ocpp_server: charge\n"
+	result, err := compile(compileParams{Source: source, Layout: "dagre", Theme: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	connection := findConnection(result.Objects, "charge")
+	if connection == nil {
+		t.Fatalf("expected labeled connection in %#v", result.Objects)
+	}
+	if connection.Src != "api" || connection.Dst != "ocpp_server" {
+		t.Fatalf("expected connection endpoints api -> ocpp_server, got %#v", connection)
+	}
+	labelColumn := strings.Index(source, "charge") + 1
+	if !containsAny(connection.SourceRanges, 1, labelColumn) {
+		t.Fatalf("expected connection range to include label, got %#v", connection.SourceRanges)
+	}
+
+	cursor := nodeAt(nodeAtParams{Source: source, Line: 1, Column: labelColumn})
+	if cursor["id"] != connection.ID {
+		t.Fatalf("expected cursor on connection label to focus connection, got %#v", cursor)
+	}
+}
+
 func TestCompileMapsQuotedBidirectionalEndpoint(t *testing.T) {
 	source := `"foo bar" <-> baz
 `
@@ -1033,6 +1089,15 @@ func findConnectionByID(objects []objectMap, id string) *objectMap {
 func hasRange(ranges []sourceRange, line, startColumn, endColumn int) bool {
 	for _, r := range ranges {
 		if r.StartLine == line && r.EndLine == line && r.StartColumn == startColumn && r.EndColumn == endColumn {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAny(ranges []sourceRange, line, column int) bool {
+	for _, r := range ranges {
+		if contains(r, line, column) {
 			return true
 		}
 	}

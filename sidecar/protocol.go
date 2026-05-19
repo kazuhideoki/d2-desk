@@ -69,6 +69,8 @@ type objectMap struct {
 	Kind         string        `json:"kind"`
 	BoardPath    []string      `json:"boardPath"`
 	Label        string        `json:"label,omitempty"`
+	Src          string        `json:"src,omitempty"`
+	Dst          string        `json:"dst,omitempty"`
 	SourceRanges []sourceRange `json:"sourceRanges"`
 	Preview      previewBox    `json:"preview"`
 }

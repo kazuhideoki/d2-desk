@@ -41,6 +41,104 @@ func scanSourceRanges(source string) map[string][]sourceRange {
 	return out
 }
 
+func scanNodeScopeRanges(source string) map[string][]sourceRange {
+	out := map[string][]sourceRange{}
+	lines := strings.Split(source, "\n")
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		if strings.Contains(line, "->") {
+			continue
+		}
+		terminator := strings.IndexAny(line, ":{")
+		if terminator < 0 {
+			continue
+		}
+		token, start, _, ok := sourceTokenRange(line[:terminator])
+		if !ok {
+			continue
+		}
+		endLine, endColumn := nodeScopeEnd(lines, i)
+		out[token] = append(out[token], sourceRange{
+			File:        "main.d2",
+			StartLine:   i + 1,
+			StartColumn: start + 1,
+			EndLine:     endLine,
+			EndColumn:   endColumn,
+		})
+	}
+	return out
+}
+
+func nodeScopeEnd(lines []string, startLine int) (int, int) {
+	depth := 0
+	seenBlock := false
+	for i := startLine; i < len(lines); i++ {
+		line := lines[i]
+		for j := 0; j < len(line); j++ {
+			switch line[j] {
+			case '{':
+				depth++
+				seenBlock = true
+			case '}':
+				if depth > 0 {
+					depth--
+				}
+				if seenBlock && depth == 0 {
+					return i + 1, j + 2
+				}
+			}
+		}
+		if !seenBlock {
+			return i + 1, len(line) + 1
+		}
+	}
+	return len(lines), len(lines[len(lines)-1]) + 1
+}
+
+func scanConnectionScopeRanges(source string) map[string][]sourceRange {
+	out := map[string][]sourceRange{}
+	lines := strings.Split(source, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		if !strings.Contains(line, "->") {
+			continue
+		}
+		tokens := connectionTokens(line)
+		for j := 0; j+1 < len(tokens); j++ {
+			out[connectionKey(tokens[j], tokens[j+1])] = append(out[connectionKey(tokens[j], tokens[j+1])], sourceRange{
+				File:        "main.d2",
+				StartLine:   i + 1,
+				StartColumn: 1,
+				EndLine:     i + 1,
+				EndColumn:   len(line) + 1,
+			})
+		}
+	}
+	return out
+}
+
+func connectionTokens(line string) []string {
+	if terminator := strings.IndexAny(line, ":{"); terminator >= 0 {
+		line = line[:terminator]
+	}
+	parts := strings.Split(line, "->")
+	tokens := make([]string, 0, len(parts))
+	for _, part := range parts {
+		token, _, _, ok := sourceTokenRange(part)
+		if ok {
+			tokens = append(tokens, token)
+		}
+	}
+	return tokens
+}
+
 func scanConnectionTokenRanges(out map[string][]sourceRange, line string, lineNumber int) {
 	start := 0
 	for {
@@ -147,6 +245,12 @@ func rangesFor(id string, ranges map[string][]sourceRange) []sourceRange {
 	return nil
 }
 
+func rangesForShape(id string, tokenRanges, scopeRanges map[string][]sourceRange) []sourceRange {
+	combined := append([]sourceRange{}, rangesFor(id, tokenRanges)...)
+	combined = append(combined, rangesFor(id, scopeRanges)...)
+	return combined
+}
+
 func nonNilRanges(ranges []sourceRange) []sourceRange {
 	if ranges == nil {
 		return []sourceRange{}
@@ -154,8 +258,13 @@ func nonNilRanges(ranges []sourceRange) []sourceRange {
 	return ranges
 }
 
-func rangesForConnection(src, dst string, ranges map[string][]sourceRange) []sourceRange {
-	combined := append([]sourceRange{}, rangesFor(src, ranges)...)
-	combined = append(combined, rangesFor(dst, ranges)...)
+func rangesForConnection(src, dst string, tokenRanges, scopeRanges map[string][]sourceRange) []sourceRange {
+	combined := append([]sourceRange{}, rangesFor(src, tokenRanges)...)
+	combined = append(combined, rangesFor(dst, tokenRanges)...)
+	combined = append(combined, scopeRanges[connectionKey(src, dst)]...)
 	return combined
+}
+
+func connectionKey(src, dst string) string {
+	return src + "\x00" + dst
 }
