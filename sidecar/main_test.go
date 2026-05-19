@@ -66,6 +66,22 @@ func TestHandleDispatchesMethods(t *testing.T) {
 			},
 		},
 		{
+			name: "renameNode",
+			request: request{
+				Method: "renameNode",
+				Params: mustParams(t, renameNodeParams{Source: "api -> db\napi: API", ID: "api", NewName: "gateway"}),
+			},
+			validate: func(t *testing.T, result any) {
+				renamed, ok := result.(renameNodeResult)
+				if !ok {
+					t.Fatalf("expected renameNodeResult, got %T", result)
+				}
+				if renamed.ID != "gateway" || !strings.Contains(renamed.Source, "gateway -> db") {
+					t.Fatalf("expected renamed api references, got %#v", renamed)
+				}
+			},
+		},
+		{
 			name: "complete",
 			request: request{
 				Method: "complete",
@@ -368,6 +384,89 @@ func TestNodeAtFindsDefinitionsAndConnectionEndpoints(t *testing.T) {
 	endpoint := nodeAt(nodeAtParams{Source: source, Line: 2, Column: 9})
 	if endpoint["id"] != "db" {
 		t.Fatalf("expected db at connection endpoint, got %#v", endpoint)
+	}
+}
+
+func TestNodeAtFindsNestedFullIdentifier(t *testing.T) {
+	source := `api: API
+container: {
+  api: Nested API
+  api -> db
+}
+`
+	definition := nodeAt(nodeAtParams{Source: source, Line: 3, Column: 4})
+	if definition["id"] != "container.api" {
+		t.Fatalf("expected nested api definition, got %#v", definition)
+	}
+
+	endpoint := nodeAt(nodeAtParams{Source: source, Line: 4, Column: 4})
+	if endpoint["id"] != "container.api" {
+		t.Fatalf("expected nested api endpoint, got %#v", endpoint)
+	}
+}
+
+func TestRenameNodeOnlyRenamesMatchingNestedIdentifier(t *testing.T) {
+	source := `api: API
+api -> db
+container: {
+  api: Nested API
+  api -> db
+}
+container.api -> audit
+`
+	result, err := renameNode(renameNodeParams{Source: source, ID: "container.api", NewName: "service"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := `api: API
+api -> db
+container: {
+  service: Nested API
+  service -> db
+}
+container.service -> audit
+`
+	if result.Source != expected {
+		t.Fatalf("unexpected renamed source:\n%s", result.Source)
+	}
+	if result.ID != "container.service" {
+		t.Fatalf("expected renamed id, got %q", result.ID)
+	}
+}
+
+func TestRenameNodeKeepsNestedSameNameWhenRenamingTopLevel(t *testing.T) {
+	source := `api: API
+api -> db
+container: {
+  api: Nested API
+  api -> db
+}
+`
+	result, err := renameNode(renameNodeParams{Source: source, ID: "api", NewName: "gateway"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := `gateway: API
+gateway -> db
+container: {
+  api: Nested API
+  api -> db
+}
+`
+	if result.Source != expected {
+		t.Fatalf("unexpected renamed source:\n%s", result.Source)
+	}
+}
+
+func TestRenameNodeRejectsInvalidName(t *testing.T) {
+	_, err := renameNode(renameNodeParams{Source: "api -> db", ID: "api", NewName: "new.name"})
+	if err == nil {
+		t.Fatal("expected invalid name error")
+	}
+	if !strings.Contains(err.Error(), "letters, numbers") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

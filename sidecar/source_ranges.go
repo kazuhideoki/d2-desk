@@ -21,88 +21,285 @@ func contains(r sourceRange, line, column int) bool {
 }
 
 func scanSourceRanges(source string) map[string][]sourceRange {
+	return scanD2SourceTokenRanges(source, false)
+}
+
+func scanRenameRanges(source, targetID string) []sourceRange {
+	return scanD2SourceTokenRanges(source, true)[targetID]
+}
+
+func scanD2SourceTokenRanges(source string, finalSegmentOnly bool) map[string][]sourceRange {
 	out := map[string][]sourceRange{}
-	lines := strings.Split(source, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
-			continue
+	context := []string{}
+	ignoredMapDepth := 0
+
+	for i, line := range strings.Split(source, "\n") {
+		text := stripD2LineComment(line)
+		quote := byte(0)
+		statementStart := 0
+
+		for index := 0; index < len(text); index++ {
+			char := text[index]
+			if quote != 0 {
+				if char == '\\' {
+					index++
+				} else if char == quote {
+					quote = 0
+				}
+				continue
+			}
+			if char == '"' || char == '\'' {
+				quote = char
+				continue
+			}
+
+			switch char {
+			case '{':
+				if ignoredMapDepth > 0 {
+					ignoredMapDepth++
+					statementStart = index + 1
+					continue
+				}
+
+				pathRange, ok := nodePathRangeFromStatement(text[statementStart:index], i+1, statementStart, finalSegmentOnly)
+				if !ok || isD2ReservedNodePath(pathRange.path) {
+					ignoredMapDepth = 1
+					statementStart = index + 1
+					continue
+				}
+
+				fullPath := appendPath(context, pathRange.path)
+				addScannedRange(out, fullPath, pathRange.rangeValue)
+				context = fullPath
+				statementStart = index + 1
+			case '}':
+				if ignoredMapDepth > 0 {
+					ignoredMapDepth--
+					statementStart = index + 1
+					continue
+				}
+
+				addD2NodeRangesFromStatement(out, context, text[statementStart:index], i+1, statementStart, finalSegmentOnly)
+				if len(context) > 0 {
+					context = context[:len(context)-1]
+				}
+				statementStart = index + 1
+			case ';':
+				if ignoredMapDepth == 0 {
+					addD2NodeRangesFromStatement(out, context, text[statementStart:index], i+1, statementStart, finalSegmentOnly)
+				}
+				statementStart = index + 1
+			}
 		}
-		if idx := strings.Index(line, "->"); idx >= 0 {
-			scanConnectionTokenRanges(out, line, i+1)
-			continue
+
+		if ignoredMapDepth == 0 {
+			addD2NodeRangesFromStatement(out, context, text[statementStart:], i+1, statementStart, finalSegmentOnly)
 		}
-		left := line
-		if idx := strings.IndexAny(line, ":{"); idx >= 0 {
-			left = line[:idx]
-		}
-		addTokenRange(out, left, i+1, 0)
 	}
 	return out
 }
 
-func scanConnectionTokenRanges(out map[string][]sourceRange, line string, lineNumber int) {
-	start := 0
-	for {
-		segment := line[start:]
-		idx := strings.Index(segment, "->")
-		if terminator := strings.IndexAny(segment, ":{"); terminator >= 0 && (idx < 0 || terminator < idx) {
-			addTokenRange(out, segment[:terminator], lineNumber, start)
-			return
+type nodePathRange struct {
+	path       []string
+	rangeValue sourceRange
+}
+
+type statementSegment struct {
+	text  string
+	start int
+}
+
+type pathSegmentRange struct {
+	name       string
+	startIndex int
+	endIndex   int
+}
+
+func addD2NodeRangesFromStatement(
+	out map[string][]sourceRange,
+	context []string,
+	statement string,
+	lineNumber int,
+	baseColumn int,
+	finalSegmentOnly bool,
+) {
+	for _, pathRange := range nodePathRangesFromStatement(statement, lineNumber, baseColumn, finalSegmentOnly) {
+		if len(pathRange.path) == 0 || isD2ReservedNodePath(pathRange.path) {
+			continue
 		}
-		if idx < 0 {
-			addTokenRange(out, segment, lineNumber, start)
-			return
-		}
-		arrow := start + idx
-		addTokenRange(out, line[start:arrow], lineNumber, start)
-		start = arrow + 2
+		addScannedRange(out, appendPath(context, pathRange.path), pathRange.rangeValue)
 	}
 }
 
-func addTokenRange(out map[string][]sourceRange, text string, line int, baseColumn int) {
-	if idx := strings.IndexAny(text, ":{"); idx >= 0 {
-		text = text[:idx]
-	}
-	tokenText := text
-	if idx := strings.Index(tokenText, "->"); idx >= 0 {
-		tokenText = tokenText[:idx]
-	}
-	token, start, end, ok := sourceTokenRange(tokenText)
-	if !ok {
+func addScannedRange(out map[string][]sourceRange, path []string, rangeValue sourceRange) {
+	if len(path) == 0 {
 		return
 	}
-	out[token] = append(out[token], sourceRange{
-		File:        "main.d2",
-		StartLine:   line,
-		StartColumn: baseColumn + start + 1,
-		EndLine:     line,
-		EndColumn:   baseColumn + end + 1,
-	})
+	out[strings.Join(path, ".")] = append(out[strings.Join(path, ".")], rangeValue)
 }
 
-func sourceTokenRange(text string) (string, int, int, bool) {
+func nodePathRangeFromStatement(statement string, lineNumber int, baseColumn int, finalSegmentOnly bool) (nodePathRange, bool) {
+	ranges := nodePathRangesFromStatement(statement, lineNumber, baseColumn, finalSegmentOnly)
+	if len(ranges) == 0 {
+		return nodePathRange{}, false
+	}
+	return ranges[0], true
+}
+
+func nodePathRangesFromStatement(statement string, lineNumber int, baseColumn int, finalSegmentOnly bool) []nodePathRange {
+	if colonIndex := indexD2StatementColon(statement); colonIndex >= 0 {
+		statement = statement[:colonIndex]
+	}
+
+	segments := splitD2ConnectionSegments(statement)
+	ranges := make([]nodePathRange, 0, len(segments))
+	for _, segment := range segments {
+		pathRange, ok := sourcePathRange(segment.text, lineNumber, baseColumn+segment.start, finalSegmentOnly)
+		if ok {
+			ranges = append(ranges, pathRange)
+		}
+	}
+	return ranges
+}
+
+func splitD2ConnectionSegments(statement string) []statementSegment {
+	segments := []statementSegment{}
+	quote := byte(0)
+	start := 0
+	for index := 0; index < len(statement); index++ {
+		char := statement[index]
+		if quote != 0 {
+			if char == '\\' {
+				index++
+			} else if char == quote {
+				quote = 0
+			}
+			continue
+		}
+		if char == '"' || char == '\'' {
+			quote = char
+			continue
+		}
+
+		operatorLength := 0
+		switch {
+		case strings.HasPrefix(statement[index:], "<->"):
+			operatorLength = 3
+		case strings.HasPrefix(statement[index:], "->"),
+			strings.HasPrefix(statement[index:], "<-"),
+			strings.HasPrefix(statement[index:], "--"):
+			operatorLength = 2
+		}
+		if operatorLength == 0 {
+			continue
+		}
+
+		segments = append(segments, statementSegment{text: statement[start:index], start: start})
+		start = index + operatorLength
+		index += operatorLength - 1
+	}
+	segments = append(segments, statementSegment{text: statement[start:], start: start})
+	return segments
+}
+
+func indexD2StatementColon(statement string) int {
+	quote := byte(0)
+	for index := 0; index < len(statement); index++ {
+		char := statement[index]
+		if quote != 0 {
+			if char == '\\' {
+				index++
+			} else if char == quote {
+				quote = 0
+			}
+			continue
+		}
+		if char == '"' || char == '\'' {
+			quote = char
+			continue
+		}
+		if char == ':' {
+			return index
+		}
+	}
+	return -1
+}
+
+func sourcePathRange(text string, line int, baseColumn int, finalSegmentOnly bool) (nodePathRange, bool) {
+	segments, ok := sourcePathSegments(text)
+	if !ok || len(segments) == 0 {
+		return nodePathRange{}, false
+	}
+
+	rangeSegment := pathSegmentRange{
+		startIndex: segments[0].startIndex,
+		endIndex:   segments[len(segments)-1].endIndex,
+	}
+	if finalSegmentOnly {
+		rangeSegment = segments[len(segments)-1]
+	}
+
+	path := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		path = append(path, segment.name)
+	}
+	return nodePathRange{
+		path: path,
+		rangeValue: sourceRange{
+			File:        "main.d2",
+			StartLine:   line,
+			StartColumn: baseColumn + rangeSegment.startIndex + 1,
+			EndLine:     line,
+			EndColumn:   baseColumn + rangeSegment.endIndex + 1,
+		},
+	}, true
+}
+
+func sourcePathSegments(text string) ([]pathSegmentRange, bool) {
 	start := firstNonSpaceIndex(text)
 	if start >= len(text) {
-		return "", 0, 0, false
+		return nil, false
 	}
 	if text[start] == '"' || text[start] == '\'' {
 		end := quotedTokenEnd(text, start)
 		if end <= start+1 {
-			return "", 0, 0, false
+			return nil, false
 		}
-		return text[start+1 : end], start, end + 1, true
+		return []pathSegmentRange{{
+			name:       text[start+1 : end],
+			startIndex: start,
+			endIndex:   end + 1,
+		}}, true
 	}
 
 	loc := identifierRE.FindStringIndex(text)
 	if loc == nil {
-		return "", 0, 0, false
+		return nil, false
 	}
-	token := strings.TrimSuffix(strings.TrimSpace(text[loc[0]:loc[1]]), ".")
+	token := strings.TrimSuffix(text[loc[0]:loc[1]], ".")
 	if token == "" {
-		return "", 0, 0, false
+		return nil, false
 	}
-	return token, loc[0], loc[1], true
+
+	segments := []pathSegmentRange{}
+	segmentStart := loc[0]
+	for index := 0; index <= len(token); index++ {
+		if index < len(token) && token[index] != '.' {
+			continue
+		}
+		if loc[0]+index > segmentStart {
+			segments = append(segments, pathSegmentRange{
+				name:       text[segmentStart : loc[0]+index],
+				startIndex: segmentStart,
+				endIndex:   loc[0] + index,
+			})
+		}
+		segmentStart = loc[0] + index + 1
+	}
+	if len(segments) == 0 {
+		return nil, false
+	}
+	return segments, true
 }
 
 func firstNonSpaceIndex(text string) int {

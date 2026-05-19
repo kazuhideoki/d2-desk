@@ -24,6 +24,17 @@ type nodeAtParams struct {
 	Column int    `json:"column"`
 }
 
+type renameNodeParams struct {
+	Source  string `json:"source"`
+	ID      string `json:"id"`
+	NewName string `json:"newName"`
+}
+
+type renameNodeResult struct {
+	Source string `json:"source"`
+	ID     string `json:"id"`
+}
+
 type exportParams struct {
 	Source string `json:"source"`
 	Format string `json:"format"`
