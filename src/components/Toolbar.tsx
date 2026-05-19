@@ -88,7 +88,7 @@ export function Toolbar({
         <button title="Save D2 source (Command/Ctrl + S)" onClick={onSave}>
           <Save size={16} />
         </button>
-        <button title="Format document" onClick={onFormat}>
+        <button title="Format document (Command/Ctrl + Shift + I)" onClick={onFormat}>
           <Wand2 size={16} />
         </button>
         <span className="divider" />

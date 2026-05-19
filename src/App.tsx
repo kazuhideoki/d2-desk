@@ -108,6 +108,7 @@ function App() {
   const activeCompileRequestId = useRef(0);
   const openSourceFileRef = useRef<() => void>(() => undefined);
   const saveSourceRef = useRef<() => void>(() => undefined);
+  const formatDocumentRef = useRef<() => void>(() => undefined);
   const closeActiveTabRef = useRef<() => void>(() => undefined);
   const quitApplicationRef = useRef<() => void>(() => undefined);
   const workspaceStateRef = useRef(workspaceState);
@@ -389,6 +390,19 @@ function App() {
     }
   }, [currentFilePath, fileName, source, updateActiveTab]);
 
+  const formatDocument = useCallback(async () => {
+    try {
+      const formatted = await invoke<string>("sidecar_call", {
+        method: "format",
+        params: { source },
+      });
+      updateActiveTab({ source: formatted });
+      setStatus("Formatted");
+    } catch (error) {
+      setStatus(String(error));
+    }
+  }, [source, updateActiveTab]);
+
   const closeTab = useCallback(async (tabId: string) => {
     if (closeTabInFlightRef.current) return;
     closeTabInFlightRef.current = true;
@@ -630,11 +644,14 @@ function App() {
     saveSourceRef.current = () => {
       void saveSource();
     };
+    formatDocumentRef.current = () => {
+      void formatDocument();
+    };
     closeActiveTabRef.current = closeActiveTab;
     quitApplicationRef.current = () => {
       void quitApplication();
     };
-  }, [closeActiveTab, openSourceFile, quitApplication, saveSource]);
+  }, [closeActiveTab, formatDocument, openSourceFile, quitApplication, saveSource]);
 
   useEffect(() => {
     const unlisteners: Array<() => void> = [];
@@ -669,6 +686,10 @@ function App() {
       } else if (key === "s") {
         event.preventDefault();
         void saveSource();
+      } else if (event.shiftKey && key === "i") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void formatDocument();
       } else if (event.key === "+" || event.key === "=") {
         event.preventDefault();
         zoomIn();
@@ -694,7 +715,7 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [closeActiveTab, createNewTab, openSourceFile, quitApplication, saveSource]);
+  }, [closeActiveTab, createNewTab, formatDocument, openSourceFile, quitApplication, saveSource]);
 
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
@@ -720,6 +741,9 @@ function App() {
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       saveSourceRef.current();
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyI, () => {
+      formatDocumentRef.current();
     });
     editor.addCommand(
       monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyD,
@@ -837,19 +861,6 @@ function App() {
         column: sourceRanges[0].startColumn,
       });
       editor.focus();
-    }
-  }
-
-  async function formatDocument() {
-    try {
-      const formatted = await invoke<string>("sidecar_call", {
-        method: "format",
-        params: { source },
-      });
-      updateActiveTab({ source: formatted });
-      setStatus("Formatted");
-    } catch (error) {
-      setStatus(String(error));
     }
   }
 
