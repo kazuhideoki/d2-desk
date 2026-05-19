@@ -1,3 +1,4 @@
+import { ZoomIn, ZoomOut } from "lucide-react";
 import type { D2Object } from "../types";
 import { routePath } from "../utils";
 
@@ -10,6 +11,9 @@ type PreviewPaneProps = {
   hoverId: string | null;
   onHover: (id: string | null) => void;
   onSelect: (id: string) => void;
+  onZoomOut: () => void;
+  onResetZoom: () => void;
+  onZoomIn: () => void;
 };
 
 export function PreviewPane({
@@ -21,12 +25,27 @@ export function PreviewPane({
   hoverId,
   onHover,
   onSelect,
+  onZoomOut,
+  onResetZoom,
+  onZoomIn,
 }: PreviewPaneProps) {
   return (
     <section className="preview-pane">
       <div className="pane-title">
         <span>Preview</span>
-        <span>{Math.round(zoom * 100)}%</span>
+        <div className="pane-title-actions">
+          <div className="pane-zoom-controls" aria-label="Preview zoom controls">
+            <button className="pane-zoom-button" title="Zoom preview out" onClick={onZoomOut}>
+              <ZoomOut size={13} />
+            </button>
+            <button className="pane-zoom-value" title="Reset preview zoom" onClick={onResetZoom}>
+              {Math.round(zoom * 100)}%
+            </button>
+            <button className="pane-zoom-button" title="Zoom preview in" onClick={onZoomIn}>
+              <ZoomIn size={13} />
+            </button>
+          </div>
+        </div>
       </div>
       <div className="preview-viewport">
         <div className="preview-canvas" style={{ transform: `scale(${zoom})` }}>

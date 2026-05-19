@@ -420,7 +420,9 @@ select {
 
 .pane-title {
   display: flex;
+  min-width: 0;
   align-items: center;
+  gap: 12px;
   justify-content: space-between;
   padding: 0 12px;
   border-bottom: 1px solid #cbd5d8;
@@ -429,10 +431,105 @@ select {
   background: #f8faf9;
 }
 
+.pane-title > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .editor-pane .pane-title {
   border-color: #30363d;
   color: #c9d1d9;
   background: #161b22;
+}
+
+.pane-title-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.line-count {
+  color: inherit;
+  white-space: nowrap;
+}
+
+.pane-title-divider {
+  width: 1px;
+  height: 16px;
+  background: #d6dee1;
+}
+
+.editor-pane .pane-title-divider {
+  background: #30363d;
+}
+
+.pane-zoom-controls {
+  display: inline-grid;
+  grid-template-columns: 24px 48px 24px;
+  align-items: center;
+  height: 24px;
+  overflow: hidden;
+  border: 1px solid #cbd5d8;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.editor-pane .pane-zoom-controls {
+  border-color: #30363d;
+  background: #0d1117;
+}
+
+.pane-zoom-button,
+.pane-zoom-value {
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  border: 0;
+  border-radius: 0;
+  color: #4b5c62;
+  background: transparent;
+}
+
+.pane-zoom-button:hover,
+.pane-zoom-value:hover {
+  border: 0;
+  color: #0f766e;
+  background: #ecfdf5;
+}
+
+.pane-zoom-value {
+  display: inline-grid;
+  place-items: center;
+  border-right: 1px solid #d6dee1;
+  border-left: 1px solid #d6dee1;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.editor-pane .pane-zoom-button,
+.editor-pane .pane-zoom-value {
+  color: #c9d1d9;
+}
+
+.editor-pane .pane-zoom-button:hover,
+.editor-pane .pane-zoom-value:hover {
+  color: #7dd3fc;
+  background: #172033;
+}
+
+.editor-pane .pane-zoom-value {
+  border-color: #30363d;
+}
+
+@media (max-width: 560px) {
+  .line-count,
+  .pane-title-divider {
+    display: none;
+  }
 }
 
 .preview-viewport {
