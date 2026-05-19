@@ -201,6 +201,87 @@ select {
   color: #5b6d74;
 }
 
+.rename-dialog {
+  display: grid;
+  width: min(420px, 100%);
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #c7d2d6;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.22);
+}
+
+.rename-dialog-header {
+  display: grid;
+  gap: 4px;
+}
+
+.rename-dialog-header h2 {
+  margin: 0;
+  font-size: 15px;
+  color: #172026;
+}
+
+.rename-dialog-header span {
+  min-width: 0;
+  overflow: hidden;
+  color: #5b6d74;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rename-dialog input {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #99a9ae;
+  border-radius: 6px;
+  color: #172026;
+  font: inherit;
+}
+
+.rename-dialog input:focus {
+  border-color: #0f766e;
+  outline: 2px solid rgba(20, 184, 166, 0.24);
+}
+
+.rename-dialog-error {
+  margin: 0;
+  color: #b42318;
+  font-size: 12px;
+}
+
+.rename-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dialog-button {
+  display: inline-flex;
+  width: auto;
+  min-width: 76px;
+  padding: 0 12px;
+}
+
+.dialog-button.primary {
+  border-color: #0f766e;
+  color: #ffffff;
+  background: #0f766e;
+}
+
+.dialog-button.primary:hover {
+  border-color: #115e59;
+  color: #ffffff;
+  background: #115e59;
+}
+
+.dialog-button.secondary {
+  background: #ffffff;
+}
+
 .tabbar {
   display: flex;
   min-width: 0;

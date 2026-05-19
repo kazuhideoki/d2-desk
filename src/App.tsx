@@ -59,6 +59,24 @@ type InitialSession = {
   activeTabId: string;
 };
 
+type RenameNodeResult = {
+  source: string;
+  id: string;
+};
+
+type RenameDialogState = {
+  id: string;
+  value: string;
+  error: string | null;
+};
+
+const nodeRenamePattern = /^[A-Za-z0-9_-]+$/;
+
+function lastD2IdSegment(id: string) {
+  const parts = id.split(".");
+  return parts[parts.length - 1] ?? id;
+}
+
 function loadInitialSession(): InitialSession {
   const workspaceState = loadWorkspaces();
   const activeWorkspace = getActiveWorkspace(workspaceState);
@@ -99,6 +117,7 @@ function App() {
   const [status, setStatus] = useState("Ready");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
+  const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
   const [zoom, setZoom] = useState(1);
   const [theme, setTheme] = useState(4);
   const [layout, setLayout] = useState("dagre");
@@ -106,6 +125,7 @@ function App() {
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decorationIds = useRef<string[]>([]);
   const activeCompileRequestId = useRef(0);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
   const openSourceFileRef = useRef<() => void>(() => undefined);
   const saveSourceRef = useRef<() => void>(() => undefined);
   const formatDocumentRef = useRef<() => void>(() => undefined);
@@ -118,6 +138,8 @@ function App() {
   const editorTabIdRef = useRef(activeTabId);
   const closeTabInFlightRef = useRef(false);
   const quitInFlightRef = useRef(false);
+  const activeIdRef = useRef(activeId);
+  const compileResultRef = useRef(compileResult);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0],
@@ -153,6 +175,22 @@ function App() {
   useEffect(() => {
     activeTabIdRef.current = activeTabId;
   }, [activeTabId]);
+
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
+
+  useEffect(() => {
+    compileResultRef.current = compileResult;
+  }, [compileResult]);
+
+  useEffect(() => {
+    if (!renameDialog) return;
+    window.requestAnimationFrame(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    });
+  }, [renameDialog]);
 
   const persistTabs = useCallback((nextTabs: D2Tab[], nextActiveTabId: string) => {
     const workspaceId = activeWorkspaceIdRef.current;
@@ -402,6 +440,88 @@ function App() {
       setStatus(String(error));
     }
   }, [source, updateActiveTab]);
+
+  const renameFocusedNode = useCallback(async () => {
+    const editor = editorRef.current;
+    const currentSource = latestCompileInputsRef.current.source;
+    let targetId = activeIdRef.current;
+
+    if (!targetId && editor) {
+      const position = editor.getPosition();
+      if (position) {
+        try {
+          const result = await invoke<{ id?: string }>("sidecar_call", {
+            method: "nodeAt",
+            params: {
+              source: currentSource,
+              line: position.lineNumber,
+              column: position.column,
+            },
+          });
+          targetId = result.id ?? null;
+        } catch {
+          targetId = null;
+        }
+      }
+    }
+
+    if (!targetId) {
+      setStatus("Select a node to rename");
+      return;
+    }
+
+    const selectedObject = compileResultRef.current.objects.find((object) => object.id === targetId);
+    if (selectedObject?.kind === "connection") {
+      setStatus("Select a node to rename");
+      return;
+    }
+
+    const currentName = lastD2IdSegment(targetId);
+    setRenameDialog({ id: targetId, value: currentName, error: null });
+    setStatus(`Renaming ${targetId}`);
+  }, []);
+
+  const commitRenameNode = useCallback(async () => {
+    if (!renameDialog) return;
+
+    const targetId = renameDialog.id;
+    const currentName = lastD2IdSegment(targetId);
+    const newName = renameDialog.value.trim();
+    if (newName === currentName) {
+      setStatus("Rename unchanged");
+      setRenameDialog(null);
+      return;
+    }
+    if (!nodeRenamePattern.test(newName)) {
+      setRenameDialog((current) =>
+        current
+          ? {
+              ...current,
+              error: "Use only letters, numbers, underscores, or hyphens.",
+            }
+          : current,
+      );
+      return;
+    }
+
+    try {
+      const result = await invoke<RenameNodeResult>("sidecar_call", {
+        method: "renameNode",
+        params: { source: latestCompileInputsRef.current.source, id: targetId, newName },
+      });
+      updateActiveTab({ source: result.source });
+      setActiveId(result.id);
+      activeIdRef.current = result.id;
+      setHoverId(null);
+      setRenameDialog(null);
+      setStatus(`Renamed ${targetId} to ${result.id}`);
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+    } catch (error) {
+      setRenameDialog((current) =>
+        current ? { ...current, error: String(error).replace(/^Error: /, "") } : current,
+      );
+    }
+  }, [renameDialog, updateActiveTab]);
 
   const closeTab = useCallback(async (tabId: string) => {
     if (closeTabInFlightRef.current) return;
@@ -677,6 +797,12 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "F2" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        void renameFocusedNode();
+        return;
+      }
+
       if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
       const key = event.key.toLowerCase();
 
@@ -715,7 +841,15 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [closeActiveTab, createNewTab, formatDocument, openSourceFile, quitApplication, saveSource]);
+  }, [
+    closeActiveTab,
+    createNewTab,
+    formatDocument,
+    openSourceFile,
+    quitApplication,
+    renameFocusedNode,
+    saveSource,
+  ]);
 
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
@@ -744,6 +878,9 @@ function App() {
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyI, () => {
       formatDocumentRef.current();
+    });
+    editor.addCommand(monaco.KeyCode.F2, () => {
+      void renameFocusedNode();
     });
     editor.addCommand(
       monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyD,
@@ -946,6 +1083,61 @@ function App() {
             void removeRegisteredWorkspace(workspaceId);
           }}
         />
+      ) : null}
+
+      {renameDialog ? (
+        <div className="modal-backdrop" role="presentation">
+          <form
+            className="rename-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rename-dialog-title"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void commitRenameNode();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setRenameDialog(null);
+                setStatus("Rename canceled");
+                window.requestAnimationFrame(() => editorRef.current?.focus());
+              }
+            }}
+          >
+            <header className="rename-dialog-header">
+              <h2 id="rename-dialog-title">Rename node</h2>
+              <span>{renameDialog.id}</span>
+            </header>
+            <input
+              ref={renameInputRef}
+              aria-label="Node name"
+              value={renameDialog.value}
+              onChange={(event) =>
+                setRenameDialog((current) =>
+                  current ? { ...current, value: event.target.value, error: null } : current,
+                )
+              }
+            />
+            {renameDialog.error ? <p className="rename-dialog-error">{renameDialog.error}</p> : null}
+            <footer className="rename-dialog-actions">
+              <button
+                className="dialog-button secondary"
+                type="button"
+                onClick={() => {
+                  setRenameDialog(null);
+                  setStatus("Rename canceled");
+                  window.requestAnimationFrame(() => editorRef.current?.focus());
+                }}
+              >
+                Cancel
+              </button>
+              <button className="dialog-button primary" type="submit">
+                Rename
+              </button>
+            </footer>
+          </form>
+        </div>
       ) : null}
 
       <TabBar

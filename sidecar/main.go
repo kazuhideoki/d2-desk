@@ -46,6 +46,12 @@ func handle(req request) (any, error) {
 			return nil, err
 		}
 		return nodeAt(params), nil
+	case "renameNode":
+		var params renameNodeParams
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return nil, err
+		}
+		return renameNode(params)
 	case "complete":
 		var params completeParams
 		if err := json.Unmarshal(req.Params, &params); err != nil {
