@@ -159,7 +159,8 @@ function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
-  const [zoom, setZoom] = useState(1);
+  const [editorZoom, setEditorZoom] = useState(1);
+  const [previewZoom, setPreviewZoom] = useState(1);
   const [theme, setTheme] = useState(4);
   const [layout, setLayout] = useState("dagre");
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -206,8 +207,8 @@ function App() {
 
   const overlayViewBox = useMemo(() => getDiagramViewBox(renderedSvg), [renderedSvg]);
 
-  const editorFontSize = Math.round(baseEditorFontSize * zoom);
-  const editorLineHeight = Math.round(baseEditorLineHeight * zoom);
+  const editorFontSize = Math.round(baseEditorFontSize * editorZoom);
+  const editorLineHeight = Math.round(baseEditorLineHeight * editorZoom);
 
   useEffect(() => {
     workspaceStateRef.current = workspaceState;
@@ -1155,15 +1156,42 @@ function App() {
   }
 
   function resetView() {
-    setZoom(1);
+    setEditorZoom(1);
+    setPreviewZoom(1);
   }
 
   function zoomIn() {
-    setZoom((value) => clampZoom(value + zoomStep));
+    setEditorZoom((value) => clampZoom(value + zoomStep));
+    setPreviewZoom((value) => clampZoom(value + zoomStep));
   }
 
   function zoomOut() {
-    setZoom((value) => clampZoom(value - zoomStep));
+    setEditorZoom((value) => clampZoom(value - zoomStep));
+    setPreviewZoom((value) => clampZoom(value - zoomStep));
+  }
+
+  function resetEditorZoom() {
+    setEditorZoom(1);
+  }
+
+  function zoomEditorIn() {
+    setEditorZoom((value) => clampZoom(value + zoomStep));
+  }
+
+  function zoomEditorOut() {
+    setEditorZoom((value) => clampZoom(value - zoomStep));
+  }
+
+  function resetPreviewZoom() {
+    setPreviewZoom(1);
+  }
+
+  function zoomPreviewIn() {
+    setPreviewZoom((value) => clampZoom(value + zoomStep));
+  }
+
+  function zoomPreviewOut() {
+    setPreviewZoom((value) => clampZoom(value - zoomStep));
   }
 
   return (
@@ -1274,18 +1302,22 @@ function App() {
           activeTabId={activeTabId}
           fileName={fileName}
           source={source}
+          zoom={editorZoom}
           editorFontSize={editorFontSize}
           editorLineHeight={editorLineHeight}
           beforeMount={configureD2Language}
           onMount={handleMount}
           onChange={(value) => updateActiveTab({ source: value })}
+          onZoomOut={zoomEditorOut}
+          onResetZoom={resetEditorZoom}
+          onZoomIn={zoomEditorIn}
         />
 
         <PreviewPane
           objects={compileResult.objects}
           renderedSvg={renderedSvg}
           overlayViewBox={overlayViewBox}
-          zoom={zoom}
+          zoom={previewZoom}
           activeId={activeId}
           hoverId={hoverId}
           onHover={setHoverId}
@@ -1294,6 +1326,9 @@ function App() {
             setActiveId(id);
             highlightObject(id, true);
           }}
+          onZoomOut={zoomPreviewOut}
+          onResetZoom={resetPreviewZoom}
+          onZoomIn={zoomPreviewIn}
         />
       </section>
 
