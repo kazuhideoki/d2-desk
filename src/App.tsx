@@ -80,6 +80,12 @@ type RenameDialogState = {
   error: string | null;
 };
 
+type EditorCursorSnapshot = {
+  viewState: Monaco.editor.ICodeEditorViewState | null;
+  selections: Monaco.ISelection[] | null;
+  position: Monaco.IPosition | null;
+};
+
 type WorkspaceFilePaletteState = {
   query: string;
   files: WorkspaceFileEntry[];
@@ -357,6 +363,8 @@ function App() {
   const formatDocumentRef = useRef<() => void>(() => undefined);
   const closeActiveTabRef = useRef<() => void>(() => undefined);
   const quitApplicationRef = useRef<() => void>(() => undefined);
+  const pendingEditorViewStateRestoreRef = useRef<number | null>(null);
+  const renameEditorCursorSnapshotRef = useRef<EditorCursorSnapshot | null>(null);
   const workspaceStateRef = useRef(workspaceState);
   const activeWorkspaceIdRef = useRef(workspaceState.activeWorkspaceId);
   const tabsRef = useRef(tabs);
@@ -556,6 +564,50 @@ function App() {
       return nextTabs;
     });
   }, [persistTabs]);
+
+  const restoreEditorViewStateAfterSourceUpdate = useCallback(
+    (snapshot: EditorCursorSnapshot | null, expectedSource: string) => {
+      if (!snapshot) {
+        window.requestAnimationFrame(() => editorRef.current?.focus());
+        return;
+      }
+
+      if (pendingEditorViewStateRestoreRef.current !== null) {
+        window.cancelAnimationFrame(pendingEditorViewStateRestoreRef.current);
+      }
+
+      let attempts = 0;
+      const restore = () => {
+        const editor = editorRef.current;
+        if (!editor) return;
+
+        attempts += 1;
+        if (editor.getValue() !== expectedSource && attempts < 5) {
+          pendingEditorViewStateRestoreRef.current = window.requestAnimationFrame(restore);
+          return;
+        }
+
+        pendingEditorViewStateRestoreRef.current = null;
+        invalidateCursorLookup();
+        if (snapshot.viewState) {
+          editor.restoreViewState(snapshot.viewState);
+        }
+        if (snapshot.selections?.length) {
+          editor.setSelections(snapshot.selections, "restore-rename-cursor");
+        } else if (snapshot.position) {
+          editor.setPosition(snapshot.position, "restore-rename-cursor");
+        }
+        editor.focus();
+        const position = snapshot.position ?? editor.getPosition();
+        if (position) {
+          void updateFocusedObjectFromPosition(editor, position);
+        }
+      };
+
+      pendingEditorViewStateRestoreRef.current = window.requestAnimationFrame(restore);
+    },
+    [],
+  );
 
   const createNewTab = useCallback(() => {
     const nextTab = createEmptyTab(tabsRef.current);
@@ -979,24 +1031,23 @@ function App() {
   const renameFocusedNode = useCallback(async () => {
     const editor = editorRef.current;
     const currentSource = latestCompileInputsRef.current.source;
-    let targetId = activeIdRef.current;
+    const editorPosition = editor?.getPosition() ?? null;
+    const shouldPreferEditorCursor = editor?.hasTextFocus() ?? false;
+    let targetId = shouldPreferEditorCursor ? null : activeIdRef.current;
 
-    if (!targetId && editor) {
-      const position = editor.getPosition();
-      if (position) {
-        try {
-          const result = await invoke<{ id?: string }>("sidecar_call", {
-            method: "nodeAt",
-            params: {
-              source: currentSource,
-              line: position.lineNumber,
-              column: position.column,
-            },
-          });
-          targetId = result.id ?? null;
-        } catch {
-          targetId = null;
-        }
+    if (!targetId && editorPosition) {
+      try {
+        const result = await invoke<{ id?: string }>("sidecar_call", {
+          method: "nodeAt",
+          params: {
+            source: currentSource,
+            line: editorPosition.lineNumber,
+            column: editorPosition.column,
+          },
+        });
+        targetId = result.id ?? null;
+      } catch {
+        targetId = null;
       }
     }
 
@@ -1011,6 +1062,13 @@ function App() {
       return;
     }
 
+    renameEditorCursorSnapshotRef.current = editor
+      ? {
+          viewState: editor.saveViewState(),
+          selections: editor.getSelections(),
+          position: editor.getPosition(),
+        }
+      : null;
     const currentName = lastD2IdSegment(targetId);
     setRenameDialog({ id: targetId, value: currentName, error: null });
     setStatus(`Renaming ${targetId}`);
@@ -1022,9 +1080,23 @@ function App() {
     const targetId = renameDialog.id;
     const currentName = lastD2IdSegment(targetId);
     const newName = renameDialog.value.trim();
+    const editorCursorSnapshot =
+      renameEditorCursorSnapshotRef.current ??
+      (editorRef.current
+        ? {
+            viewState: editorRef.current.saveViewState(),
+            selections: editorRef.current.getSelections(),
+            position: editorRef.current.getPosition(),
+          }
+        : null);
     if (newName === currentName) {
       setStatus("Rename unchanged");
       setRenameDialog(null);
+      renameEditorCursorSnapshotRef.current = null;
+      restoreEditorViewStateAfterSourceUpdate(
+        editorCursorSnapshot,
+        latestCompileInputsRef.current.source,
+      );
       return;
     }
     if (!nodeRenamePattern.test(newName)) {
@@ -1044,19 +1116,20 @@ function App() {
         method: "renameNode",
         params: { source: latestCompileInputsRef.current.source, id: targetId, newName },
       });
-      updateActiveTab({ source: result.source });
+      updateActiveTab({ source: result.source, editorViewState: editorCursorSnapshot?.viewState });
       setActiveId(result.id);
       activeIdRef.current = result.id;
       setHoverId(null);
       setRenameDialog(null);
+      renameEditorCursorSnapshotRef.current = null;
       setStatus(`Renamed ${targetId} to ${result.id}`);
-      window.requestAnimationFrame(() => editorRef.current?.focus());
+      restoreEditorViewStateAfterSourceUpdate(editorCursorSnapshot, result.source);
     } catch (error) {
       setRenameDialog((current) =>
         current ? { ...current, error: String(error).replace(/^Error: /, "") } : current,
       );
     }
-  }, [renameDialog, updateActiveTab]);
+  }, [renameDialog, restoreEditorViewStateAfterSourceUpdate, updateActiveTab]);
 
   const closeTab = useCallback(async (tabId: string) => {
     if (closeTabInFlightRef.current) return;
@@ -1863,6 +1936,7 @@ function App() {
               if (event.key === "Escape") {
                 event.preventDefault();
                 setRenameDialog(null);
+                renameEditorCursorSnapshotRef.current = null;
                 setStatus("Rename canceled");
                 window.requestAnimationFrame(() => editorRef.current?.focus());
               }
@@ -1889,6 +1963,7 @@ function App() {
                 type="button"
                 onClick={() => {
                   setRenameDialog(null);
+                  renameEditorCursorSnapshotRef.current = null;
                   setStatus("Rename canceled");
                   window.requestAnimationFrame(() => editorRef.current?.focus());
                 }}
