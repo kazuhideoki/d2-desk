@@ -1528,6 +1528,15 @@ function App() {
         } catch {
           updateActiveTab({ editorViewState: null });
         }
+        if (editorRef.current === editor) {
+          editor.focus();
+        }
+      });
+    } else {
+      window.requestAnimationFrame(() => {
+        if (editorRef.current === editor) {
+          editor.focus();
+        }
       });
     }
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyO, () => {
