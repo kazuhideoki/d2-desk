@@ -16,6 +16,7 @@ type completionItem struct {
 	Description   string `json:"description"`
 	Documentation string `json:"documentation"`
 	InsertText    string `json:"insertText"`
+	FilterText    string `json:"filterText"`
 }
 
 var d2KeyCompletionItems = buildD2KeyCompletionItems()
@@ -389,6 +390,8 @@ func d2ContextValueCompletions(params completeParams) []completionItem {
 		return colorCompletions()
 	case last == "font":
 		return completionItemsWithInsertText([]string{"default", "mono"}, "font", "keyword")
+	case last == "icon":
+		return terrastructIconCompletions()
 	case hasTrailingContext(context, "source-arrowhead", "shape"),
 		hasTrailingContext(context, "target-arrowhead", "shape"):
 		return arrowheadShapeCompletions()

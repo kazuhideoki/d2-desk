@@ -787,6 +787,76 @@ func TestCompleteReturnsShapeCompletionsForInlineMap(t *testing.T) {
 	}
 }
 
+func TestCompleteReturnsTerrastructIconCompletions(t *testing.T) {
+	source := "api: { icon: git }"
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len("api: { icon: git")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item := completionByLabel(items, "GitHub")
+	if item == nil {
+		t.Fatalf("expected GitHub icon completion, got %#v", items)
+	}
+	if item.Kind != "icon" {
+		t.Fatalf("expected icon completion kind, got %#v", item)
+	}
+	if item.InsertText != "https://icons.terrastruct.com/dev%2Fgithub.svg" {
+		t.Fatalf("expected Terrastruct GitHub URL insert text, got %#v", item)
+	}
+	if !strings.Contains(item.FilterText, "repository") {
+		t.Fatalf("expected searchable icon aliases, got %#v", item)
+	}
+}
+
+func TestCompleteReturnsTerrastructIconCompletionsForNestedIcon(t *testing.T) {
+	source := "api: {\n  icon: lam\n}"
+	items, err := complete(completeParams{Source: source, Line: 1, Column: len("  icon: lam")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item := completionByLabel(items, "AWS Lambda")
+	if item == nil {
+		t.Fatalf("expected AWS Lambda icon completion, got %#v", items)
+	}
+	if !strings.Contains(item.InsertText, "aws%2FCompute%2FAWS-Lambda_Lambda-Function_light-bg.svg") {
+		t.Fatalf("expected AWS Lambda URL insert text, got %#v", item)
+	}
+}
+
+func TestCompleteReturnsResolvableGCPBigQueryIconURL(t *testing.T) {
+	source := "hoge.icon: gcp"
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len(source)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item := completionByLabel(items, "GCP BigQuery")
+	if item == nil {
+		t.Fatalf("expected GCP BigQuery icon completion, got %#v", items)
+	}
+	if item.InsertText != "https://icons.terrastruct.com/gcp%2FProducts%20and%20services%2FData%20Analytics%2FBigQuery.svg" {
+		t.Fatalf("expected resolvable GCP BigQuery URL insert text, got %#v", item)
+	}
+}
+
+func TestCompleteReturnsResolvableAWSIAMIconURL(t *testing.T) {
+	source := "auth.icon: iam"
+	items, err := complete(completeParams{Source: source, Line: 0, Column: len(source)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item := completionByLabel(items, "AWS IAM")
+	if item == nil {
+		t.Fatalf("expected AWS IAM icon completion, got %#v", items)
+	}
+	if item.InsertText != "https://icons.terrastruct.com/aws%2FSecurity%2C%20Identity%2C%20&%20Compliance%2FAWS-Identify-and-Access-Management_IAM.svg" {
+		t.Fatalf("expected resolvable AWS IAM URL insert text, got %#v", item)
+	}
+}
+
 func TestCompleteReturnsExpandedKeyCompletions(t *testing.T) {
 	source := "source-arr"
 	items, err := complete(completeParams{Source: source, Line: 0, Column: len(source)})

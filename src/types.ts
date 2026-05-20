@@ -48,11 +48,12 @@ export type ExportResult = {
 
 export type D2CompletionItem = {
   label: string;
-  kind: "keyword" | "style" | "shape";
+  kind: "keyword" | "style" | "shape" | "icon";
   detail: string;
   description: string;
   documentation: string;
   insertText: string;
+  filterText?: string;
 };
 
 export type D2Tab = {

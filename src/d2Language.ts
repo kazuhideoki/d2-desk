@@ -104,7 +104,7 @@ export function configureD2Language(monaco: typeof Monaco) {
               : completion.label,
             kind: d2CompletionKindToMonaco(monaco, completion.kind),
             insertText: completion.insertText || completion.label,
-            filterText: completion.label,
+            filterText: completion.filterText || completion.label,
             sortText: completion.label,
             detail:
               completion.description ||
@@ -202,6 +202,8 @@ export function getD2CompletionContext(
 
 function d2CompletionKindToMonaco(monaco: typeof Monaco, kind: D2CompletionItem["kind"]) {
   switch (kind) {
+    case "icon":
+      return monaco.languages.CompletionItemKind.File;
     case "shape":
       return monaco.languages.CompletionItemKind.EnumMember;
     case "style":
