@@ -961,6 +961,28 @@ func TestCompleteReturnsNestedConfigKeysForInlineParentMaps(t *testing.T) {
 	}
 }
 
+func TestCompleteReturnsD2ConfigKeyInRootVars(t *testing.T) {
+	source := "vars: {\n  d2-\n}"
+	items, err := complete(completeParams{Source: source, Line: 1, Column: len("  d2-")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "d2-config", "d2-config: ") {
+		t.Fatalf("expected d2-config key completion in root vars, got %#v", items)
+	}
+}
+
+func TestCompleteDoesNotReturnD2ConfigKeyInNestedVars(t *testing.T) {
+	source := "api: {\n  vars: {\n    d2-\n  }\n}"
+	items, err := complete(completeParams{Source: source, Line: 2, Column: len("    d2-")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasCompletion(items, "d2-config") {
+		t.Fatalf("expected no d2-config key completion in nested vars, got %#v", items)
+	}
+}
+
 func TestCompleteIgnoresBracesInStringsAndSlashComments(t *testing.T) {
 	source := "vars: {\n  d2-config: {\n    data: \"}\"\n    // }\n    theme-\n  }\n}"
 	items, err := complete(completeParams{Source: source, Line: 4, Column: len("    theme-")})

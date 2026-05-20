@@ -37,6 +37,10 @@ var d2LabelKeyCompletionItems = completionItemsForLabels([]string{
 	"near",
 }, "label property", "keyword")
 
+var d2VarsKeyCompletionItems = completionItemsForLabels([]string{
+	"d2-config",
+}, "vars property", "keyword")
+
 var d2ConfigKeyCompletionItems = completionItemsForLabels([]string{
 	"sketch",
 	"theme-id",
@@ -344,8 +348,11 @@ func d2NodeReferenceCompletionPrefix(params completeParams) (string, bool) {
 }
 
 func d2KeyItemsForContext(context []string) []completionItem {
-	if hasTrailingContext(context, "vars", "d2-config") {
+	if isRootD2ConfigContext(context) {
 		return d2ConfigKeyCompletionItems
+	}
+	if isRootVarsContext(context) {
+		return d2VarsKeyCompletionItems
 	}
 	if hasTrailingContext(context, "theme-overrides") || hasTrailingContext(context, "dark-theme-overrides") {
 		return d2ThemeOverrideKeyCompletionItems
@@ -370,19 +377,19 @@ func d2ContextValueCompletions(params completeParams) []completionItem {
 
 	last := context[len(context)-1]
 	switch {
-	case hasTrailingContext(context, "vars", "d2-config", "sketch"),
-		hasTrailingContext(context, "vars", "d2-config", "center"):
+	case isRootD2ConfigContext(context, "sketch"),
+		isRootD2ConfigContext(context, "center"):
 		return booleanCompletions()
-	case hasTrailingContext(context, "vars", "d2-config", "layout-engine"):
+	case isRootD2ConfigContext(context, "layout-engine"):
 		return []completionItem{{
 			Label:      "(layout engine)",
 			Kind:       "keyword",
 			Detail:     "e.g. dagre, elk",
 			InsertText: "",
 		}}
-	case hasTrailingContext(context, "vars", "d2-config", "theme-id"),
-		hasTrailingContext(context, "vars", "d2-config", "pad"):
-		if hasTrailingContext(context, "vars", "d2-config", "theme-id") {
+	case isRootD2ConfigContext(context, "theme-id"),
+		isRootD2ConfigContext(context, "pad"):
+		if isRootD2ConfigContext(context, "theme-id") {
 			return themeCompletions(d2themescatalog.LightCatalog, "light theme")
 		}
 		return []completionItem{{
@@ -391,7 +398,7 @@ func d2ContextValueCompletions(params completeParams) []completionItem {
 			Detail:     "number",
 			InsertText: "",
 		}}
-	case hasTrailingContext(context, "vars", "d2-config", "dark-theme-id"):
+	case isRootD2ConfigContext(context, "dark-theme-id"):
 		return themeCompletions(d2themescatalog.DarkCatalog, "dark theme")
 	case hasTrailingContext(context, "theme-overrides", last),
 		hasTrailingContext(context, "dark-theme-overrides", last):
@@ -560,7 +567,12 @@ func completionDescription(item completionItem, context []string) string {
 			return description
 		}
 	}
-	if hasTrailingContext(context, "vars", "d2-config") {
+	if isRootVarsContext(context) {
+		if item.Label == "d2-config" {
+			return "D2設定を定義"
+		}
+	}
+	if isRootD2ConfigContext(context) {
 		if description, ok := configKeyDescriptions[item.Label]; ok {
 			return description
 		}
@@ -1287,6 +1299,23 @@ func hasTrailingContext(context []string, suffix ...string) bool {
 	offset := len(context) - len(suffix)
 	for index, part := range suffix {
 		if context[offset+index] != part {
+			return false
+		}
+	}
+	return true
+}
+
+func isRootVarsContext(context []string) bool {
+	return len(context) == 1 && context[0] == "vars"
+}
+
+func isRootD2ConfigContext(context []string, suffix ...string) bool {
+	expectedLen := 2 + len(suffix)
+	if len(context) != expectedLen || context[0] != "vars" || context[1] != "d2-config" {
+		return false
+	}
+	for index, part := range suffix {
+		if context[2+index] != part {
 			return false
 		}
 	}
