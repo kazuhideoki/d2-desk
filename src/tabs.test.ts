@@ -1,0 +1,172 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { sampleSource, tabsStorageKey } from "./constants";
+import {
+  createEmptyTab,
+  createTab,
+  hasTabPendingUserChanges,
+  isTabUnsaved,
+  loadActiveTabId,
+  loadTabs,
+  normalizeTab,
+  writeStoredTabs,
+} from "./tabs";
+import type { D2Tab } from "./types";
+
+function createMemoryStorage(): Storage {
+  const store = new Map<string, string>();
+  return {
+    get length() {
+      return store.size;
+    },
+    clear() {
+      store.clear();
+    },
+    getItem(key) {
+      return store.get(key) ?? null;
+    },
+    key(index) {
+      return Array.from(store.keys())[index] ?? null;
+    },
+    removeItem(key) {
+      store.delete(key);
+    },
+    setItem(key, value) {
+      store.set(key, String(value));
+    },
+  };
+}
+
+describe("tabs", () => {
+  beforeEach(() => {
+    vi.stubGlobal("localStorage", createMemoryStorage());
+  });
+
+  it("loads a fallback tab from the legacy last-source key", () => {
+    localStorage.setItem("d2-desk:last-source", "api -> db");
+
+    const tabs = loadTabs();
+
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]).toMatchObject({
+      fileName: "untitled.d2",
+      source: "api -> db",
+      savedSource: "",
+      filePath: null,
+      hasUserChanges: false,
+      editorViewState: null,
+    });
+  });
+
+  it("loads and normalizes persisted tabs while ignoring invalid entries", () => {
+    localStorage.setItem(
+      tabsStorageKey,
+      JSON.stringify({
+        activeTabId: "kept",
+        tabs: [
+          {
+            id: "kept",
+            fileName: "main.d2",
+            source: "api -> db",
+            filePath: "/tmp/main.d2",
+          },
+          { id: "invalid", source: "missing fileName" },
+        ],
+      }),
+    );
+
+    expect(loadTabs()).toEqual([
+      {
+        id: "kept",
+        fileName: "main.d2",
+        source: "api -> db",
+        savedSource: "api -> db",
+        filePath: "/tmp/main.d2",
+        hasUserChanges: false,
+        editorViewState: null,
+      },
+    ]);
+  });
+
+  it("falls back when persisted tab JSON is malformed", () => {
+    localStorage.setItem("d2-desk:last-source", "fallback");
+    localStorage.setItem(tabsStorageKey, "{");
+
+    expect(loadTabs()[0]).toMatchObject({ source: "fallback" });
+  });
+
+  it("keeps the stored active tab only when it exists", () => {
+    localStorage.setItem(tabsStorageKey, JSON.stringify({ activeTabId: "two", tabs: [] }));
+    const tabs = [
+      createTab("one.d2", ""),
+      { ...createTab("two.d2", ""), id: "two" },
+    ];
+
+    expect(loadActiveTabId(tabs)).toBe("two");
+
+    localStorage.setItem(tabsStorageKey, JSON.stringify({ activeTabId: "missing", tabs: [] }));
+
+    expect(loadActiveTabId(tabs)).toBe(tabs[0].id);
+  });
+
+  it("creates the next available untitled tab name", () => {
+    const tab = createEmptyTab([
+      { ...createTab("untitled-2.d2", ""), fileName: "untitled-2.d2" },
+      { ...createTab("untitled-3.d2", ""), fileName: "untitled-3.d2" },
+    ]);
+
+    expect(tab.fileName).toBe("untitled-4.d2");
+    expect(tab.source).toBe("");
+    expect(tab.savedSource).toBe("");
+  });
+
+  it("infers pending changes for legacy tabs without marking the initial sample dirty", () => {
+    const initialSample = legacyTab({
+      fileName: "untitled.d2",
+      source: sampleSource,
+      savedSource: undefined,
+    });
+    const editedUntitled = legacyTab({
+      fileName: "untitled.d2",
+      source: "api -> db",
+      savedSource: undefined,
+    });
+
+    expect(normalizeTab(initialSample).hasUserChanges).toBe(false);
+    expect(normalizeTab(editedUntitled).hasUserChanges).toBe(true);
+  });
+
+  it("checks unsaved and pending-user-change state separately", () => {
+    const clean = createTab("main.d2", "api");
+    const autoChanged = { ...clean, source: "api -> db", hasUserChanges: false };
+    const userChanged = { ...clean, source: "api -> db", hasUserChanges: true };
+
+    expect(isTabUnsaved(clean)).toBe(false);
+    expect(isTabUnsaved(autoChanged)).toBe(true);
+    expect(hasTabPendingUserChanges(autoChanged)).toBe(false);
+    expect(hasTabPendingUserChanges(userChanged)).toBe(true);
+  });
+
+  it("writes tabs with their active id", () => {
+    const tab = createTab("main.d2", "api");
+
+    writeStoredTabs([tab], tab.id);
+
+    expect(JSON.parse(localStorage.getItem(tabsStorageKey) ?? "")).toEqual({
+      activeTabId: tab.id,
+      tabs: [tab],
+    });
+  });
+});
+
+function legacyTab(overrides: Partial<D2Tab>): D2Tab {
+  return {
+    id: "legacy",
+    fileName: "untitled.d2",
+    source: "",
+    savedSource: "",
+    filePath: null,
+    hasUserChanges: undefined as unknown as boolean,
+    editorViewState: null,
+    ...overrides,
+  };
+}

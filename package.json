@@ -10,6 +10,7 @@
     "build:app": "npm run sidecar:build && npm run build",
     "build:install": "scripts/build-and-install-macos.sh",
     "preview": "vite preview",
+    "test": "vitest run",
     "tauri:dev": "node scripts/tauri-dev-isolated.mjs",
     "tauri:dev:app": "node scripts/tauri-dev-app.mjs",
     "tauri": "tauri"
@@ -30,6 +31,7 @@
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitest": "^4.1.6"
   }
 }
