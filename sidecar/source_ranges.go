@@ -68,7 +68,15 @@ func scanD2SourceTokenRanges(source string, finalSegmentOnly bool) map[string][]
 					continue
 				}
 
-				pathRange, ok := nodePathRangeFromStatement(text[statementStart:index], i+1, statementStart, finalSegmentOnly)
+				statement := text[statementStart:index]
+				if hasConnectionOperator(statement) {
+					addD2NodeRangesFromStatement(out, context, statement, i+1, statementStart, finalSegmentOnly)
+					ignoredMapDepth = 1
+					statementStart = index + 1
+					continue
+				}
+
+				pathRange, ok := nodePathRangeFromStatement(statement, i+1, statementStart, finalSegmentOnly)
 				if !ok || isD2ReservedNodePath(pathRange.path) {
 					ignoredMapDepth = 1
 					statementStart = index + 1
@@ -221,8 +229,9 @@ func scanConnectionSourceRanges(source string) []connectionSourceRange {
 	var out []connectionSourceRange
 	context := []string{}
 	ignoredMapDepth := 0
+	lines := strings.Split(source, "\n")
 
-	for i, line := range strings.Split(source, "\n") {
+	for i, line := range lines {
 		text := stripD2LineComment(line)
 		quote := byte(0)
 		statementStart := 0
@@ -246,6 +255,22 @@ func scanConnectionSourceRanges(source string) []connectionSourceRange {
 			case '{':
 				if ignoredMapDepth > 0 {
 					ignoredMapDepth++
+					statementStart = index + 1
+					continue
+				}
+
+				statement := text[statementStart : index+1]
+				if hasConnectionOperator(statement) {
+					endLine, endColumn := blockScopeEnd(lines, i, index)
+					scopeRange := sourceRange{
+						File:        "main.d2",
+						StartLine:   i + 1,
+						StartColumn: statementStart + firstNonSpaceIndex(statement) + 1,
+						EndLine:     endLine,
+						EndColumn:   endColumn,
+					}
+					addConnectionRangesFromStatementWithScope(&out, context, statement, i+1, statementStart, &scopeRange)
+					ignoredMapDepth = 1
 					statementStart = index + 1
 					continue
 				}
@@ -287,6 +312,10 @@ func scanConnectionSourceRanges(source string) []connectionSourceRange {
 }
 
 func addConnectionRangesFromStatement(out *[]connectionSourceRange, context []string, statement string, lineNumber int, baseColumn int) {
+	addConnectionRangesFromStatementWithScope(out, context, statement, lineNumber, baseColumn, nil)
+}
+
+func addConnectionRangesFromStatementWithScope(out *[]connectionSourceRange, context []string, statement string, lineNumber int, baseColumn int, scopeOverride *sourceRange) {
 	fullStatement := statement
 	if colonIndex := indexD2StatementColon(statement); colonIndex >= 0 {
 		statement = statement[:colonIndex]
@@ -297,6 +326,9 @@ func addConnectionRangesFromStatement(out *[]connectionSourceRange, context []st
 		StartColumn: baseColumn + firstNonSpaceIndex(fullStatement) + 1,
 		EndLine:     lineNumber,
 		EndColumn:   baseColumn + len(fullStatement) + 1,
+	}
+	if scopeOverride != nil {
+		scopeRange = *scopeOverride
 	}
 
 	cursor := 0
@@ -346,6 +378,53 @@ func addConnectionRangesFromStatement(out *[]connectionSourceRange, context []st
 		previousPath = rightRange.path
 		cursor = operatorEnd
 	}
+}
+
+func hasConnectionOperator(statement string) bool {
+	_, _, ok := nextConnectionOperator(statement)
+	return ok
+}
+
+func blockScopeEnd(lines []string, startLine int, openBraceColumn int) (int, int) {
+	depth := 0
+	for i := startLine; i < len(lines); i++ {
+		line := stripD2LineComment(lines[i])
+		startColumn := 0
+		if i == startLine {
+			startColumn = openBraceColumn
+		}
+		quote := byte(0)
+		for j := startColumn; j < len(line); j++ {
+			char := line[j]
+			if quote != 0 {
+				if char == '\\' {
+					j++
+				} else if char == quote {
+					quote = 0
+				}
+				continue
+			}
+			if char == '"' || char == '\'' {
+				quote = char
+				continue
+			}
+			switch char {
+			case '{':
+				depth++
+			case '}':
+				if depth > 0 {
+					depth--
+				}
+				if depth == 0 {
+					return i + 1, j + 2
+				}
+			}
+		}
+	}
+	if len(lines) == 0 {
+		return 1, 1
+	}
+	return len(lines), len(lines[len(lines)-1]) + 1
 }
 
 func qualifiedConnectionPath(context []string, path []string) string {

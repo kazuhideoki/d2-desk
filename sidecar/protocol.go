@@ -75,6 +75,7 @@ type previewBox struct {
 	Y      *float64 `json:"y,omitempty"`
 	Width  *float64 `json:"width,omitempty"`
 	Height *float64 `json:"height,omitempty"`
+	Path   string   `json:"path,omitempty"`
 	Route  []point  `json:"route,omitempty"`
 }
 

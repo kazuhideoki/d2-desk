@@ -25,6 +25,7 @@ export type D2Object = {
     y?: number;
     width?: number;
     height?: number;
+    path?: string;
     route?: D2Point[];
   };
 };

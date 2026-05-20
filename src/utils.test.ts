@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   baseName,
   clampZoom,
+  connectionPath,
   ensureD2FileName,
   fileNameFromPath,
   getDiagramViewBox,
@@ -19,6 +20,10 @@ describe("utils", () => {
         { x: 5, y: 6 },
       ]),
     ).toBe("M 1 2 L 3 4 L 5 6");
+    expect(connectionPath({ path: "M 1 2 C 3 4 5 6 7 8", route: [] })).toBe(
+      "M 1 2 C 3 4 5 6 7 8",
+    );
+    expect(connectionPath({ route: [{ x: 1, y: 2 }] })).toBe("M 1 2");
   });
 
   it("normalizes D2 file names and paths", () => {
