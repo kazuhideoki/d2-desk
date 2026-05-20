@@ -1,9 +1,13 @@
 package main
 
 import (
+	"fmt"
+	"math"
 	"sort"
+	"strings"
 
 	"oss.terrastruct.com/d2/d2target"
+	"oss.terrastruct.com/d2/lib/geo"
 )
 
 func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
@@ -14,7 +18,9 @@ func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
 		return nil
 	}
 	objects := make([]objectMap, 0, len(diagram.Shapes)+len(diagram.Connections))
+	shapesByID := make(map[string]d2target.Shape, len(diagram.Shapes))
 	for _, shape := range diagram.Shapes {
+		shapesByID[shape.ID] = shape
 		x, y := float64(shape.Pos.X), float64(shape.Pos.Y)
 		w, h := float64(shape.Width), float64(shape.Height)
 		objects = append(objects, objectMap{
@@ -37,6 +43,10 @@ func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
 		connectionKey := conn.Src + "\x00" + conn.Dst
 		connectionIndex := connectionOccurrences[connectionKey]
 		connectionOccurrences[connectionKey]++
+		preview := previewBox{Route: route}
+		if path, ok := connectionPreviewPath(conn, shapesByID); ok {
+			preview.Path = path
+		}
 		objects = append(objects, objectMap{
 			ID:           conn.ID,
 			Kind:         "connection",
@@ -45,7 +55,7 @@ func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
 			Src:          conn.Src,
 			Dst:          conn.Dst,
 			SourceRanges: nonNilRanges(rangesForConnection(conn.Src, conn.Dst, connectionIndex, connectionRanges, sourceRanges)),
-			Preview:      previewBox{Route: route},
+			Preview:      preview,
 		})
 	}
 	sort.SliceStable(objects, func(i, j int) bool {
@@ -89,6 +99,144 @@ func sourceRangeSize(r sourceRange) int {
 		return r.EndColumn - r.StartColumn
 	}
 	return (r.EndLine-r.StartLine)*10000 + r.EndColumn - r.StartColumn
+}
+
+func connectionPreviewPath(connection d2target.Connection, shapesByID map[string]d2target.Shape) (string, bool) {
+	route := connection.Route
+	if len(route) < 2 || route[0] == nil || route[len(route)-1] == nil {
+		return "", false
+	}
+	for _, p := range route {
+		if p == nil {
+			return "", false
+		}
+	}
+
+	srcStrokeWidth := 0
+	if shape, ok := shapesByID[connection.Src]; ok {
+		srcStrokeWidth = shape.StrokeWidth
+	}
+	dstStrokeWidth := 0
+	if shape, ok := shapesByID[connection.Dst]; ok {
+		dstStrokeWidth = shape.StrokeWidth
+	}
+	srcAdj := arrowheadAdjustment(route[1], route[0], connection.SrcArrow, connection.StrokeWidth, srcStrokeWidth)
+	dstAdj := arrowheadAdjustment(route[len(route)-2], route[len(route)-1], connection.DstArrow, connection.StrokeWidth, dstStrokeWidth)
+
+	path := []string{fmt.Sprintf("M %f %f", route[0].X+srcAdj.X, route[0].Y+srcAdj.Y)}
+	if connection.IsCurve {
+		if (len(route)-1)%3 != 0 {
+			return linearConnectionPreviewPath(route, dstAdj), true
+		}
+		i := 1
+		for ; i < len(route)-3; i += 3 {
+			path = append(path, fmt.Sprintf("C %f %f %f %f %f %f",
+				route[i].X, route[i].Y,
+				route[i+1].X, route[i+1].Y,
+				route[i+2].X, route[i+2].Y,
+			))
+		}
+		path = append(path, fmt.Sprintf("C %f %f %f %f %f %f",
+			route[i].X, route[i].Y,
+			route[i+1].X, route[i+1].Y,
+			route[i+2].X+dstAdj.X,
+			route[i+2].Y+dstAdj.Y,
+		))
+		return strings.Join(path, " "), true
+	}
+
+	for i := 1; i < len(route)-1; i++ {
+		prevSource := route[i-1]
+		prevTarget := route[i]
+		currTarget := route[i+1]
+		prevVector := vectorBetween(prevSource, prevTarget)
+		currVector := vectorBetween(prevTarget, currTarget)
+		dist := math.Hypot(currTarget.X-prevTarget.X, currTarget.Y-prevTarget.Y)
+		units := math.Min(float64(connection.BorderRadius), dist/2)
+		prevTranslations := unitVector(prevVector).multiply(units)
+		currTranslations := unitVector(currVector).multiply(units)
+
+		path = append(path, fmt.Sprintf("L %f %f",
+			prevTarget.X-prevTranslations.X,
+			prevTarget.Y-prevTranslations.Y,
+		))
+
+		if units < float64(connection.BorderRadius) && i < len(route)-2 {
+			nextTarget := route[i+2]
+			nextVector := vector{X: nextTarget.X - currTarget.X, Y: nextTarget.Y - currTarget.Y}
+			i++
+			nextTranslations := unitVector(nextVector).multiply(units)
+			path = append(path, fmt.Sprintf("C %f %f %f %f %f %f",
+				prevTarget.X+prevTranslations.X,
+				prevTarget.Y+prevTranslations.Y,
+				currTarget.X-nextTranslations.X,
+				currTarget.Y-nextTranslations.Y,
+				currTarget.X+nextTranslations.X,
+				currTarget.Y+nextTranslations.Y,
+			))
+		} else {
+			path = append(path, fmt.Sprintf("S %f %f %f %f",
+				prevTarget.X,
+				prevTarget.Y,
+				prevTarget.X+currTranslations.X,
+				prevTarget.Y+currTranslations.Y,
+			))
+		}
+	}
+
+	lastPoint := route[len(route)-1]
+	path = append(path, fmt.Sprintf("L %f %f", lastPoint.X+dstAdj.X, lastPoint.Y+dstAdj.Y))
+	return strings.Join(path, " "), true
+}
+
+func linearConnectionPreviewPath(route []*geo.Point, dstAdj point) string {
+	path := make([]string, 0, len(route))
+	for i, p := range route {
+		if p == nil {
+			continue
+		}
+		x, y := p.X, p.Y
+		if i == len(route)-1 {
+			x += dstAdj.X
+			y += dstAdj.Y
+		}
+		if len(path) == 0 {
+			path = append(path, fmt.Sprintf("M %f %f", x, y))
+		} else {
+			path = append(path, fmt.Sprintf("L %f %f", x, y))
+		}
+	}
+	return strings.Join(path, " ")
+}
+
+type vector struct {
+	X float64
+	Y float64
+}
+
+func vectorBetween(start, end *geo.Point) vector {
+	return vector{X: end.X - start.X, Y: end.Y - start.Y}
+}
+
+func unitVector(v vector) vector {
+	length := math.Hypot(v.X, v.Y)
+	if length == 0 {
+		return vector{}
+	}
+	return vector{X: v.X / length, Y: v.Y / length}
+}
+
+func (v vector) multiply(value float64) point {
+	return point{X: v.X * value, Y: v.Y * value}
+}
+
+func arrowheadAdjustment(start, end *geo.Point, arrowhead d2target.Arrowhead, edgeStrokeWidth, shapeStrokeWidth int) point {
+	distance := (float64(edgeStrokeWidth) + float64(shapeStrokeWidth)) / 2.0
+	if arrowhead != d2target.NoArrowhead {
+		distance += float64(edgeStrokeWidth)
+	}
+	unit := unitVector(vectorBetween(start, end))
+	return point{X: unit.X * -distance, Y: unit.Y * -distance}
 }
 
 func nilFallbackDiagram(source string) *d2target.Diagram {

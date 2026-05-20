@@ -1,6 +1,6 @@
 import { ZoomIn, ZoomOut } from "lucide-react";
 import type { D2Object } from "../types";
-import { routePath } from "../utils";
+import { connectionPath } from "../utils";
 import { RepeatButton } from "./RepeatButton";
 
 type PreviewPaneProps = {
@@ -83,12 +83,12 @@ export function PreviewPane({
                   {isFocused ? (
                     <path
                       className="focus-indicator connection"
-                      d={routePath(object.preview.route ?? [])}
+                      d={connectionPath(object.preview)}
                     />
                   ) : null}
                   <path
                     className="hit-target"
-                    d={routePath(object.preview.route ?? [])}
+                    d={connectionPath(object.preview)}
                     onMouseEnter={() => onHover(object.id)}
                     onMouseLeave={() => onHover(null)}
                     onClick={() => onSelect(object.id)}

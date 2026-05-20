@@ -1,9 +1,13 @@
 import { maxZoom, minZoom } from "./constants";
-import type { D2Point } from "./types";
+import type { D2Object, D2Point } from "./types";
 
 export function routePath(route: D2Point[]) {
   if (route.length === 0) return "";
   return route.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+}
+
+export function connectionPath(preview: D2Object["preview"]) {
+  return preview.path || routePath(preview.route ?? []);
 }
 
 export function baseName(name: string) {

@@ -476,6 +476,59 @@ func TestCompileMapsConnectionLabelAndEndpoints(t *testing.T) {
 	}
 }
 
+func TestCompileMapsConnectionBlockBody(t *testing.T) {
+	source := `api -> db: {
+  style.stroke: red
+}
+`
+	result, err := compile(compileParams{Source: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	db := findObject(result.Objects, "db")
+	if db == nil {
+		t.Fatalf("expected db object in %#v", result.Objects)
+	}
+	if !hasRange(db.SourceRanges, 1, 8, 10) {
+		t.Fatalf("expected db endpoint range in connection block, got %#v", db.SourceRanges)
+	}
+
+	connection := findConnectionByEndpoints(result.Objects, "api", "db")
+	if connection == nil {
+		t.Fatalf("expected api to db connection in %#v", result.Objects)
+	}
+	if !hasRange(connection.SourceRanges, 1, 5, 7) {
+		t.Fatalf("expected connection block to include arrow operator range, got %#v", connection.SourceRanges)
+	}
+	if !containsAny(connection.SourceRanges, 2, 3) {
+		t.Fatalf("expected connection block body to focus connection, got %#v", connection.SourceRanges)
+	}
+
+	cursor := nodeAt(nodeAtParams{Source: source, Line: 2, Column: 3})
+	if cursor["id"] != connection.ID {
+		t.Fatalf("expected cursor in connection block body to focus connection, got %#v", cursor)
+	}
+}
+
+func TestCompileMapsConnectionPreviewPath(t *testing.T) {
+	result, err := compile(compileParams{Source: "api -> db\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	connection := findConnectionByEndpoints(result.Objects, "api", "db")
+	if connection == nil {
+		t.Fatalf("expected api to db connection in %#v", result.Objects)
+	}
+	if connection.Preview.Path == "" {
+		t.Fatalf("expected connection preview path, got %#v", connection.Preview)
+	}
+	if !strings.Contains(connection.Preview.Path, "C ") {
+		t.Fatalf("expected connection preview path to preserve D2 curve data, got %q", connection.Preview.Path)
+	}
+}
+
 func TestCompileMapsQuotedBidirectionalEndpoint(t *testing.T) {
 	source := `"foo bar" <-> baz
 `
