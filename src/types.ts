@@ -48,7 +48,7 @@ export type ExportResult = {
 
 export type D2CompletionItem = {
   label: string;
-  kind: "keyword" | "style" | "shape" | "file";
+  kind: "keyword" | "style" | "shape" | "file" | "icon";
   detail: string;
   description: string;
   documentation: string;

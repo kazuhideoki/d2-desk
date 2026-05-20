@@ -27,6 +27,7 @@ import {
 } from "./tabs";
 import type {
   CompileResult,
+  D2CompletionItem,
   D2Tab,
   ExportResult,
   OpenedD2File,
@@ -95,12 +96,24 @@ type InternalSuggestFocusEvent = {
   item?: InternalSuggestCompletionItem;
 };
 
+type InternalSuggestModelEvent = {
+  completionModel?: {
+    items?: InternalSuggestCompletionItem[];
+  };
+};
+
+type InternalSuggestModel = {
+  onDidSuggest?: (listener: (event: InternalSuggestModelEvent) => void) => Monaco.IDisposable;
+};
+
 type InternalSuggestWidget = {
+  getFocusedItem?: () => InternalSuggestFocusEvent | undefined;
   onDidFocus?: (listener: (event: InternalSuggestFocusEvent) => void) => Monaco.IDisposable;
   onDidHide?: (listener: () => void) => Monaco.IDisposable;
 };
 
 type InternalSuggestController = {
+  model?: InternalSuggestModel;
   widget?: {
     value?: InternalSuggestWidget;
   };
@@ -108,6 +121,7 @@ type InternalSuggestController = {
 
 const nodeRenamePattern = /^[A-Za-z0-9_-]+$/;
 const workspaceFileResultLimit = 120;
+const maxSuggestPreviewCacheEntries = 50;
 
 function lastD2IdSegment(id: string) {
   const parts = id.split(".");
@@ -237,6 +251,72 @@ function completionPreviewSource(
   return `${source.slice(0, startOffset)}${completion.insertText}${source.slice(endOffset)}`;
 }
 
+function previewSourceWithInsertText(
+  model: Monaco.editor.ITextModel,
+  range: Monaco.IRange,
+  insertText: string,
+) {
+  const validatedRange = model.validateRange(range);
+  const source = model.getValue();
+  const startOffset = model.getOffsetAt({
+    lineNumber: validatedRange.startLineNumber,
+    column: validatedRange.startColumn,
+  });
+  const endOffset = model.getOffsetAt({
+    lineNumber: validatedRange.endLineNumber,
+    column: validatedRange.endColumn,
+  });
+  return `${source.slice(0, startOffset)}${insertText}${source.slice(endOffset)}`;
+}
+
+function isD2IconValueCompletionPosition(lineContent: string, column: number) {
+  const linePrefix = lineContent.slice(0, Math.max(0, column - 1));
+  return /(?:^|[{\s;])(?:[\w"'-]+(?:\.[\w-]+)*\.)?icon\s*:\s*[\w-]*$/.test(linePrefix);
+}
+
+function pickD2IconCompletion(completions: D2CompletionItem[], typedText: string) {
+  const typed = typedText.toLowerCase();
+  const iconCompletions = completions
+    .filter((completion) => completion.kind === "icon")
+    .filter((completion) => {
+      if (!typed) return true;
+      const searchable = `${completion.label} ${completion.filterText ?? ""}`.toLowerCase();
+      return searchable.includes(typed);
+    })
+    .sort((left, right) => left.label.localeCompare(right.label));
+  return iconCompletions[0] ?? null;
+}
+
+function pickD2IconCompletionByLabel(completions: D2CompletionItem[], label: string) {
+  return (
+    completions.find(
+      (completion) => completion.kind === "icon" && completion.label.toLowerCase() === label,
+    ) ?? null
+  );
+}
+
+function monacoCompletionLabelText(completion: Monaco.languages.CompletionItem) {
+  return typeof completion.label === "string" ? completion.label : completion.label.label;
+}
+
+function suggestPreviewCacheKey(params: unknown) {
+  return JSON.stringify(params);
+}
+
+function rememberSuggestPreview(
+  cache: Map<string, CompileResult>,
+  key: string,
+  result: CompileResult,
+) {
+  cache.delete(key);
+  cache.set(key, result);
+  while (cache.size > maxSuggestPreviewCacheEntries) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) break;
+    cache.delete(oldestKey);
+  }
+}
+
 function App() {
   const initialSessionRef = useRef<InitialSession | null>(null);
   if (!initialSessionRef.current) {
@@ -268,6 +348,7 @@ function App() {
   const activeCompileRequestId = useRef(0);
   const activeSuggestPreviewRequestId = useRef(0);
   const suggestPreviewTimeoutRef = useRef<number | null>(null);
+  const suggestPreviewCacheRef = useRef(new Map<string, CompileResult>());
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const filePaletteInputRef = useRef<HTMLInputElement | null>(null);
   const openSourceFileRef = useRef<() => void>(() => undefined);
@@ -556,7 +637,7 @@ function App() {
   }
 
   const scheduleSuggestPreview = useCallback(
-    (previewSource: string, modelVersionId: number) => {
+    (previewSource: string, modelVersionId: number, delayMs = 100) => {
       const latestInputs = latestCompileInputsRef.current;
       if (previewSource === latestInputs.source) {
         clearSuggestPreview();
@@ -570,13 +651,21 @@ function App() {
       }
 
       const tabId = latestInputs.tabId;
+      const previewParams = sidecarSourceParams(previewSource);
+      const cacheKey = suggestPreviewCacheKey(previewParams);
+      const cachedResult = suggestPreviewCacheRef.current.get(cacheKey);
+      if (cachedResult) {
+        rememberSuggestPreview(suggestPreviewCacheRef.current, cacheKey, cachedResult);
+        setSuggestPreviewResult(cachedResult);
+        return;
+      }
       suggestPreviewTimeoutRef.current = window.setTimeout(() => {
         suggestPreviewTimeoutRef.current = null;
         void (async () => {
           try {
             const result = await invoke<CompileResult>("sidecar_call", {
               method: "compile",
-              params: sidecarSourceParams(previewSource),
+              params: previewParams,
             });
             const currentInputs = latestCompileInputsRef.current;
             const currentModelVersionId = editorRef.current?.getModel()?.getVersionId() ?? null;
@@ -590,15 +679,29 @@ function App() {
             if (result.diagnostics.length > 0) {
               return;
             }
+            rememberSuggestPreview(suggestPreviewCacheRef.current, cacheKey, result);
             setSuggestPreviewResult(result);
           } catch {
             // Keep the current valid preview when a transient candidate cannot compile.
           }
         })();
-      }, 100);
+      }, delayMs);
     },
     [clearSuggestPreview],
   );
+
+  const isEditingIconValueCompletion = useCallback(() => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    const position = editor?.getPosition();
+    if (!model || !position) return false;
+
+    const lineContent = model.getLineContent(position.lineNumber);
+    return (
+      !isD2LineCommentPosition(lineContent, position.column) &&
+      isD2IconValueCompletionPosition(lineContent, position.column)
+    );
+  }, []);
 
   const compile = useCallback(
     async (nextSource: string, tabId: string, requestId: number) => {
@@ -666,7 +769,9 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem("d2-desk:last-source", source);
-    clearSuggestPreview();
+    if (!isEditingIconValueCompletion()) {
+      clearSuggestPreview();
+    }
     const requestId = activeCompileRequestId.current + 1;
     activeCompileRequestId.current = requestId;
     setStatus("Compiling");
@@ -674,7 +779,7 @@ function App() {
       void compile(source, activeTabId, requestId);
     }, 220);
     return () => window.clearTimeout(timeout);
-  }, [activeTabId, clearSuggestPreview, compile, source]);
+  }, [activeTabId, clearSuggestPreview, compile, isEditingIconValueCompletion, source]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -1364,25 +1469,124 @@ function App() {
     ) as InternalSuggestController | null;
     const suggestWidget = suggestController?.widget?.value;
     const suggestPreviewDisposables: Monaco.IDisposable[] = [];
+    const previewFocusedSuggestItem = (item?: InternalSuggestCompletionItem) => {
+      const model = editor.getModel();
+      const completion = item?.completion;
+      if (!model || !completion) {
+        clearSuggestPreview();
+        return;
+      }
+
+      const previewSource = completionPreviewSource(monaco, model, completion);
+      if (!previewSource) {
+        clearSuggestPreview();
+        return;
+      }
+      scheduleSuggestPreview(previewSource, model.getVersionId());
+    };
+    const previewCurrentFocusedSuggestItem = (fallbackItem?: InternalSuggestCompletionItem) => {
+      const focusedItem = suggestWidget?.getFocusedItem?.()?.item;
+      previewFocusedSuggestItem(focusedItem ?? fallbackItem);
+    };
+    const queuePreviewCurrentFocusedSuggestItem = (fallbackItem?: InternalSuggestCompletionItem) => {
+      for (const delay of [0, 50, 150]) {
+        window.setTimeout(() => {
+          previewCurrentFocusedSuggestItem(fallbackItem);
+        }, delay);
+      }
+    };
+    const previewCurrentIconValueSuggestion = (preferredLabel?: string) => {
+      const model = editor.getModel();
+      const position = editor.getPosition();
+      if (!model || !position) return;
+
+      const lineContent = model.getLineContent(position.lineNumber);
+      if (
+        isD2LineCommentPosition(lineContent, position.column) ||
+        !isD2IconValueCompletionPosition(lineContent, position.column)
+      ) {
+        return;
+      }
+
+      const completionContext = getD2CompletionContext(lineContent, position.column);
+      if (!completionContext || completionContext.kind !== "value") return;
+
+      const modelVersionId = model.getVersionId();
+      const lineSuffix = lineContent.slice(position.column - 1);
+      const remainingText = lineSuffix.match(/^[\w-]*/)?.[0] ?? "";
+      const replacementRange = {
+        startLineNumber: position.lineNumber,
+        startColumn: position.column - completionContext.typedText.length,
+        endLineNumber: position.lineNumber,
+        endColumn: position.column + remainingText.length,
+      };
+
+      void (async () => {
+        let completions: D2CompletionItem[] = [];
+        try {
+          completions = await invoke<D2CompletionItem[]>("sidecar_call", {
+            method: "complete",
+            params: {
+              source: model.getValue(),
+              line: position.lineNumber - 1,
+              column: position.column - 1,
+            },
+          });
+        } catch {
+          return;
+        }
+
+        if (model.getVersionId() !== modelVersionId) return;
+        const completion = preferredLabel
+          ? pickD2IconCompletionByLabel(completions, preferredLabel.toLowerCase())
+          : pickD2IconCompletion(completions, completionContext.typedText);
+        if (!completion?.insertText) {
+          clearSuggestPreview();
+          return;
+        }
+
+        scheduleSuggestPreview(
+          previewSourceWithInsertText(model, replacementRange, completion.insertText),
+          modelVersionId,
+          20,
+        );
+      })();
+    };
+    const queuePreviewCurrentIconValueSuggestion = () => {
+      for (const delay of [0, 80, 180]) {
+        window.setTimeout(previewCurrentIconValueSuggestion, delay);
+      }
+    };
     if (suggestWidget?.onDidFocus) {
       suggestPreviewDisposables.push(
         suggestWidget.onDidFocus((event) => {
-          const model = editor.getModel();
-          const completion = event.item?.completion;
-          if (!model || !completion) {
-            clearSuggestPreview();
+          const focusedLabel = event.item?.completion
+            ? monacoCompletionLabelText(event.item.completion)
+            : null;
+          if (focusedLabel && isEditingIconValueCompletion()) {
+            previewCurrentIconValueSuggestion(focusedLabel);
             return;
           }
-
-          const previewSource = completionPreviewSource(monaco, model, completion);
-          if (!previewSource) {
-            clearSuggestPreview();
-            return;
-          }
-          scheduleSuggestPreview(previewSource, model.getVersionId());
+          previewFocusedSuggestItem(event.item);
         }),
       );
     }
+    if (suggestController?.model?.onDidSuggest) {
+      suggestPreviewDisposables.push(
+        suggestController.model.onDidSuggest((event) => {
+          queuePreviewCurrentFocusedSuggestItem(event.completionModel?.items?.[0]);
+          queuePreviewCurrentIconValueSuggestion();
+        }),
+      );
+    }
+    suggestPreviewDisposables.push(
+      editor.onDidChangeModelContent(() => {
+        if (suggestWidget?.getFocusedItem) {
+          queuePreviewCurrentFocusedSuggestItem();
+        }
+        queuePreviewCurrentIconValueSuggestion();
+      }),
+    );
     if (suggestWidget?.onDidHide) {
       suggestPreviewDisposables.push(suggestWidget.onDidHide(clearSuggestPreview));
     }

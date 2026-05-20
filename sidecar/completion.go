@@ -398,6 +398,8 @@ func d2ContextValueCompletions(params completeParams) []completionItem {
 		return colorCompletions()
 	case last == "font":
 		return completionItemsWithInsertText([]string{"default", "mono"}, "font", "keyword")
+	case last == "icon":
+		return terrastructIconCompletions()
 	case hasTrailingContext(context, "source-arrowhead", "shape"),
 		hasTrailingContext(context, "target-arrowhead", "shape"):
 		return arrowheadShapeCompletions()

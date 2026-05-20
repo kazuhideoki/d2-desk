@@ -487,6 +487,7 @@ function d2CompletionKindToMonaco(monaco: typeof Monaco, completion: D2Completio
   }
   switch (completion.kind) {
     case "file":
+    case "icon":
       return monaco.languages.CompletionItemKind.File;
     case "shape":
       return monaco.languages.CompletionItemKind.EnumMember;
