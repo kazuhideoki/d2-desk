@@ -149,6 +149,10 @@ fn list_workspace_files(root_path: String) -> Result<Vec<WorkspaceFileEntry>, St
             }
 
             let path = entry.path();
+            if !is_d2_file(&path) {
+                continue;
+            }
+
             let relative_path = path
                 .strip_prefix(&root)
                 .map(relative_path_to_string)
@@ -201,6 +205,12 @@ fn ensure_d2_extension(path: PathBuf) -> PathBuf {
     } else {
         path.with_extension("d2")
     }
+}
+
+fn is_d2_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("d2"))
 }
 
 fn path_to_string(path: PathBuf) -> String {
@@ -427,4 +437,49 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn list_workspace_files_returns_only_d2_files() {
+        let workspace = temp_workspace("d2-only");
+        let nested = workspace.join("nested");
+        fs::create_dir(&nested).expect("create nested directory");
+        fs::write(workspace.join("diagram.d2"), "root").expect("write d2 file");
+        fs::write(workspace.join("notes.txt"), "notes").expect("write text file");
+        fs::write(nested.join("component.D2"), "nested").expect("write uppercase d2 file");
+        fs::write(nested.join("script.ts"), "script").expect("write ts file");
+
+        let files = list_workspace_files(path_to_string(workspace.clone())).expect("list files");
+        let relative_paths = files
+            .into_iter()
+            .map(|file| file.relative_path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(relative_paths, vec!["diagram.d2", "nested/component.D2"]);
+
+        fs::remove_dir_all(workspace).expect("remove temp workspace");
+    }
+
+    #[test]
+    fn is_d2_file_matches_d2_extension_case_insensitively() {
+        assert!(is_d2_file(Path::new("diagram.d2")));
+        assert!(is_d2_file(Path::new("diagram.D2")));
+        assert!(!is_d2_file(Path::new("diagram.txt")));
+        assert!(!is_d2_file(Path::new("diagram")));
+    }
+
+    fn temp_workspace(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock before unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("d2-desk-{name}-{unique}"));
+        fs::create_dir(&path).expect("create temp workspace");
+        path
+    }
 }
