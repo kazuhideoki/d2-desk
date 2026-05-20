@@ -1394,6 +1394,38 @@ func TestCompleteReturnsThemeMetadata(t *testing.T) {
 	}
 }
 
+func TestCompleteExcludesHeavyThemeFromThemeSuggestions(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		source string
+		line   int
+		column int
+	}{
+		{
+			name:   "light theme",
+			source: "vars: {\n  d2-config: {\n    theme-id: \n  }\n}",
+			line:   2,
+			column: len("    theme-id: "),
+		},
+		{
+			name:   "dark theme",
+			source: "vars: {\n  d2-config: {\n    dark-theme-id: \n  }\n}",
+			line:   2,
+			column: len("    dark-theme-id: "),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			items, err := complete(completeParams{Source: tt.source, Line: tt.line, Column: tt.column})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if hasCompletion(items, "302") {
+				t.Fatalf("expected theme 302 to be excluded from suggestions, got %#v", items)
+			}
+		})
+	}
+}
+
 func TestCompleteDoesNotReturnLabelOnlyPositionsForTooltipNear(t *testing.T) {
 	source := "api: { tooltip.near: outside }"
 	items, err := complete(completeParams{Source: source, Line: 0, Column: len("api: { tooltip.near: outside")})
