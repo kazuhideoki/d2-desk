@@ -77,6 +77,12 @@ The source of truth is the bundled D2 module, `oss.terrastruct.com/d2 v0.7.1`.
 
 - `near`
 
+### Root vars keys
+
+Under root `vars`:
+
+- `d2-config`
+
 ### Root vars config keys
 
 Under `vars.d2-config`:
