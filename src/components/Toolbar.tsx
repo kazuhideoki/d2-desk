@@ -14,6 +14,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import type { Workspace } from "../types";
+import { RepeatButton } from "./RepeatButton";
 
 type ToolbarProps = {
   workspaces: Workspace[];
@@ -89,15 +90,15 @@ export function Toolbar({
           <Wand2 size={16} />
         </button>
         <span className="divider" />
-        <button title="Zoom out (Command/Ctrl + -)" onClick={onZoomOut}>
+        <RepeatButton title="Zoom out (Command/Ctrl + -)" onPress={onZoomOut}>
           <ZoomOut size={16} />
-        </button>
+        </RepeatButton>
         <button title="Reset zoom (Command/Ctrl + 0)" onClick={onResetView}>
           <Focus size={16} />
         </button>
-        <button title="Zoom in (Command/Ctrl + +)" onClick={onZoomIn}>
+        <RepeatButton title="Zoom in (Command/Ctrl + +)" onPress={onZoomIn}>
           <ZoomIn size={16} />
-        </button>
+        </RepeatButton>
         <span className="divider" />
         <button title="Export SVG" onClick={onExportSvg}>
           <Download size={16} />

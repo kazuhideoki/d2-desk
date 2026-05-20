@@ -1,6 +1,7 @@
 import { ZoomIn, ZoomOut } from "lucide-react";
 import type { D2Object } from "../types";
 import { routePath } from "../utils";
+import { RepeatButton } from "./RepeatButton";
 
 type PreviewPaneProps = {
   objects: D2Object[];
@@ -35,15 +36,15 @@ export function PreviewPane({
         <span>Preview</span>
         <div className="pane-title-actions">
           <div className="pane-zoom-controls" aria-label="Preview zoom controls">
-            <button className="pane-zoom-button" title="Zoom preview out" onClick={onZoomOut}>
+            <RepeatButton className="pane-zoom-button" title="Zoom preview out" onPress={onZoomOut}>
               <ZoomOut size={13} />
-            </button>
+            </RepeatButton>
             <button className="pane-zoom-value" title="Reset preview zoom" onClick={onResetZoom}>
               {Math.round(zoom * 100)}%
             </button>
-            <button className="pane-zoom-button" title="Zoom preview in" onClick={onZoomIn}>
+            <RepeatButton className="pane-zoom-button" title="Zoom preview in" onPress={onZoomIn}>
               <ZoomIn size={13} />
-            </button>
+            </RepeatButton>
           </div>
         </div>
       </div>

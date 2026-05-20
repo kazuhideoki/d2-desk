@@ -1,6 +1,7 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { ZoomIn, ZoomOut } from "lucide-react";
+import { RepeatButton } from "./RepeatButton";
 
 type EditorPaneProps = {
   activeTabId: string;
@@ -60,15 +61,15 @@ export function EditorPane({
           <span className="line-count">{source.split("\n").length} lines</span>
           <span className="pane-title-divider" />
           <div className="pane-zoom-controls" aria-label="Editor zoom controls">
-            <button className="pane-zoom-button" title="Zoom editor out" onClick={onZoomOut}>
+            <RepeatButton className="pane-zoom-button" title="Zoom editor out" onPress={onZoomOut}>
               <ZoomOut size={13} />
-            </button>
+            </RepeatButton>
             <button className="pane-zoom-value" title="Reset editor zoom" onClick={onResetZoom}>
               {Math.round(zoom * 100)}%
             </button>
-            <button className="pane-zoom-button" title="Zoom editor in" onClick={onZoomIn}>
+            <RepeatButton className="pane-zoom-button" title="Zoom editor in" onPress={onZoomIn}>
               <ZoomIn size={13} />
-            </button>
+            </RepeatButton>
           </div>
         </div>
       </div>
