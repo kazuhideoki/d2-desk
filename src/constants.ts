@@ -26,5 +26,6 @@ export const baseEditorLineHeight = 20;
 export const minZoom = 0.1;
 export const maxZoom = 10;
 export const zoomStep = 0.1;
+export const zoomStepAbove200 = 0.2;
 export const tabsStorageKey = "d2-desk:tabs";
 export const workspacesStorageKey = "d2-desk:workspaces";

@@ -3,9 +3,11 @@ import {
   baseName,
   clampZoom,
   connectionPath,
+  decreaseZoom,
   ensureD2FileName,
   fileNameFromPath,
   getDiagramViewBox,
+  increaseZoom,
   moveSelectionIndex,
   normalizeSvgSize,
   routePath,
@@ -41,6 +43,18 @@ describe("utils", () => {
     expect(clampZoom(0)).toBe(0.1);
     expect(clampZoom(1.234)).toBe(1.23);
     expect(clampZoom(20)).toBe(10);
+  });
+
+  it("uses wider zoom steps above 200%", () => {
+    expect(increaseZoom(1.9)).toBe(2);
+    expect(increaseZoom(1.95)).toBe(2);
+    expect(increaseZoom(2)).toBe(2.2);
+    expect(increaseZoom(2.2)).toBe(2.4);
+
+    expect(decreaseZoom(2.4)).toBe(2.2);
+    expect(decreaseZoom(2.2)).toBe(2);
+    expect(decreaseZoom(2.1)).toBe(2);
+    expect(decreaseZoom(2)).toBe(1.9);
   });
 
   it("moves a selection index within available items", () => {

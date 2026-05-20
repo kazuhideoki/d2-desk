@@ -10,7 +10,7 @@ import { PreviewPane } from "./components/PreviewPane";
 import { TabBar } from "./components/TabBar";
 import { Toolbar } from "./components/Toolbar";
 import { WorkspaceManager } from "./components/WorkspaceManager";
-import { baseEditorFontSize, baseEditorLineHeight, zoomStep } from "./constants";
+import { baseEditorFontSize, baseEditorLineHeight } from "./constants";
 import {
   configureD2Language,
   getD2CompletionContext,
@@ -38,12 +38,13 @@ import type {
 } from "./types";
 import {
   baseName,
-  clampZoom,
+  decreaseZoom,
   downloadBytes,
   downloadURL,
   ensureD2FileName,
   fileNameFromPath,
   getDiagramViewBox,
+  increaseZoom,
   moveSelectionIndex,
   normalizeSvgSize,
 } from "./utils";
@@ -1873,13 +1874,13 @@ function App() {
   }
 
   function zoomIn() {
-    setEditorZoom((value) => clampZoom(value + zoomStep));
-    setPreviewZoom((value) => clampZoom(value + zoomStep));
+    setEditorZoom(increaseZoom);
+    setPreviewZoom(increaseZoom);
   }
 
   function zoomOut() {
-    setEditorZoom((value) => clampZoom(value - zoomStep));
-    setPreviewZoom((value) => clampZoom(value - zoomStep));
+    setEditorZoom(decreaseZoom);
+    setPreviewZoom(decreaseZoom);
   }
 
   function resetEditorZoom() {
@@ -1887,11 +1888,11 @@ function App() {
   }
 
   function zoomEditorIn() {
-    setEditorZoom((value) => clampZoom(value + zoomStep));
+    setEditorZoom(increaseZoom);
   }
 
   function zoomEditorOut() {
-    setEditorZoom((value) => clampZoom(value - zoomStep));
+    setEditorZoom(decreaseZoom);
   }
 
   function resetPreviewZoom() {
@@ -1899,11 +1900,11 @@ function App() {
   }
 
   function zoomPreviewIn() {
-    setPreviewZoom((value) => clampZoom(value + zoomStep));
+    setPreviewZoom(increaseZoom);
   }
 
   function zoomPreviewOut() {
-    setPreviewZoom((value) => clampZoom(value - zoomStep));
+    setPreviewZoom(decreaseZoom);
   }
 
   return (

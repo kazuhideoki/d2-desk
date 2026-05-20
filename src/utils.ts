@@ -1,4 +1,4 @@
-import { maxZoom, minZoom } from "./constants";
+import { maxZoom, minZoom, zoomStep, zoomStepAbove200 } from "./constants";
 import type { D2Object, D2Point } from "./types";
 
 export function routePath(route: D2Point[]) {
@@ -24,6 +24,16 @@ export function ensureD2FileName(name: string) {
 
 export function clampZoom(value: number) {
   return Number(Math.min(maxZoom, Math.max(minZoom, value)).toFixed(2));
+}
+
+export function increaseZoom(value: number) {
+  if (value < 2) return clampZoom(Math.min(2, value + zoomStep));
+  return clampZoom(value + zoomStepAbove200);
+}
+
+export function decreaseZoom(value: number) {
+  if (value > 2) return clampZoom(Math.max(2, value - zoomStepAbove200));
+  return clampZoom(value - zoomStep);
 }
 
 export function moveSelectionIndex(currentIndex: number, delta: number, itemCount: number) {
