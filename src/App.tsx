@@ -438,6 +438,23 @@ function App() {
     setHoverId(null);
   }, []);
 
+  const focusAdjacentTab = useCallback(
+    (direction: -1 | 1) => {
+      const currentTabs = persistActiveEditorViewState();
+      if (currentTabs.length <= 1) return;
+
+      const activeIndex = currentTabs.findIndex((tab) => tab.id === activeTabIdRef.current);
+      if (activeIndex === -1) return;
+
+      const nextIndex = (activeIndex + direction + currentTabs.length) % currentTabs.length;
+      const nextTab = currentTabs[nextIndex];
+      activateTab(nextTab.id);
+      persistTabs(currentTabs, nextTab.id);
+      setStatus(`Focused ${nextTab.fileName}`);
+    },
+    [activateTab, persistActiveEditorViewState, persistTabs],
+  );
+
   const updateActiveTab = useCallback((updates: Partial<D2Tab>) => {
     if ("source" in updates) {
       invalidateCursorLookup();
@@ -1233,6 +1250,15 @@ function App() {
         return;
       }
 
+      if ((event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) {
+        if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          focusAdjacentTab(event.key === "ArrowRight" ? 1 : -1);
+        }
+        return;
+      }
+
       if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
       const key = event.key.toLowerCase();
 
@@ -1278,6 +1304,7 @@ function App() {
   }, [
     closeActiveTab,
     createNewTab,
+    focusAdjacentTab,
     formatDocument,
     openSourceFile,
     openWorkspaceFilePalette,
@@ -1316,6 +1343,12 @@ function App() {
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyI, () => {
       formatDocumentRef.current();
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.LeftArrow, () => {
+      focusAdjacentTab(-1);
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.RightArrow, () => {
+      focusAdjacentTab(1);
     });
     editor.addCommand(monaco.KeyCode.F2, () => {
       void renameFocusedNode();
