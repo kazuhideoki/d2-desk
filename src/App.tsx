@@ -44,6 +44,7 @@ import {
   ensureD2FileName,
   fileNameFromPath,
   getDiagramViewBox,
+  moveSelectionIndex,
   normalizeSvgSize,
 } from "./utils";
 import {
@@ -1918,28 +1919,47 @@ function App() {
                 window.requestAnimationFrame(() => editorRef.current?.focus());
                 return;
               }
-              if (event.key === "ArrowDown") {
+              const shouldMoveDown =
+                event.key === "ArrowDown" ||
+                (event.key.toLowerCase() === "n" &&
+                  event.ctrlKey &&
+                  !event.metaKey &&
+                  !event.altKey &&
+                  !event.shiftKey);
+              const shouldMoveUp =
+                event.key === "ArrowUp" ||
+                (event.key.toLowerCase() === "p" &&
+                  event.ctrlKey &&
+                  !event.metaKey &&
+                  !event.altKey &&
+                  !event.shiftKey);
+              if (shouldMoveDown) {
                 event.preventDefault();
                 setFilePalette((current) =>
                   current
                     ? {
                         ...current,
-                        selectedIndex: Math.min(
-                          current.selectedIndex + 1,
-                          Math.max(filteredWorkspaceFiles.length - 1, 0),
+                        selectedIndex: moveSelectionIndex(
+                          current.selectedIndex,
+                          1,
+                          filteredWorkspaceFiles.length,
                         ),
                       }
                     : current,
                 );
                 return;
               }
-              if (event.key === "ArrowUp") {
+              if (shouldMoveUp) {
                 event.preventDefault();
                 setFilePalette((current) =>
                   current
                     ? {
                         ...current,
-                        selectedIndex: Math.max(current.selectedIndex - 1, 0),
+                        selectedIndex: moveSelectionIndex(
+                          current.selectedIndex,
+                          -1,
+                          filteredWorkspaceFiles.length,
+                        ),
                       }
                     : current,
                 );

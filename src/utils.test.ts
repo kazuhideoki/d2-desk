@@ -6,6 +6,7 @@ import {
   ensureD2FileName,
   fileNameFromPath,
   getDiagramViewBox,
+  moveSelectionIndex,
   normalizeSvgSize,
   routePath,
 } from "./utils";
@@ -40,6 +41,14 @@ describe("utils", () => {
     expect(clampZoom(0)).toBe(0.1);
     expect(clampZoom(1.234)).toBe(1.23);
     expect(clampZoom(20)).toBe(10);
+  });
+
+  it("moves a selection index within available items", () => {
+    expect(moveSelectionIndex(1, 1, 3)).toBe(2);
+    expect(moveSelectionIndex(1, -1, 3)).toBe(0);
+    expect(moveSelectionIndex(2, 1, 3)).toBe(2);
+    expect(moveSelectionIndex(0, -1, 3)).toBe(0);
+    expect(moveSelectionIndex(0, 1, 0)).toBe(0);
   });
 
   it("adds explicit dimensions from a root SVG viewBox", () => {

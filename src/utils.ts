@@ -26,6 +26,10 @@ export function clampZoom(value: number) {
   return Number(Math.min(maxZoom, Math.max(minZoom, value)).toFixed(2));
 }
 
+export function moveSelectionIndex(currentIndex: number, delta: number, itemCount: number) {
+  return Math.min(Math.max(currentIndex + delta, 0), Math.max(itemCount - 1, 0));
+}
+
 export function normalizeSvgSize(svg: string) {
   if (!svg || /<svg[^>]*\swidth=/.test(svg)) return svg;
   const match = svg.match(/<svg([^>]*)viewBox="([^"]+)"([^>]*)>/);
