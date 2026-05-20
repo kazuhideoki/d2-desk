@@ -1370,7 +1370,7 @@ function App() {
       if (key === "o") {
         event.preventDefault();
         void openSourceFile();
-      } else if (key === "p") {
+      } else if (key === "p" && event.metaKey && !event.ctrlKey && !event.shiftKey) {
         event.preventDefault();
         event.stopImmediatePropagation();
         void openWorkspaceFilePalette();
@@ -1439,9 +1439,6 @@ function App() {
     }
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyO, () => {
       openSourceFileRef.current();
-    });
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, () => {
-      openWorkspaceFilePaletteRef.current();
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       saveSourceRef.current();

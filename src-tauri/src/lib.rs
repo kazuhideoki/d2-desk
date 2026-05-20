@@ -338,7 +338,7 @@ pub fn run() {
                 .build(handle)?;
             let open_workspace_file =
                 MenuItemBuilder::with_id("open-workspace-file", "Open Workspace File...")
-                    .accelerator("CmdOrCtrl+P")
+                    .accelerator("Command+P")
                     .build(handle)?;
             let save = MenuItemBuilder::with_id("save-file", "Save")
                 .accelerator("CmdOrCtrl+S")
