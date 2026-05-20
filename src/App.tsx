@@ -77,7 +77,7 @@ type RenameDialogState = {
 };
 
 type InternalSuggestCompletionItem = {
-  completion: Monaco.languages.CompletionItem;
+  completion: D2PreviewCompletionItem;
 };
 
 type InternalSuggestFocusEvent = {
@@ -93,6 +93,10 @@ type InternalSuggestController = {
   widget?: {
     value?: InternalSuggestWidget;
   };
+};
+
+type D2PreviewCompletionItem = Monaco.languages.CompletionItem & {
+  d2PreviewThemeId?: number;
 };
 
 const nodeRenamePattern = /^[A-Za-z0-9_-]+$/;
@@ -160,7 +164,7 @@ function objectIdAtPosition(
 function completionPreviewSource(
   monaco: typeof Monaco,
   model: Monaco.editor.ITextModel,
-  completion: Monaco.languages.CompletionItem,
+  completion: D2PreviewCompletionItem,
 ) {
   if (
     completion.insertTextRules &&
@@ -185,7 +189,10 @@ function completionPreviewSource(
     column: range.endColumn,
   });
 
-  return `${source.slice(0, startOffset)}${completion.insertText}${source.slice(endOffset)}`;
+  return {
+    source: `${source.slice(0, startOffset)}${completion.insertText}${source.slice(endOffset)}`,
+    theme: completion.d2PreviewThemeId,
+  };
 }
 
 function App() {
@@ -397,9 +404,10 @@ function App() {
   }, []);
 
   const scheduleSuggestPreview = useCallback(
-    (previewSource: string, modelVersionId: number) => {
+    (previewSource: string, modelVersionId: number, previewThemeOverride?: number) => {
       const latestInputs = latestCompileInputsRef.current;
-      if (previewSource === latestInputs.source) {
+      const previewTheme = previewThemeOverride ?? latestInputs.theme;
+      if (previewSource === latestInputs.source && previewTheme === latestInputs.theme) {
         clearSuggestPreview();
         return;
       }
@@ -412,7 +420,7 @@ function App() {
 
       const tabId = latestInputs.tabId;
       const previewLayout = latestInputs.layout;
-      const previewTheme = latestInputs.theme;
+      const baseTheme = latestInputs.theme;
       suggestPreviewTimeoutRef.current = window.setTimeout(() => {
         suggestPreviewTimeoutRef.current = null;
         void (async () => {
@@ -427,7 +435,7 @@ function App() {
               requestId !== activeSuggestPreviewRequestId.current ||
               tabId !== currentInputs.tabId ||
               previewLayout !== currentInputs.layout ||
-              previewTheme !== currentInputs.theme ||
+              baseTheme !== currentInputs.theme ||
               modelVersionId !== currentModelVersionId
             ) {
               return;
@@ -1113,12 +1121,12 @@ function App() {
             return;
           }
 
-          const previewSource = completionPreviewSource(monaco, model, completion);
-          if (!previewSource) {
+          const preview = completionPreviewSource(monaco, model, completion);
+          if (!preview) {
             clearSuggestPreview();
             return;
           }
-          scheduleSuggestPreview(previewSource, model.getVersionId());
+          scheduleSuggestPreview(preview.source, model.getVersionId(), preview.theme);
         }),
       );
     }

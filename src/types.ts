@@ -53,6 +53,9 @@ export type D2CompletionItem = {
   description: string;
   documentation: string;
   insertText: string;
+  filterText?: string;
+  colorSwatches?: string[];
+  previewThemeId?: number;
 };
 
 export type D2Tab = {

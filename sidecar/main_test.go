@@ -1149,6 +1149,20 @@ func TestCompleteReturnsAdditionalValueCompletions(t *testing.T) {
 			label:  "true",
 		},
 		{
+			name:   "root config light theme id",
+			source: "vars: {\n  d2-config: {\n    theme-id: \n  }\n}",
+			line:   2,
+			column: len("    theme-id: "),
+			label:  "6",
+		},
+		{
+			name:   "root config dark theme id",
+			source: "vars: {\n  d2-config: {\n    dark-theme-id: \n  }\n}",
+			line:   2,
+			column: len("    dark-theme-id: "),
+			label:  "200",
+		},
+		{
 			name:   "near constant",
 			source: "api: { near: top }",
 			line:   0,
@@ -1174,6 +1188,36 @@ func TestCompleteReturnsAdditionalValueCompletions(t *testing.T) {
 				t.Fatalf("expected %q completion, got %#v", tt.label, items)
 			}
 		})
+	}
+}
+
+func TestCompleteReturnsThemeMetadata(t *testing.T) {
+	source := "vars: {\n  d2-config: {\n    theme-id: \n  }\n}"
+	items, err := complete(completeParams{Source: source, Line: 2, Column: len("    theme-id: ")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := completionByLabel(items, "6")
+	if item == nil {
+		t.Fatalf("expected Grape Soda theme completion, got %#v", items)
+	}
+	if item.InsertText != "6" {
+		t.Fatalf("expected theme completion to insert id, got %#v", item)
+	}
+	if item.Description != "Grape Soda" {
+		t.Fatalf("expected theme name description, got %#v", item)
+	}
+	if !strings.Contains(item.FilterText, "Grape Soda") {
+		t.Fatalf("expected theme filter text to include name, got %#v", item)
+	}
+	if len(item.ColorSwatches) == 0 || item.ColorSwatches[0] != "#170034" {
+		t.Fatalf("expected Grape Soda color swatches, got %#v", item)
+	}
+	if item.PreviewThemeID == nil || *item.PreviewThemeID != 6 {
+		t.Fatalf("expected light theme completion to include preview theme id, got %#v", item)
+	}
+	if !strings.Contains(item.Documentation, "#170034") {
+		t.Fatalf("expected theme documentation to include palette, got %#v", item)
 	}
 }
 

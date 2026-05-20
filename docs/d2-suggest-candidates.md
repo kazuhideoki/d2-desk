@@ -284,5 +284,7 @@ placeholders:
 - `link`: URL or board path
 - `class`: declared class name or array of class names
 - `layout-engine`: layout engine name
-- `theme-id`, `dark-theme-id`, `pad`: integer
+- `theme-id`: D2 light theme IDs, with theme names and color palettes
+- `dark-theme-id`: D2 dark theme IDs, with theme names and color palettes
+- `pad`: integer
 - theme override values: color name or hex code
