@@ -23,7 +23,8 @@ import (
 )
 
 func compile(params compileParams) (compileResult, error) {
-	diagram, svg, err := render(params.Source, params.Layout, params.Theme)
+	compileContext := newCompileContext(params.WorkspaceRootPath, params.CurrentFilePath, params.OpenFiles)
+	diagram, svg, err := render(params.Source, params.Layout, params.Theme, compileContext)
 	result := compileResult{
 		SVG:         string(svg),
 		Objects:     buildObjectMap(params.Source, diagram),
@@ -144,7 +145,7 @@ func utf16ColumnCount(text string) int {
 	return count
 }
 
-func render(source, layout string, theme int64) (*d2target.Diagram, []byte, error) {
+func render(source, layout string, theme int64, compileContext compileContext) (*d2target.Diagram, []byte, error) {
 	ruler, err := textmeasure.NewRuler()
 	if err != nil {
 		return nil, nil, err
@@ -167,7 +168,8 @@ func render(source, layout string, theme int64) (*d2target.Diagram, []byte, erro
 		LayoutResolver: layoutResolver,
 		Ruler:          ruler,
 		UTF16Pos:       true,
-		InputPath:      "main.d2",
+		InputPath:      compileContext.inputPath,
+		FS:             compileContext.fs,
 	}
 	ctx := log.WithDefault(context.Background())
 	diagram, _, err := d2lib.Compile(ctx, source, compileOpts, renderOpts)
@@ -187,7 +189,8 @@ func format(source string) (string, error) {
 }
 
 func export(params exportParams) (exportResult, error) {
-	_, svg, err := render(params.Source, params.Layout, params.Theme)
+	compileContext := newCompileContext(params.WorkspaceRootPath, params.CurrentFilePath, params.OpenFiles)
+	_, svg, err := render(params.Source, params.Layout, params.Theme, compileContext)
 	if err != nil && len(svg) == 0 {
 		return exportResult{}, err
 	}

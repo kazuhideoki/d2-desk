@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -1229,6 +1231,62 @@ func TestCompleteDoesNotReturnKeyCompletionsInValuePosition(t *testing.T) {
 	}
 	if hasCompletion(items, "shape") {
 		t.Fatalf("expected no key completions in value position, got %#v", items)
+	}
+}
+
+func TestCompileResolvesWorkspaceImports(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "components.d2"), []byte("service: {\n  api\n  db\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := compile(compileParams{
+		Source:            "...@components",
+		WorkspaceRootPath: workspace,
+		CurrentFilePath:   filepath.Join(workspace, "diagram.d2"),
+		Layout:            "dagre",
+		Theme:             4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("expected imported file to compile, got %#v", result.Diagnostics)
+	}
+	if findObject(result.Objects, "service.api") == nil || findObject(result.Objects, "service.db") == nil {
+		t.Fatalf("expected imported objects in object map, got %#v", result.Objects)
+	}
+}
+
+func TestCompilePrefersOpenImportFileContents(t *testing.T) {
+	workspace := t.TempDir()
+	componentsPath := filepath.Join(workspace, "components.d2")
+	if err := os.WriteFile(componentsPath, []byte("service: {\n  disk\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := compile(compileParams{
+		Source:            "...@components",
+		WorkspaceRootPath: workspace,
+		CurrentFilePath:   filepath.Join(workspace, "diagram.d2"),
+		OpenFiles: []compileFile{{
+			Path:   componentsPath,
+			Source: "service: {\n  memory\n}\n",
+		}},
+		Layout: "dagre",
+		Theme:  4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("expected open import file to compile, got %#v", result.Diagnostics)
+	}
+	if findObject(result.Objects, "service.memory") == nil {
+		t.Fatalf("expected open file object in object map, got %#v", result.Objects)
+	}
+	if findObject(result.Objects, "service.disk") != nil {
+		t.Fatalf("expected open file contents to override disk contents, got %#v", result.Objects)
 	}
 }
 

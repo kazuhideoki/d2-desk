@@ -421,6 +421,27 @@ function App() {
     setSuggestPreviewResult(null);
   }, []);
 
+  function sidecarSourceParams(nextSource: string) {
+    const workspaceId = activeWorkspaceIdRef.current;
+    const workspace = workspaceId
+      ? workspaceStateRef.current.workspaces.find((item) => item.id === workspaceId)
+      : null;
+    const activeTabForCompile =
+      tabsRef.current.find((tab) => tab.id === activeTabIdRef.current) ?? null;
+
+    return {
+      source: nextSource,
+      workspaceRootPath: workspace?.rootPath ?? "",
+      currentFilePath: activeTabForCompile?.filePath ?? "",
+      openFiles: tabsRef.current
+        .filter((tab) => tab.filePath)
+        .map((tab) => ({
+          path: tab.filePath!,
+          source: tab.id === activeTabIdRef.current ? nextSource : tab.source,
+        })),
+    };
+  }
+
   const scheduleSuggestPreview = useCallback(
     (previewSource: string, modelVersionId: number) => {
       const latestInputs = latestCompileInputsRef.current;
@@ -444,7 +465,11 @@ function App() {
           try {
             const result = await invoke<CompileResult>("sidecar_call", {
               method: "compile",
-              params: { source: previewSource, layout: previewLayout, theme: previewTheme },
+              params: {
+                ...sidecarSourceParams(previewSource),
+                layout: previewLayout,
+                theme: previewTheme,
+              },
             });
             const currentInputs = latestCompileInputsRef.current;
             const currentModelVersionId = editorRef.current?.getModel()?.getVersionId() ?? null;
@@ -475,7 +500,7 @@ function App() {
       try {
         const result = await invoke<CompileResult>("sidecar_call", {
           method: "compile",
-          params: { source: nextSource, layout, theme },
+          params: { ...sidecarSourceParams(nextSource), layout, theme },
         });
         const latestInputs = latestCompileInputsRef.current;
         if (
@@ -1307,7 +1332,7 @@ function App() {
     try {
       const result = await invoke<ExportResult>("sidecar_call", {
         method: "export",
-        params: { source, format: "svg", layout, theme },
+        params: { ...sidecarSourceParams(source), format: "svg", layout, theme },
       });
       downloadBytes(`${baseName(fileName)}.svg`, result.data, "image/svg+xml");
       setStatus("Exported SVG");
