@@ -59,6 +59,10 @@ var d2ThemeOverrideKeyCompletionItems = completionItemsForLabels([]string{
 	"AA2", "AA4", "AA5", "AB4", "AB5",
 }, "theme override", "keyword")
 
+var excludedThemeCompletionIDs = map[int64]struct{}{
+	302: {},
+}
+
 func complete(params completeParams) ([]completionItem, error) {
 	items, err := d2lsp.GetCompletionItems(params.Source, params.Line, params.Column)
 	if err != nil {
@@ -467,6 +471,9 @@ func colorCompletions() []completionItem {
 func themeCompletions(themes []d2themes.Theme, detail string) []completionItem {
 	items := make([]completionItem, 0, len(themes))
 	for _, theme := range themes {
+		if _, excluded := excludedThemeCompletionIDs[theme.ID]; excluded {
+			continue
+		}
 		label := strconv.FormatInt(theme.ID, 10)
 		colors := themeColorSwatches(theme)
 		items = append(items, completionItem{

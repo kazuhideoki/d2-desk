@@ -129,6 +129,7 @@ type InternalSuggestController = {
 const nodeRenamePattern = /^[A-Za-z0-9_-]+$/;
 const workspaceFileResultLimit = 120;
 const maxSuggestPreviewCacheEntries = 50;
+const tabPersistenceDelayMs = 400;
 
 function lastD2IdSegment(id: string) {
   const parts = id.split(".");
@@ -365,6 +366,7 @@ function App() {
   const closeActiveTabRef = useRef<() => void>(() => undefined);
   const quitApplicationRef = useRef<() => void>(() => undefined);
   const pendingEditorViewStateRestoreRef = useRef<number | null>(null);
+  const tabPersistenceTimeoutRef = useRef<number | null>(null);
   const renameEditorCursorSnapshotRef = useRef<EditorCursorSnapshot | null>(null);
   const workspaceStateRef = useRef(workspaceState);
   const activeWorkspaceIdRef = useRef(workspaceState.activeWorkspaceId);
@@ -561,10 +563,9 @@ function App() {
         return nextTab;
       });
       tabsRef.current = nextTabs;
-      persistTabs(nextTabs, tabId);
       return nextTabs;
     });
-  }, [persistTabs]);
+  }, []);
 
   const restoreEditorViewStateAfterSourceUpdate = useCallback(
     (snapshot: EditorCursorSnapshot | null, expectedSource: string) => {
@@ -817,8 +818,25 @@ function App() {
   );
 
   useEffect(() => {
-    persistTabs(tabs, activeTabId);
+    if (tabPersistenceTimeoutRef.current !== null) {
+      window.clearTimeout(tabPersistenceTimeoutRef.current);
+    }
+
+    tabPersistenceTimeoutRef.current = window.setTimeout(() => {
+      tabPersistenceTimeoutRef.current = null;
+      persistTabs(tabsRef.current, activeTabIdRef.current);
+    }, tabPersistenceDelayMs);
   }, [activeTabId, persistTabs, tabs]);
+
+  useEffect(() => {
+    return () => {
+      if (tabPersistenceTimeoutRef.current !== null) {
+        window.clearTimeout(tabPersistenceTimeoutRef.current);
+        tabPersistenceTimeoutRef.current = null;
+        persistTabs(tabsRef.current, activeTabIdRef.current);
+      }
+    };
+  }, [persistTabs]);
 
   useEffect(() => {
     localStorage.setItem("d2-desk:last-source", source);

@@ -292,5 +292,6 @@ placeholders:
 - `layout-engine`: layout engine name
 - `theme-id`: D2 light theme IDs, with theme names and color palettes
 - `dark-theme-id`: D2 dark theme IDs, with theme names and color palettes
+  - Theme `302` is omitted from suggestions because it generates especially large SVG output and can make editing feel sluggish. Existing diagrams that specify it manually still compile.
 - `pad`: integer
 - theme override values: color name or hex code
