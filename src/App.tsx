@@ -15,6 +15,7 @@ import {
   configureD2Language,
   getD2CompletionContext,
   isD2LineCommentPosition,
+  setD2ImportCompletionContextProvider,
 } from "./d2Language";
 import {
   createEmptyTab,
@@ -293,6 +294,30 @@ function App() {
   useEffect(() => {
     compileResultRef.current = compileResult;
   }, [compileResult]);
+
+  useEffect(() => {
+    setD2ImportCompletionContextProvider(() => {
+      const workspaceId = activeWorkspaceIdRef.current;
+      const workspace = workspaceId
+        ? workspaceStateRef.current.workspaces.find((item) => item.id === workspaceId)
+        : null;
+      const activeTabForCompletion =
+        tabsRef.current.find((tab) => tab.id === activeTabIdRef.current) ?? null;
+
+      return {
+        workspaceRootPath: workspace?.rootPath ?? null,
+        currentFilePath: activeTabForCompletion?.filePath ?? null,
+        openTabs: tabsRef.current.map((tab) => ({
+          filePath: tab.filePath,
+          source: tab.source,
+        })),
+      };
+    });
+
+    return () => {
+      setD2ImportCompletionContextProvider(null);
+    };
+  }, []);
 
   useEffect(() => {
     if (!renameDialog) return;
@@ -1178,7 +1203,13 @@ function App() {
       if (!completionContext) return;
 
       const shouldTriggerD2Suggest = event.changes.some(
-        (change) => change.text === ":" || change.text === " " || /^[\w-]$/.test(change.text),
+        (change) =>
+          change.text === ":" ||
+          change.text === " " ||
+          change.text === "." ||
+          change.text === "@" ||
+          change.text === "/" ||
+          /^[\w-]$/.test(change.text),
       );
       if (shouldTriggerD2Suggest) {
         const triggerSource =

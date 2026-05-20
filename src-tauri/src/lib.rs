@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
@@ -33,6 +33,13 @@ struct OpenedD2File {
 #[derive(Debug, Serialize)]
 struct SavedD2File {
     path: String,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceD2File {
+    path: String,
+    #[serde(rename = "relativePath")]
+    relative_path: String,
 }
 
 #[tauri::command]
@@ -100,6 +107,19 @@ fn open_file_with_editor(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn list_d2_files(root_path: String) -> Result<Vec<WorkspaceD2File>, String> {
+    let root = PathBuf::from(root_path);
+    if !root.is_dir() {
+        return Err(format!("workspace is not a directory: {}", root.display()));
+    }
+
+    let mut files = Vec::new();
+    collect_d2_files(&root, &root, &mut files)?;
+    files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    Ok(files)
+}
+
+#[tauri::command]
 fn close_current_window(window: tauri::Window, exit_state: State<ExitState>) -> Result<(), String> {
     *exit_state
         .allow_exit
@@ -124,6 +144,48 @@ fn ensure_d2_extension(path: PathBuf) -> PathBuf {
     } else {
         path.with_extension("d2")
     }
+}
+
+fn collect_d2_files(
+    root: &Path,
+    directory: &Path,
+    files: &mut Vec<WorkspaceD2File>,
+) -> Result<(), String> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(()),
+    };
+
+    for entry in entries {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let path = entry.path();
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        if file_name.starts_with('.') || matches!(file_name.as_ref(), "node_modules" | "target") {
+            continue;
+        }
+
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            collect_d2_files(root, &path, files)?;
+        } else if file_type.is_file() && path.extension().is_some_and(|extension| extension == "d2")
+        {
+            let relative_path = path
+                .strip_prefix(root)
+                .map_err(|err| format!("failed to relativize {}: {err}", path.display()))?;
+            let relative_path = relative_path.to_string_lossy().replace('\\', "/");
+            files.push(WorkspaceD2File {
+                path: path_to_string(path),
+                relative_path,
+            });
+        }
+    }
+
+    Ok(())
 }
 
 fn path_to_string(path: PathBuf) -> String {
@@ -299,6 +361,7 @@ pub fn run() {
             sidecar_call,
             read_d2_file,
             write_d2_file,
+            list_d2_files,
             open_file_with_editor,
             close_current_window,
             quit_application

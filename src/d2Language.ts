@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type * as Monaco from "monaco-editor";
-import type { D2CompletionItem } from "./types";
+import type { D2CompletionItem, WorkspaceD2File } from "./types";
 
 const d2ValueCompletionPattern =
   /(?:^|[{\s;])(?:[\w"'-]+(?:\.[\w-]+)*\.)?[\w-]+(?:\.[\w-]+)*\s*:\s*([\w-]*)$/;
@@ -10,13 +10,43 @@ const d2CompletionTriggerCharacters = [
   ":",
   " ",
   ".",
+  "@",
+  "/",
   ..."-_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
 ];
 
-type D2CompletionContext = {
-  kind: "key" | "value";
-  typedText: string;
+type D2CompletionContext =
+  | {
+      kind: "key" | "value";
+      typedText: string;
+    }
+  | {
+      kind: "import-file";
+      typedText: string;
+    }
+  | {
+      kind: "import-node";
+      typedText: string;
+      importPath: string;
+      parentPath: string[];
+    };
+
+type D2ImportCompletionContext = {
+  workspaceRootPath: string | null;
+  currentFilePath: string | null;
+  openTabs: {
+    filePath: string | null;
+    source: string;
+  }[];
 };
+
+let d2ImportCompletionContextProvider: (() => D2ImportCompletionContext) | null = null;
+
+export function setD2ImportCompletionContextProvider(
+  provider: (() => D2ImportCompletionContext) | null,
+) {
+  d2ImportCompletionContextProvider = provider;
+}
 
 export function configureD2Language(monaco: typeof Monaco) {
   monaco.languages.register({ id: "d2" });
@@ -59,6 +89,8 @@ export function configureD2Language(monaco: typeof Monaco) {
         const remainingTextMatch =
           completionContext.kind === "key"
             ? lineSuffix.match(/^[\w-]*(?:\s*:\s*)?/)
+            : completionContext.kind === "import-file"
+              ? lineSuffix.match(/^[\w./-]*/)
             : lineSuffix.match(/^[\w-]*/);
         const remainingText = remainingTextMatch ? remainingTextMatch[0] : "";
         const replacementRange = {
@@ -69,17 +101,21 @@ export function configureD2Language(monaco: typeof Monaco) {
         };
 
         let completions: D2CompletionItem[];
-        try {
-          completions = await invoke<D2CompletionItem[]>("sidecar_call", {
-            method: "complete",
-            params: {
-              source: model.getValue(),
-              line: position.lineNumber - 1,
-              column: position.column - 1,
-            },
-          });
-        } catch {
-          completions = [];
+        if (completionContext.kind === "import-file" || completionContext.kind === "import-node") {
+          completions = await getD2ImportCompletions(completionContext);
+        } else {
+          try {
+            completions = await invoke<D2CompletionItem[]>("sidecar_call", {
+              method: "complete",
+              params: {
+                source: model.getValue(),
+                line: position.lineNumber - 1,
+                column: position.column - 1,
+              },
+            });
+          } catch {
+            completions = [];
+          }
         }
         if (completions.length === 0 && completionContext.kind === "key") {
           completions = getD2ChildNodeCompletions(
@@ -178,6 +214,9 @@ export function getD2CompletionContext(
   lineContent: string,
   column: number,
 ): D2CompletionContext | null {
+  const importContext = getD2ImportCompletionContext(lineContent, column);
+  if (importContext) return importContext;
+
   const linePrefix = lineContent.slice(0, Math.max(0, column - 1));
   const valueMatch = linePrefix.match(d2ValueCompletionPattern);
   if (valueMatch) {
@@ -200,8 +239,200 @@ export function getD2CompletionContext(
   return { kind: "key", typedText: typedKey };
 }
 
+function getD2ImportCompletionContext(
+  lineContent: string,
+  column: number,
+): D2CompletionContext | null {
+  const linePrefix = lineContent.slice(0, Math.max(0, column - 1));
+  const atIndex = lastD2ImportAtIndex(linePrefix);
+  if (atIndex < 0) return null;
+
+  const importText = linePrefix.slice(atIndex + 1);
+  if (!/^[\w./-]*$/.test(importText)) return null;
+
+  const partialDotIndex = d2PartialImportDotIndex(importText);
+  if (partialDotIndex < 0) {
+    return {
+      kind: "import-file",
+      typedText: importText,
+    };
+  }
+
+  const nodeText = importText.slice(partialDotIndex + 1);
+  const parts = nodeText.split(".");
+  const typedText = parts.pop() ?? "";
+  return {
+    kind: "import-node",
+    typedText,
+    importPath: importText.slice(0, partialDotIndex),
+    parentPath: parts.filter(Boolean),
+  };
+}
+
+function lastD2ImportAtIndex(linePrefix: string) {
+  let quote: string | null = null;
+  let atIndex = -1;
+  for (let index = 0; index < linePrefix.length; index += 1) {
+    const character = linePrefix[index];
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === "@") {
+      const previous = linePrefix[index - 1] ?? "";
+      if (!previous || !/[\w/-]/.test(previous)) {
+        atIndex = index;
+      }
+    }
+  }
+  return atIndex;
+}
+
+function d2PartialImportDotIndex(importText: string) {
+  for (let index = 0; index < importText.length; index += 1) {
+    if (importText[index] !== ".") continue;
+
+    const previous = importText[index - 1] ?? "";
+    const next = importText[index + 1] ?? "";
+    if (next === "/" || next === "." || (previous === "." && next === "/")) {
+      continue;
+    }
+    if (index === 0) continue;
+    return index;
+  }
+  return -1;
+}
+
+async function getD2ImportCompletions(
+  completionContext:
+    | Extract<D2CompletionContext, { kind: "import-file" }>
+    | Extract<D2CompletionContext, { kind: "import-node" }>,
+) {
+  const context = d2ImportCompletionContextProvider?.();
+  if (!context?.workspaceRootPath) return [];
+
+  let files: WorkspaceD2File[];
+  try {
+    files = await invoke<WorkspaceD2File[]>("list_d2_files", {
+      rootPath: context.workspaceRootPath,
+    });
+  } catch {
+    return [];
+  }
+
+  const currentDirectory = context.currentFilePath
+    ? pathDirectory(context.currentFilePath)
+    : context.workspaceRootPath;
+  const candidates = files
+    .filter((file) => file.path !== context.currentFilePath)
+    .map((file) => ({
+      ...file,
+      importPath: d2ImportSpecifier(currentDirectory, file.path),
+    }));
+
+  if (completionContext.kind === "import-file") {
+    return candidates
+      .filter((file) => file.importPath.startsWith(completionContext.typedText))
+      .map((file) => ({
+        label: file.importPath,
+        kind: "file" as const,
+        detail: "D2 file",
+        description: "D2ファイルをインポート",
+        documentation: `${file.relativePath} をインポート`,
+        insertText: file.importPath,
+      }));
+  }
+
+  const target = candidates.find(
+    (file) =>
+      normalizeImportSpecifier(file.importPath) ===
+      normalizeImportSpecifier(completionContext.importPath),
+  );
+  if (!target) return [];
+
+  const source = await sourceForD2File(target.path, context.openTabs);
+  if (source === null) return [];
+
+  const children = collectD2ChildNodes(source);
+  const labels = children.get(completionContext.parentPath.join("\0")) ?? [];
+  return labels
+    .filter((label) => label.startsWith(completionContext.typedText))
+    .map((label) => ({
+      label,
+      kind: "shape" as const,
+      detail: "imported node",
+      description: "インポート先のノードを参照",
+      documentation: `${target.importPath} のノードをドット記法で参照`,
+      insertText: label,
+    }));
+}
+
+async function sourceForD2File(path: string, openTabs: D2ImportCompletionContext["openTabs"]) {
+  const opened = openTabs.find((tab) => tab.filePath === path);
+  if (opened) return opened.source;
+
+  try {
+    const result = await invoke<{ path: string; contents: string }>("read_d2_file", { path });
+    return result.contents;
+  } catch {
+    return null;
+  }
+}
+
+function d2ImportSpecifier(fromDirectory: string, targetPath: string) {
+  const relativePath = relativePathFromDirectory(fromDirectory, targetPath);
+  return stripD2Extension(relativePath);
+}
+
+function normalizeImportSpecifier(specifier: string) {
+  return specifier.replace(/^\.\//, "");
+}
+
+function stripD2Extension(path: string) {
+  return path.endsWith(".d2") ? path.slice(0, -3) : path;
+}
+
+function pathDirectory(path: string) {
+  const normalized = path.replace(/\\/g, "/");
+  const slashIndex = normalized.lastIndexOf("/");
+  return slashIndex >= 0 ? normalized.slice(0, slashIndex) : "";
+}
+
+function relativePathFromDirectory(fromDirectory: string, targetPath: string) {
+  const fromParts = splitPath(fromDirectory);
+  const targetParts = splitPath(targetPath);
+
+  let commonLength = 0;
+  while (
+    commonLength < fromParts.length &&
+    commonLength < targetParts.length &&
+    fromParts[commonLength] === targetParts[commonLength]
+  ) {
+    commonLength += 1;
+  }
+
+  const upParts = fromParts.slice(commonLength).map(() => "..");
+  const downParts = targetParts.slice(commonLength);
+  const relativeParts = [...upParts, ...downParts];
+  return relativeParts.join("/") || (targetParts[targetParts.length - 1] ?? "");
+}
+
+function splitPath(path: string) {
+  return path.replace(/\\/g, "/").split("/").filter(Boolean);
+}
+
 function d2CompletionKindToMonaco(monaco: typeof Monaco, kind: D2CompletionItem["kind"]) {
   switch (kind) {
+    case "file":
+      return monaco.languages.CompletionItemKind.File;
     case "shape":
       return monaco.languages.CompletionItemKind.EnumMember;
     case "style":

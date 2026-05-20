@@ -48,7 +48,7 @@ export type ExportResult = {
 
 export type D2CompletionItem = {
   label: string;
-  kind: "keyword" | "style" | "shape";
+  kind: "keyword" | "style" | "shape" | "file";
   detail: string;
   description: string;
   documentation: string;
@@ -92,4 +92,9 @@ export type OpenedD2File = {
 
 export type SavedD2File = {
   path: string;
+};
+
+export type WorkspaceD2File = {
+  path: string;
+  relativePath: string;
 };
