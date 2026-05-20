@@ -36,10 +36,12 @@ struct SavedD2File {
 }
 
 #[derive(Debug, Serialize)]
-struct WorkspaceD2File {
+#[serde(rename_all = "camelCase")]
+struct WorkspaceFileEntry {
     path: String,
-    #[serde(rename = "relativePath")]
     relative_path: String,
+    file_name: String,
+    directory: String,
 }
 
 #[tauri::command]
@@ -107,15 +109,70 @@ fn open_file_with_editor(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn list_d2_files(root_path: String) -> Result<Vec<WorkspaceD2File>, String> {
+fn list_workspace_files(root_path: String) -> Result<Vec<WorkspaceFileEntry>, String> {
     let root = PathBuf::from(root_path);
+    let root = root
+        .canonicalize()
+        .map_err(|err| format!("failed to open workspace folder {}: {err}", root.display()))?;
     if !root.is_dir() {
-        return Err(format!("workspace is not a directory: {}", root.display()));
+        return Err(format!("workspace is not a folder: {}", root.display()));
     }
 
     let mut files = Vec::new();
-    collect_d2_files(&root, &root, &mut files)?;
-    files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    let mut pending = vec![root.clone()];
+
+    while let Some(directory) = pending.pop() {
+        let mut entries = fs::read_dir(&directory)
+            .map_err(|err| format!("failed to read {}: {err}", directory.display()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| format!("failed to read {}: {err}", directory.display()))?;
+        entries.sort_by_key(|entry| entry.file_name());
+
+        for entry in entries {
+            let file_type = entry
+                .file_type()
+                .map_err(|err| format!("failed to inspect {}: {err}", entry.path().display()))?;
+            if file_type.is_symlink() {
+                continue;
+            }
+
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if file_type.is_dir() {
+                if should_skip_workspace_directory(&name) {
+                    continue;
+                }
+                pending.push(entry.path());
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+
+            let path = entry.path();
+            let relative_path = path
+                .strip_prefix(&root)
+                .map(relative_path_to_string)
+                .unwrap_or_else(|_| path_to_string(path.clone()));
+            let directory = Path::new(&relative_path)
+                .parent()
+                .map(relative_path_to_string)
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| ".".to_string());
+
+            files.push(WorkspaceFileEntry {
+                path: path_to_string(path),
+                relative_path,
+                file_name: name,
+                directory,
+            });
+            if files.len() >= 5000 {
+                files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+                return Ok(files);
+            }
+        }
+    }
+
+    files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     Ok(files)
 }
 
@@ -146,50 +203,31 @@ fn ensure_d2_extension(path: PathBuf) -> PathBuf {
     }
 }
 
-fn collect_d2_files(
-    root: &Path,
-    directory: &Path,
-    files: &mut Vec<WorkspaceD2File>,
-) -> Result<(), String> {
-    let entries = match fs::read_dir(directory) {
-        Ok(entries) => entries,
-        Err(_) => return Ok(()),
-    };
-
-    for entry in entries {
-        let Ok(entry) = entry else {
-            continue;
-        };
-        let path = entry.path();
-        let file_name = entry.file_name();
-        let file_name = file_name.to_string_lossy();
-        if file_name.starts_with('.') || matches!(file_name.as_ref(), "node_modules" | "target") {
-            continue;
-        }
-
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_dir() {
-            collect_d2_files(root, &path, files)?;
-        } else if file_type.is_file() && path.extension().is_some_and(|extension| extension == "d2")
-        {
-            let relative_path = path
-                .strip_prefix(root)
-                .map_err(|err| format!("failed to relativize {}: {err}", path.display()))?;
-            let relative_path = relative_path.to_string_lossy().replace('\\', "/");
-            files.push(WorkspaceD2File {
-                path: path_to_string(path),
-                relative_path,
-            });
-        }
-    }
-
-    Ok(())
-}
-
 fn path_to_string(path: PathBuf) -> String {
     path.to_string_lossy().into_owned()
+}
+
+fn relative_path_to_string(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn should_skip_workspace_directory(name: &str) -> bool {
+    matches!(
+        name,
+        ".git"
+            | ".next"
+            | ".tmp"
+            | ".turbo"
+            | ".vite"
+            | "build"
+            | "coverage"
+            | "dist"
+            | "node_modules"
+            | "target"
+    )
 }
 
 fn run_sidecar(input: Vec<u8>) -> Result<Vec<u8>, String> {
@@ -298,6 +336,10 @@ pub fn run() {
             let open = MenuItemBuilder::with_id("open-file", "Open...")
                 .accelerator("CmdOrCtrl+O")
                 .build(handle)?;
+            let open_workspace_file =
+                MenuItemBuilder::with_id("open-workspace-file", "Open Workspace File...")
+                    .accelerator("CmdOrCtrl+P")
+                    .build(handle)?;
             let save = MenuItemBuilder::with_id("save-file", "Save")
                 .accelerator("CmdOrCtrl+S")
                 .build(handle)?;
@@ -313,6 +355,7 @@ pub fn run() {
             let separator = PredefinedMenuItem::separator(handle)?;
             let file_menu = SubmenuBuilder::new(handle, "File")
                 .item(&open)
+                .item(&open_workspace_file)
                 .item(&save)
                 .separator()
                 .item(&close_tab)
@@ -336,6 +379,8 @@ pub fn run() {
         .on_menu_event(|app, event| {
             if event.id() == "open-file" {
                 let _ = app.emit_to("main", "d2-desk-open", ());
+            } else if event.id() == "open-workspace-file" {
+                let _ = app.emit_to("main", "d2-desk-open-workspace-file", ());
             } else if event.id() == "save-file" {
                 let _ = app.emit_to("main", "d2-desk-save", ());
             } else if event.id() == "close-tab" {
@@ -361,7 +406,7 @@ pub fn run() {
             sidecar_call,
             read_d2_file,
             write_d2_file,
-            list_d2_files,
+            list_workspace_files,
             open_file_with_editor,
             close_current_window,
             quit_application

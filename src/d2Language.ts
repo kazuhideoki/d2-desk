@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type * as Monaco from "monaco-editor";
-import type { D2CompletionItem, WorkspaceD2File } from "./types";
+import type { D2CompletionItem, WorkspaceFileEntry } from "./types";
 
 const d2ValueCompletionPattern =
   /(?:^|[{\s;])(?:[\w"'-]+(?:\.[\w-]+)*\.)?[\w-]+(?:\.[\w-]+)*\s*:\s*([\w-]*)$/;
@@ -135,21 +135,15 @@ export function configureD2Language(monaco: typeof Monaco) {
 
         return {
           suggestions: completions.map((completion) => ({
-            label: completion.description
-              ? { label: completion.label, description: completion.description }
-              : completion.label,
-            kind: d2CompletionKindToMonaco(monaco, completion.kind),
+            label: d2CompletionLabel(completion),
+            kind: d2CompletionKindToMonaco(monaco, completion),
             insertText: completion.insertText || completion.label,
-            filterText: completion.label,
+            filterText: completion.filterText || completion.label,
             sortText: completion.label,
             detail:
               completion.description ||
               (completion.detail ? `D2 ${completion.detail}` : "D2 completion"),
-            documentation: completion.documentation
-              ? { value: completion.documentation }
-              : completion.detail
-                ? { value: `D2 ${completion.detail}` }
-                : undefined,
+            documentation: d2CompletionDocumentation(completion),
             range: replacementRange,
             ...(completionContext.kind === "key" && (completion.insertText || "").endsWith(": ")
               ? {
@@ -319,9 +313,9 @@ async function getD2ImportCompletions(
   const context = d2ImportCompletionContextProvider?.();
   if (!context?.workspaceRootPath) return [];
 
-  let files: WorkspaceD2File[];
+  let files: WorkspaceFileEntry[];
   try {
-    files = await invoke<WorkspaceD2File[]>("list_d2_files", {
+    files = await invoke<WorkspaceFileEntry[]>("list_workspace_files", {
       rootPath: context.workspaceRootPath,
     });
   } catch {
@@ -332,6 +326,7 @@ async function getD2ImportCompletions(
     ? pathDirectory(context.currentFilePath)
     : context.workspaceRootPath;
   const candidates = files
+    .filter((file) => file.relativePath.endsWith(".d2"))
     .filter((file) => file.path !== context.currentFilePath)
     .map((file) => ({
       ...file,
@@ -429,8 +424,68 @@ function splitPath(path: string) {
   return path.replace(/\\/g, "/").split("/").filter(Boolean);
 }
 
-function d2CompletionKindToMonaco(monaco: typeof Monaco, kind: D2CompletionItem["kind"]) {
-  switch (kind) {
+function d2CompletionLabel(completion: D2CompletionItem): string | Monaco.languages.CompletionItemLabel {
+  if (completion.colorSwatches?.length) {
+    return {
+      label: completion.label,
+      detail: completion.description ? ` ${completion.description}` : undefined,
+      description: completion.colorSwatches.join(" "),
+    };
+  }
+  return completion.description
+    ? { label: completion.label, description: completion.description }
+    : completion.label;
+}
+
+function d2CompletionDocumentation(completion: D2CompletionItem) {
+  const documentation = completion.documentation
+    ? completion.documentation
+    : completion.detail
+      ? `D2 ${completion.detail}`
+      : "";
+  const palette = completion.colorSwatches?.length
+    ? `${themePaletteMarkdown(completion.colorSwatches)}${documentation ? "\n\n" : ""}`
+    : "";
+  const value = `${palette}${documentation}`;
+  return value ? { value } : undefined;
+}
+
+function themePaletteMarkdown(colors: string[]) {
+  const width = colors.length * 34;
+  const rects = colors
+    .map(
+      (color, index) =>
+        `<rect x="${index * 34}" y="0" width="34" height="24" fill="${escapeSvgAttribute(color)}"/>`,
+    )
+    .join("");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="24" viewBox="0 0 ${width} 24">${rects}</svg>`;
+  return `![theme palette](data:image/svg+xml;utf8,${encodeURIComponent(svg)})`;
+}
+
+function escapeSvgAttribute(value: string) {
+  return value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&apos;";
+      default:
+        return char;
+    }
+  });
+}
+
+function d2CompletionKindToMonaco(monaco: typeof Monaco, completion: D2CompletionItem) {
+  if (completion.colorSwatches?.length) {
+    return monaco.languages.CompletionItemKind.Color;
+  }
+  switch (completion.kind) {
     case "file":
       return monaco.languages.CompletionItemKind.File;
     case "shape":

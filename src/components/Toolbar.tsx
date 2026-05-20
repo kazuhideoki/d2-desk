@@ -13,19 +13,14 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { themes } from "../constants";
 import type { Workspace } from "../types";
 
 type ToolbarProps = {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
-  theme: number;
-  layout: string;
   onWorkspaceChange: (workspaceId: string | null) => void;
   onOpenWorkspace: () => void;
   onManageWorkspaces: () => void;
-  onThemeChange: (theme: number) => void;
-  onLayoutChange: (layout: string) => void;
   onOpen: () => void;
   onSave: () => void;
   onOpenWithEditor: () => void;
@@ -40,13 +35,9 @@ type ToolbarProps = {
 export function Toolbar({
   workspaces,
   activeWorkspaceId,
-  theme,
-  layout,
   onWorkspaceChange,
   onOpenWorkspace,
   onManageWorkspaces,
-  onThemeChange,
-  onLayoutChange,
   onOpen,
   onSave,
   onOpenWithEditor,
@@ -97,17 +88,6 @@ export function Toolbar({
         <button title="Format document (Command/Ctrl + Shift + I)" onClick={onFormat}>
           <Wand2 size={16} />
         </button>
-        <span className="divider" />
-        <select value={theme} onChange={(event) => onThemeChange(Number(event.target.value))}>
-          {themes.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.label}
-            </option>
-          ))}
-        </select>
-        <select value={layout} onChange={(event) => onLayoutChange(event.target.value)}>
-          <option value="dagre">dagre</option>
-        </select>
         <span className="divider" />
         <button title="Zoom out (Command/Ctrl + -)" onClick={onZoomOut}>
           <ZoomOut size={16} />

@@ -53,6 +53,8 @@ export type D2CompletionItem = {
   description: string;
   documentation: string;
   insertText: string;
+  filterText?: string;
+  colorSwatches?: string[];
 };
 
 export type D2Tab = {
@@ -94,7 +96,9 @@ export type SavedD2File = {
   path: string;
 };
 
-export type WorkspaceD2File = {
+export type WorkspaceFileEntry = {
   path: string;
   relativePath: string;
+  fileName: string;
+  directory: string;
 };

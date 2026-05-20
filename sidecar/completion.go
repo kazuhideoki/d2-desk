@@ -2,20 +2,25 @@ package main
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 
 	"oss.terrastruct.com/d2/d2ast"
 	"oss.terrastruct.com/d2/d2lsp"
 	"oss.terrastruct.com/d2/d2target"
+	"oss.terrastruct.com/d2/d2themes"
+	"oss.terrastruct.com/d2/d2themes/d2themescatalog"
 )
 
 type completionItem struct {
-	Label         string `json:"label"`
-	Kind          string `json:"kind"`
-	Detail        string `json:"detail"`
-	Description   string `json:"description"`
-	Documentation string `json:"documentation"`
-	InsertText    string `json:"insertText"`
+	Label         string   `json:"label"`
+	Kind          string   `json:"kind"`
+	Detail        string   `json:"detail"`
+	Description   string   `json:"description"`
+	Documentation string   `json:"documentation"`
+	InsertText    string   `json:"insertText"`
+	FilterText    string   `json:"filterText"`
+	ColorSwatches []string `json:"colorSwatches,omitempty"`
 }
 
 var d2KeyCompletionItems = buildD2KeyCompletionItems()
@@ -376,14 +381,18 @@ func d2ContextValueCompletions(params completeParams) []completionItem {
 			InsertText: "",
 		}}
 	case hasTrailingContext(context, "vars", "d2-config", "theme-id"),
-		hasTrailingContext(context, "vars", "d2-config", "dark-theme-id"),
 		hasTrailingContext(context, "vars", "d2-config", "pad"):
+		if hasTrailingContext(context, "vars", "d2-config", "theme-id") {
+			return themeCompletions(d2themescatalog.LightCatalog, "light theme")
+		}
 		return []completionItem{{
 			Label:      "(integer)",
 			Kind:       "keyword",
 			Detail:     "number",
 			InsertText: "",
 		}}
+	case hasTrailingContext(context, "vars", "d2-config", "dark-theme-id"):
+		return themeCompletions(d2themescatalog.DarkCatalog, "dark theme")
 	case hasTrailingContext(context, "theme-overrides", last),
 		hasTrailingContext(context, "dark-theme-overrides", last):
 		return colorCompletions()
@@ -444,6 +453,55 @@ func colorCompletions() []completionItem {
 		Detail:     "e.g. blue, #ff0000",
 		InsertText: "",
 	}}
+}
+
+func themeCompletions(themes []d2themes.Theme, detail string) []completionItem {
+	items := make([]completionItem, 0, len(themes))
+	for _, theme := range themes {
+		label := strconv.FormatInt(theme.ID, 10)
+		colors := themeColorSwatches(theme)
+		items = append(items, completionItem{
+			Label:         label,
+			Kind:          "keyword",
+			Detail:        detail,
+			Description:   theme.Name,
+			Documentation: themeCompletionDocumentation(theme, detail, colors),
+			InsertText:    label,
+			FilterText:    label + " " + theme.Name,
+			ColorSwatches: colors,
+		})
+	}
+	return items
+}
+
+func themeColorSwatches(theme d2themes.Theme) []string {
+	return []string{
+		theme.Colors.B1,
+		theme.Colors.B2,
+		theme.Colors.B3,
+		theme.Colors.B4,
+		theme.Colors.B5,
+		theme.Colors.B6,
+	}
+}
+
+func themeCompletionDocumentation(theme d2themes.Theme, detail string, colors []string) string {
+	var b strings.Builder
+	b.WriteString(theme.Name)
+	b.WriteString("\n\n種類: D2 ")
+	b.WriteString(detail)
+	b.WriteString("\n\nID: ")
+	b.WriteString(strconv.FormatInt(theme.ID, 10))
+	b.WriteString("\n\nPalette: ")
+	for i, color := range colors {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString("`")
+		b.WriteString(color)
+		b.WriteString("`")
+	}
+	return b.String()
 }
 
 func nearConstantCompletions() []completionItem {

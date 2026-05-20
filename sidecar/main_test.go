@@ -21,8 +21,6 @@ func TestHandleDispatchesMethods(t *testing.T) {
 				Method: "compile",
 				Params: mustParams(t, compileParams{
 					Source: "api -> db",
-					Layout: "dagre",
-					Theme:  4,
 				}),
 			},
 			validate: func(t *testing.T, result any) {
@@ -110,8 +108,6 @@ func TestHandleDispatchesMethods(t *testing.T) {
 				Params: mustParams(t, exportParams{
 					Source: "api -> db",
 					Format: "svg",
-					Layout: "dagre",
-					Theme:  4,
 				}),
 			},
 			validate: func(t *testing.T, result any) {
@@ -181,6 +177,39 @@ func TestCompileProducesSVGAndObjects(t *testing.T) {
 	}
 }
 
+func TestCompileAppliesVarsD2ConfigThemeID(t *testing.T) {
+	defaultResult, err := compile(compileParams{Source: "a -> b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configResult, err := compile(compileParams{Source: "vars: {\n  d2-config: {\n    theme-id: 300\n  }\n}\na -> b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(configResult.Diagnostics) != 0 {
+		t.Fatalf("expected no diagnostics, got %#v", configResult.Diagnostics)
+	}
+	if !strings.Contains(defaultResult.SVG, ".fill-B6{fill:#F7F8FE;}") {
+		t.Fatalf("expected default theme fill in SVG")
+	}
+	if !strings.Contains(configResult.SVG, ".fill-B6{fill:#FFFFFF;}") {
+		t.Fatalf("expected theme-id from vars.d2-config to affect SVG")
+	}
+}
+
+func TestCompileAppliesVarsD2ConfigLayoutEngineELK(t *testing.T) {
+	result, err := compile(compileParams{Source: "vars: {\n  d2-config: {\n    layout-engine: elk\n  }\n}\na -> b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("expected no diagnostics, got %#v", result.Diagnostics)
+	}
+	if len(result.Objects) == 0 {
+		t.Fatal("expected object map entries")
+	}
+}
+
 func TestCompileBuildsObjectMapWithSourceRanges(t *testing.T) {
 	source := `direction: right
 
@@ -193,7 +222,7 @@ db: Database {
 }
 
 api -> db: query`
-	result, err := compile(compileParams{Source: source, Layout: "dagre", Theme: 4})
+	result, err := compile(compileParams{Source: source})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +260,7 @@ api -> db: query`
 }
 
 func TestCompileDoesNotMarshalNullSourceRanges(t *testing.T) {
-	result, err := compile(compileParams{Source: "direction: down\n\nhoge -> fuga -> piyo\n", Layout: "dagre", Theme: 4})
+	result, err := compile(compileParams{Source: "direction: down\n\nhoge -> fuga -> piyo\n"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +309,7 @@ b: {
   x -> y
 }
 `
-	result, err := compile(compileParams{Source: source, Layout: "dagre", Theme: 4})
+	result, err := compile(compileParams{Source: source})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +342,7 @@ func TestCompileMapsNestedConnectionToCompoundEndpoint(t *testing.T) {
   switcher -> adaptor.1_6
 }
 `
-	result, err := compile(compileParams{Source: source, Layout: "dagre", Theme: 4})
+	result, err := compile(compileParams{Source: source})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +365,7 @@ func TestCompileMapsRepeatedLabeledConnectionsByOccurrence(t *testing.T) {
 	source := `a -> b: first
 a -> b: second
 `
-	result, err := compile(compileParams{Source: source, Layout: "dagre", Theme: 4})
+	result, err := compile(compileParams{Source: source})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +401,7 @@ hoge {
 
 hoge <-> fuga -> piyo
 `
-	result, err := compile(compileParams{Source: source, Layout: "dagre", Theme: 4})
+	result, err := compile(compileParams{Source: source})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +428,7 @@ func TestCompileMapsNodeLabelAndBlockBody(t *testing.T) {
   }
 }
 `
-	result, err := compile(compileParams{Source: source, Layout: "dagre", Theme: 4})
+	result, err := compile(compileParams{Source: source})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +453,7 @@ func TestCompileMapsNodeLabelAndBlockBody(t *testing.T) {
 
 func TestCompileMapsConnectionLabelAndEndpoints(t *testing.T) {
 	source := "api -> ocpp_server: charge\n"
-	result, err := compile(compileParams{Source: source, Layout: "dagre", Theme: 4})
+	result, err := compile(compileParams{Source: source})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,7 +479,7 @@ func TestCompileMapsConnectionLabelAndEndpoints(t *testing.T) {
 func TestCompileMapsQuotedBidirectionalEndpoint(t *testing.T) {
 	source := `"foo bar" <-> baz
 `
-	result, err := compile(compileParams{Source: source, Layout: "dagre", Theme: 4})
+	result, err := compile(compileParams{Source: source})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1151,6 +1180,20 @@ func TestCompleteReturnsAdditionalValueCompletions(t *testing.T) {
 			label:  "true",
 		},
 		{
+			name:   "root config light theme id",
+			source: "vars: {\n  d2-config: {\n    theme-id: \n  }\n}",
+			line:   2,
+			column: len("    theme-id: "),
+			label:  "6",
+		},
+		{
+			name:   "root config dark theme id",
+			source: "vars: {\n  d2-config: {\n    dark-theme-id: \n  }\n}",
+			line:   2,
+			column: len("    dark-theme-id: "),
+			label:  "200",
+		},
+		{
 			name:   "near constant",
 			source: "api: { near: top }",
 			line:   0,
@@ -1176,6 +1219,33 @@ func TestCompleteReturnsAdditionalValueCompletions(t *testing.T) {
 				t.Fatalf("expected %q completion, got %#v", tt.label, items)
 			}
 		})
+	}
+}
+
+func TestCompleteReturnsThemeMetadata(t *testing.T) {
+	source := "vars: {\n  d2-config: {\n    theme-id: \n  }\n}"
+	items, err := complete(completeParams{Source: source, Line: 2, Column: len("    theme-id: ")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := completionByLabel(items, "6")
+	if item == nil {
+		t.Fatalf("expected Grape Soda theme completion, got %#v", items)
+	}
+	if item.InsertText != "6" {
+		t.Fatalf("expected theme completion to insert id, got %#v", item)
+	}
+	if item.Description != "Grape Soda" {
+		t.Fatalf("expected theme name description, got %#v", item)
+	}
+	if !strings.Contains(item.FilterText, "Grape Soda") {
+		t.Fatalf("expected theme filter text to include name, got %#v", item)
+	}
+	if len(item.ColorSwatches) == 0 || item.ColorSwatches[0] != "#170034" {
+		t.Fatalf("expected Grape Soda color swatches, got %#v", item)
+	}
+	if !strings.Contains(item.Documentation, "#170034") {
+		t.Fatalf("expected theme documentation to include palette, got %#v", item)
 	}
 }
 
@@ -1244,8 +1314,6 @@ func TestCompileResolvesWorkspaceImports(t *testing.T) {
 		Source:            "...@components",
 		WorkspaceRootPath: workspace,
 		CurrentFilePath:   filepath.Join(workspace, "diagram.d2"),
-		Layout:            "dagre",
-		Theme:             4,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1273,8 +1341,6 @@ func TestCompilePrefersOpenImportFileContents(t *testing.T) {
 			Path:   componentsPath,
 			Source: "service: {\n  memory\n}\n",
 		}},
-		Layout: "dagre",
-		Theme:  4,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1291,7 +1357,7 @@ func TestCompilePrefersOpenImportFileContents(t *testing.T) {
 }
 
 func TestExportSVGReturnsBase64SVG(t *testing.T) {
-	result, err := export(exportParams{Source: "api -> db", Format: "svg", Layout: "dagre", Theme: 4})
+	result, err := export(exportParams{Source: "api -> db", Format: "svg"})
 	if err != nil {
 		t.Fatal(err)
 	}

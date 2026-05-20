@@ -14,8 +14,6 @@ type response struct {
 
 type compileParams struct {
 	Source            string        `json:"source"`
-	Layout            string        `json:"layout,omitempty"`
-	Theme             int64         `json:"theme,omitempty"`
 	WorkspaceRootPath string        `json:"workspaceRootPath,omitempty"`
 	CurrentFilePath   string        `json:"currentFilePath,omitempty"`
 	OpenFiles         []compileFile `json:"openFiles,omitempty"`
@@ -47,8 +45,6 @@ type renameNodeResult struct {
 type exportParams struct {
 	Source            string        `json:"source"`
 	Format            string        `json:"format"`
-	Layout            string        `json:"layout,omitempty"`
-	Theme             int64         `json:"theme,omitempty"`
 	WorkspaceRootPath string        `json:"workspaceRootPath,omitempty"`
 	CurrentFilePath   string        `json:"currentFilePath,omitempty"`
 	OpenFiles         []compileFile `json:"openFiles,omitempty"`
