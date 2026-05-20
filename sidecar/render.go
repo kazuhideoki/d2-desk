@@ -13,17 +13,17 @@ import (
 	"oss.terrastruct.com/d2/d2format"
 	"oss.terrastruct.com/d2/d2graph"
 	"oss.terrastruct.com/d2/d2layouts/d2dagrelayout"
+	"oss.terrastruct.com/d2/d2layouts/d2elklayout"
 	"oss.terrastruct.com/d2/d2lib"
 	"oss.terrastruct.com/d2/d2parser"
 	"oss.terrastruct.com/d2/d2renderers/d2svg"
 	"oss.terrastruct.com/d2/d2target"
 	"oss.terrastruct.com/d2/lib/log"
 	"oss.terrastruct.com/d2/lib/textmeasure"
-	"oss.terrastruct.com/util-go/go2"
 )
 
 func compile(params compileParams) (compileResult, error) {
-	diagram, svg, err := render(params.Source, params.Layout, params.Theme)
+	diagram, svg, err := render(params.Source)
 	result := compileResult{
 		SVG:         string(svg),
 		Objects:     buildObjectMap(params.Source, diagram),
@@ -144,26 +144,23 @@ func utf16ColumnCount(text string) int {
 	return count
 }
 
-func render(source, layout string, theme int64) (*d2target.Diagram, []byte, error) {
+func render(source string) (*d2target.Diagram, []byte, error) {
 	ruler, err := textmeasure.NewRuler()
 	if err != nil {
 		return nil, nil, err
 	}
 	layoutResolver := func(engine string) (d2graph.LayoutGraph, error) {
-		if engine != "" && engine != "dagre" {
-			return nil, fmt.Errorf("layout %q is not bundled in this MVP", engine)
+		switch engine {
+		case "", "dagre":
+			return d2dagrelayout.DefaultLayout, nil
+		case "elk":
+			return d2elklayout.DefaultLayout, nil
+		default:
+			return nil, fmt.Errorf("layout %q is not bundled", engine)
 		}
-		return d2dagrelayout.DefaultLayout, nil
 	}
-	if layout == "" {
-		layout = "dagre"
-	}
-	renderOpts := &d2svg.RenderOpts{
-		Pad:     go2.Pointer(int64(24)),
-		ThemeID: &theme,
-	}
+	renderOpts := &d2svg.RenderOpts{}
 	compileOpts := &d2lib.CompileOptions{
-		Layout:         &layout,
 		LayoutResolver: layoutResolver,
 		Ruler:          ruler,
 		UTF16Pos:       true,
@@ -187,7 +184,7 @@ func format(source string) (string, error) {
 }
 
 func export(params exportParams) (exportResult, error) {
-	_, svg, err := render(params.Source, params.Layout, params.Theme)
+	_, svg, err := render(params.Source)
 	if err != nil && len(svg) == 0 {
 		return exportResult{}, err
 	}

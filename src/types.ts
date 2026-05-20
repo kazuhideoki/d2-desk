@@ -55,7 +55,6 @@ export type D2CompletionItem = {
   insertText: string;
   filterText?: string;
   colorSwatches?: string[];
-  previewThemeId?: number;
 };
 
 export type D2Tab = {
@@ -95,4 +94,11 @@ export type OpenedD2File = {
 
 export type SavedD2File = {
   path: string;
+};
+
+export type WorkspaceFileEntry = {
+  path: string;
+  relativePath: string;
+  fileName: string;
+  directory: string;
 };

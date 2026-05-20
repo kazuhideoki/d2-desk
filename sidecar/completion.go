@@ -13,15 +13,14 @@ import (
 )
 
 type completionItem struct {
-	Label          string   `json:"label"`
-	Kind           string   `json:"kind"`
-	Detail         string   `json:"detail"`
-	Description    string   `json:"description"`
-	Documentation  string   `json:"documentation"`
-	InsertText     string   `json:"insertText"`
-	FilterText     string   `json:"filterText"`
-	ColorSwatches  []string `json:"colorSwatches,omitempty"`
-	PreviewThemeID *int64   `json:"previewThemeId,omitempty"`
+	Label         string   `json:"label"`
+	Kind          string   `json:"kind"`
+	Detail        string   `json:"detail"`
+	Description   string   `json:"description"`
+	Documentation string   `json:"documentation"`
+	InsertText    string   `json:"insertText"`
+	FilterText    string   `json:"filterText"`
+	ColorSwatches []string `json:"colorSwatches,omitempty"`
 }
 
 var d2KeyCompletionItems = buildD2KeyCompletionItems()
@@ -384,7 +383,7 @@ func d2ContextValueCompletions(params completeParams) []completionItem {
 	case hasTrailingContext(context, "vars", "d2-config", "theme-id"),
 		hasTrailingContext(context, "vars", "d2-config", "pad"):
 		if hasTrailingContext(context, "vars", "d2-config", "theme-id") {
-			return themeCompletions(d2themescatalog.LightCatalog, "light theme", true)
+			return themeCompletions(d2themescatalog.LightCatalog, "light theme")
 		}
 		return []completionItem{{
 			Label:      "(integer)",
@@ -393,7 +392,7 @@ func d2ContextValueCompletions(params completeParams) []completionItem {
 			InsertText: "",
 		}}
 	case hasTrailingContext(context, "vars", "d2-config", "dark-theme-id"):
-		return themeCompletions(d2themescatalog.DarkCatalog, "dark theme", false)
+		return themeCompletions(d2themescatalog.DarkCatalog, "dark theme")
 	case hasTrailingContext(context, "theme-overrides", last),
 		hasTrailingContext(context, "dark-theme-overrides", last):
 		return colorCompletions()
@@ -456,12 +455,12 @@ func colorCompletions() []completionItem {
 	}}
 }
 
-func themeCompletions(themes []d2themes.Theme, detail string, previewTheme bool) []completionItem {
+func themeCompletions(themes []d2themes.Theme, detail string) []completionItem {
 	items := make([]completionItem, 0, len(themes))
 	for _, theme := range themes {
 		label := strconv.FormatInt(theme.ID, 10)
 		colors := themeColorSwatches(theme)
-		item := completionItem{
+		items = append(items, completionItem{
 			Label:         label,
 			Kind:          "keyword",
 			Detail:        detail,
@@ -470,12 +469,7 @@ func themeCompletions(themes []d2themes.Theme, detail string, previewTheme bool)
 			InsertText:    label,
 			FilterText:    label + " " + theme.Name,
 			ColorSwatches: colors,
-		}
-		if previewTheme {
-			themeID := theme.ID
-			item.PreviewThemeID = &themeID
-		}
-		items = append(items, item)
+		})
 	}
 	return items
 }

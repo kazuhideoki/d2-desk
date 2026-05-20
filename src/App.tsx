@@ -17,6 +17,7 @@ import {
   isD2LineCommentPosition,
 } from "./d2Language";
 import {
+  createTab,
   createEmptyTab,
   hasTabPendingUserChanges,
   loadActiveTabId,
@@ -31,6 +32,7 @@ import type {
   SavedD2File,
   SourceRange,
   StoredWorkspaces,
+  WorkspaceFileEntry,
 } from "./types";
 import {
   baseName,
@@ -76,8 +78,16 @@ type RenameDialogState = {
   error: string | null;
 };
 
+type WorkspaceFilePaletteState = {
+  query: string;
+  files: WorkspaceFileEntry[];
+  selectedIndex: number;
+  loading: boolean;
+  error: string | null;
+};
+
 type InternalSuggestCompletionItem = {
-  completion: D2PreviewCompletionItem;
+  completion: Monaco.languages.CompletionItem;
 };
 
 type InternalSuggestFocusEvent = {
@@ -95,11 +105,8 @@ type InternalSuggestController = {
   };
 };
 
-type D2PreviewCompletionItem = Monaco.languages.CompletionItem & {
-  d2PreviewThemeId?: number;
-};
-
 const nodeRenamePattern = /^[A-Za-z0-9_-]+$/;
+const workspaceFileResultLimit = 120;
 
 function lastD2IdSegment(id: string) {
   const parts = id.split(".");
@@ -161,10 +168,47 @@ function objectIdAtPosition(
   return bestMatch?.id ?? null;
 }
 
+function normalizeWorkspaceFileQuery(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function workspaceFileMatchScore(file: WorkspaceFileEntry, query: string) {
+  if (!query) return file.relativePath.length;
+
+  const relativePath = file.relativePath.toLowerCase();
+  const fileName = file.fileName.toLowerCase();
+  const tokens = query.split(/\s+/).filter(Boolean);
+  if (tokens.some((token) => !relativePath.includes(token))) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  let score = relativePath.length;
+  if (relativePath === query) score -= 1000;
+  if (fileName === query) score -= 900;
+  if (fileName.startsWith(query)) score -= 700;
+  if (relativePath.startsWith(query)) score -= 500;
+  score += tokens.reduce((total, token) => total + relativePath.indexOf(token), 0);
+  return score;
+}
+
+function filterWorkspaceFiles(files: WorkspaceFileEntry[], query: string) {
+  const normalizedQuery = normalizeWorkspaceFileQuery(query);
+  return files
+    .map((file) => ({ file, score: workspaceFileMatchScore(file, normalizedQuery) }))
+    .filter((item) => Number.isFinite(item.score))
+    .sort((left, right) =>
+      left.score === right.score
+        ? left.file.relativePath.localeCompare(right.file.relativePath)
+        : left.score - right.score,
+    )
+    .slice(0, workspaceFileResultLimit)
+    .map((item) => item.file);
+}
+
 function completionPreviewSource(
   monaco: typeof Monaco,
   model: Monaco.editor.ITextModel,
-  completion: D2PreviewCompletionItem,
+  completion: Monaco.languages.CompletionItem,
 ) {
   if (
     completion.insertTextRules &&
@@ -189,10 +233,7 @@ function completionPreviewSource(
     column: range.endColumn,
   });
 
-  return {
-    source: `${source.slice(0, startOffset)}${completion.insertText}${source.slice(endOffset)}`,
-    theme: completion.d2PreviewThemeId,
-  };
+  return `${source.slice(0, startOffset)}${completion.insertText}${source.slice(endOffset)}`;
 }
 
 function App() {
@@ -217,10 +258,9 @@ function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
+  const [filePalette, setFilePalette] = useState<WorkspaceFilePaletteState | null>(null);
   const [editorZoom, setEditorZoom] = useState(1);
   const [previewZoom, setPreviewZoom] = useState(1);
-  const [theme, setTheme] = useState(4);
-  const [layout, setLayout] = useState("dagre");
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decorationIds = useRef<string[]>([]);
@@ -228,7 +268,9 @@ function App() {
   const activeSuggestPreviewRequestId = useRef(0);
   const suggestPreviewTimeoutRef = useRef<number | null>(null);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
+  const filePaletteInputRef = useRef<HTMLInputElement | null>(null);
   const openSourceFileRef = useRef<() => void>(() => undefined);
+  const openWorkspaceFilePaletteRef = useRef<() => void>(() => undefined);
   const saveSourceRef = useRef<() => void>(() => undefined);
   const formatDocumentRef = useRef<() => void>(() => undefined);
   const closeActiveTabRef = useRef<() => void>(() => undefined);
@@ -255,9 +297,13 @@ function App() {
   const source = activeTab?.source ?? "";
   const fileName = activeTab?.fileName ?? "untitled.d2";
   const currentFilePath = activeTab?.filePath ?? null;
-  const latestCompileInputsRef = useRef({ tabId: activeTabId, source, layout, theme });
-  latestCompileInputsRef.current = { tabId: activeTabId, source, layout, theme };
+  const latestCompileInputsRef = useRef({ tabId: activeTabId, source });
+  latestCompileInputsRef.current = { tabId: activeTabId, source };
   const visibleCompileResult = suggestPreviewResult ?? compileResult;
+  const filteredWorkspaceFiles = useMemo(
+    () => (filePalette ? filterWorkspaceFiles(filePalette.files, filePalette.query) : []),
+    [filePalette],
+  );
 
   const activeObject = useMemo(
     () => visibleCompileResult.objects.find((object) => object.id === (hoverId ?? activeId)),
@@ -308,6 +354,14 @@ function App() {
       renameInputRef.current?.select();
     });
   }, [renameDialog?.id]);
+
+  useEffect(() => {
+    if (!filePalette) return;
+    window.requestAnimationFrame(() => {
+      filePaletteInputRef.current?.focus();
+      filePaletteInputRef.current?.select();
+    });
+  }, [filePalette !== null]);
 
   const persistTabs = useCallback((nextTabs: D2Tab[], nextActiveTabId: string) => {
     const workspaceId = activeWorkspaceIdRef.current;
@@ -394,6 +448,41 @@ function App() {
     setStatus(`Created ${nextTab.fileName}`);
   }, [persistTabs]);
 
+  const openFileInNewTab = useCallback(
+    (file: OpenedD2File) => {
+      const currentTabs = persistActiveEditorViewState();
+      const existingTab = currentTabs.find((tab) => tab.filePath === file.path);
+      if (existingTab) {
+        activeTabIdRef.current = existingTab.id;
+        invalidateCursorLookup();
+        setActiveTabId(existingTab.id);
+        setActiveId(null);
+        setHoverId(null);
+        persistTabs(currentTabs, existingTab.id);
+        setStatus(`Opened ${file.path}`);
+        return;
+      }
+
+      const nextTab = {
+        ...createTab(fileNameFromPath(file.path), file.contents),
+        filePath: file.path,
+        editorViewState: null,
+      };
+      const nextTabs = [...currentTabs, nextTab];
+      tabsRef.current = nextTabs;
+      activeTabIdRef.current = nextTab.id;
+      editorTabIdRef.current = nextTab.id;
+      invalidateCursorLookup();
+      setTabs(nextTabs);
+      setActiveTabId(nextTab.id);
+      persistTabs(nextTabs, nextTab.id);
+      setActiveId(null);
+      setHoverId(null);
+      setStatus(`Opened ${file.path}`);
+    },
+    [persistActiveEditorViewState, persistTabs],
+  );
+
   const clearSuggestPreview = useCallback(() => {
     activeSuggestPreviewRequestId.current += 1;
     if (suggestPreviewTimeoutRef.current !== null) {
@@ -404,10 +493,9 @@ function App() {
   }, []);
 
   const scheduleSuggestPreview = useCallback(
-    (previewSource: string, modelVersionId: number, previewThemeOverride?: number) => {
+    (previewSource: string, modelVersionId: number) => {
       const latestInputs = latestCompileInputsRef.current;
-      const previewTheme = previewThemeOverride ?? latestInputs.theme;
-      if (previewSource === latestInputs.source && previewTheme === latestInputs.theme) {
+      if (previewSource === latestInputs.source) {
         clearSuggestPreview();
         return;
       }
@@ -419,23 +507,19 @@ function App() {
       }
 
       const tabId = latestInputs.tabId;
-      const previewLayout = latestInputs.layout;
-      const baseTheme = latestInputs.theme;
       suggestPreviewTimeoutRef.current = window.setTimeout(() => {
         suggestPreviewTimeoutRef.current = null;
         void (async () => {
           try {
             const result = await invoke<CompileResult>("sidecar_call", {
               method: "compile",
-              params: { source: previewSource, layout: previewLayout, theme: previewTheme },
+              params: { source: previewSource },
             });
             const currentInputs = latestCompileInputsRef.current;
             const currentModelVersionId = editorRef.current?.getModel()?.getVersionId() ?? null;
             if (
               requestId !== activeSuggestPreviewRequestId.current ||
               tabId !== currentInputs.tabId ||
-              previewLayout !== currentInputs.layout ||
-              baseTheme !== currentInputs.theme ||
               modelVersionId !== currentModelVersionId
             ) {
               return;
@@ -458,15 +542,13 @@ function App() {
       try {
         const result = await invoke<CompileResult>("sidecar_call", {
           method: "compile",
-          params: { source: nextSource, layout, theme },
+          params: { source: nextSource },
         });
         const latestInputs = latestCompileInputsRef.current;
         if (
           requestId !== activeCompileRequestId.current ||
           tabId !== latestInputs.tabId ||
-          nextSource !== latestInputs.source ||
-          layout !== latestInputs.layout ||
-          theme !== latestInputs.theme
+          nextSource !== latestInputs.source
         ) {
           return;
         }
@@ -489,9 +571,7 @@ function App() {
         if (
           requestId !== activeCompileRequestId.current ||
           tabId !== latestInputs.tabId ||
-          nextSource !== latestInputs.source ||
-          layout !== latestInputs.layout ||
-          theme !== latestInputs.theme
+          nextSource !== latestInputs.source
         ) {
           return;
         }
@@ -514,7 +594,7 @@ function App() {
         setStatus("Compile failed; preview kept from last valid compile");
       }
     },
-    [layout, theme],
+    [],
   );
 
   useEffect(() => {
@@ -584,6 +664,77 @@ function App() {
       setStatus(String(error));
     }
   }, [currentFilePath, updateActiveTab]);
+
+  const openWorkspaceFilePalette = useCallback(async () => {
+    const workspaceId = activeWorkspaceIdRef.current;
+    const workspace = workspaceId
+      ? workspaceStateRef.current.workspaces.find((item) => item.id === workspaceId)
+      : null;
+    if (!workspace) {
+      setStatus("Open a workspace folder first");
+      return;
+    }
+
+    setFilePalette({
+      query: "",
+      files: [],
+      selectedIndex: 0,
+      loading: true,
+      error: null,
+    });
+    setStatus(`Indexing ${workspace.name}`);
+
+    try {
+      const files = await invoke<WorkspaceFileEntry[]>("list_workspace_files", {
+        rootPath: workspace.rootPath,
+      });
+      setFilePalette((current) =>
+        current
+          ? {
+              ...current,
+              files,
+              selectedIndex: 0,
+              loading: false,
+              error: null,
+            }
+          : current,
+      );
+      setStatus(`Indexed ${files.length} files in ${workspace.name}`);
+    } catch (error) {
+      setFilePalette((current) =>
+        current
+          ? {
+              ...current,
+              loading: false,
+              error: String(error),
+            }
+          : current,
+      );
+      setStatus(String(error));
+    }
+  }, []);
+
+  const openWorkspaceFile = useCallback(
+    async (file: WorkspaceFileEntry) => {
+      try {
+        const result = await invoke<OpenedD2File>("read_d2_file", { path: file.path });
+        openFileInNewTab(result);
+        setFilePalette(null);
+        window.requestAnimationFrame(() => editorRef.current?.focus());
+      } catch (error) {
+        setFilePalette((current) =>
+          current
+            ? {
+                ...current,
+                error: String(error),
+              }
+            : current,
+        );
+        setStatus(String(error));
+      }
+    },
+    [openFileInNewTab],
+  );
 
   const saveSource = useCallback(async () => {
     try {
@@ -979,6 +1130,9 @@ function App() {
     openSourceFileRef.current = () => {
       void openSourceFile();
     };
+    openWorkspaceFilePaletteRef.current = () => {
+      void openWorkspaceFilePalette();
+    };
     saveSourceRef.current = () => {
       void saveSource();
     };
@@ -989,11 +1143,23 @@ function App() {
     quitApplicationRef.current = () => {
       void quitApplication();
     };
-  }, [closeActiveTab, formatDocument, openSourceFile, quitApplication, saveSource]);
+  }, [
+    closeActiveTab,
+    formatDocument,
+    openSourceFile,
+    openWorkspaceFilePalette,
+    quitApplication,
+    saveSource,
+  ]);
 
   useEffect(() => {
     const unlisteners: Array<() => void> = [];
     void listen("d2-desk-open", () => openSourceFileRef.current()).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen("d2-desk-open-workspace-file", () =>
+      openWorkspaceFilePaletteRef.current(),
+    ).then((unlisten) => {
       unlisteners.push(unlisten);
     });
     void listen("d2-desk-save", () => saveSourceRef.current()).then((unlisten) => {
@@ -1027,6 +1193,10 @@ function App() {
       if (key === "o") {
         event.preventDefault();
         void openSourceFile();
+      } else if (key === "p") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void openWorkspaceFilePalette();
       } else if (key === "s") {
         event.preventDefault();
         void saveSource();
@@ -1064,6 +1234,7 @@ function App() {
     createNewTab,
     formatDocument,
     openSourceFile,
+    openWorkspaceFilePalette,
     quitApplication,
     renameFocusedNode,
     saveSource,
@@ -1090,6 +1261,9 @@ function App() {
     }
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyO, () => {
       openSourceFileRef.current();
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, () => {
+      openWorkspaceFilePaletteRef.current();
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       saveSourceRef.current();
@@ -1121,12 +1295,12 @@ function App() {
             return;
           }
 
-          const preview = completionPreviewSource(monaco, model, completion);
-          if (!preview) {
+          const previewSource = completionPreviewSource(monaco, model, completion);
+          if (!previewSource) {
             clearSuggestPreview();
             return;
           }
-          scheduleSuggestPreview(preview.source, model.getVersionId(), preview.theme);
+          scheduleSuggestPreview(previewSource, model.getVersionId());
         }),
       );
     }
@@ -1284,7 +1458,7 @@ function App() {
     try {
       const result = await invoke<ExportResult>("sidecar_call", {
         method: "export",
-        params: { source, format: "svg", layout, theme },
+        params: { source, format: "svg" },
       });
       downloadBytes(`${baseName(fileName)}.svg`, result.data, "image/svg+xml");
       setStatus("Exported SVG");
@@ -1359,8 +1533,6 @@ function App() {
       <Toolbar
         workspaces={workspaceState.workspaces}
         activeWorkspaceId={workspaceState.activeWorkspaceId}
-        theme={theme}
-        layout={layout}
         onWorkspaceChange={(workspaceId) => {
           void switchWorkspace(workspaceId);
         }}
@@ -1368,8 +1540,6 @@ function App() {
           void openWorkspaceFolder();
         }}
         onManageWorkspaces={() => setWorkspaceManagerOpen(true)}
-        onThemeChange={setTheme}
-        onLayoutChange={setLayout}
         onOpen={openSourceFile}
         onSave={saveSource}
         onOpenWithEditor={openWithEditor}
@@ -1444,6 +1614,120 @@ function App() {
               </button>
             </footer>
           </form>
+        </div>
+      ) : null}
+
+      {filePalette ? (
+        <div className="modal-backdrop palette-backdrop" role="presentation">
+          <section
+            className="file-palette"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="file-palette-title"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setFilePalette(null);
+                setStatus("Open workspace file canceled");
+                window.requestAnimationFrame(() => editorRef.current?.focus());
+                return;
+              }
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setFilePalette((current) =>
+                  current
+                    ? {
+                        ...current,
+                        selectedIndex: Math.min(
+                          current.selectedIndex + 1,
+                          Math.max(filteredWorkspaceFiles.length - 1, 0),
+                        ),
+                      }
+                    : current,
+                );
+                return;
+              }
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setFilePalette((current) =>
+                  current
+                    ? {
+                        ...current,
+                        selectedIndex: Math.max(current.selectedIndex - 1, 0),
+                      }
+                    : current,
+                );
+                return;
+              }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                const selectedFile =
+                  filteredWorkspaceFiles[
+                    Math.min(filePalette.selectedIndex, filteredWorkspaceFiles.length - 1)
+                  ];
+                if (selectedFile) {
+                  void openWorkspaceFile(selectedFile);
+                }
+              }
+            }}
+          >
+            <header className="file-palette-header">
+              <h2 id="file-palette-title">Open Workspace File</h2>
+              <span>{filePalette.files.length} files</span>
+            </header>
+            <input
+              ref={filePaletteInputRef}
+              aria-label="Search workspace files"
+              placeholder="Search files"
+              value={filePalette.query}
+              onChange={(event) =>
+                setFilePalette((current) =>
+                  current
+                    ? {
+                        ...current,
+                        query: event.target.value,
+                        selectedIndex: 0,
+                      }
+                    : current,
+                )
+              }
+            />
+            <div className="file-palette-results" role="listbox" aria-label="Workspace files">
+              {filePalette.loading ? (
+                <div className="file-palette-message">Indexing...</div>
+              ) : filePalette.error ? (
+                <div className="file-palette-message error">{filePalette.error}</div>
+              ) : filteredWorkspaceFiles.length === 0 ? (
+                <div className="file-palette-message">No matching files</div>
+              ) : (
+                filteredWorkspaceFiles.map((file, index) => {
+                  const isSelected =
+                    index === Math.min(filePalette.selectedIndex, filteredWorkspaceFiles.length - 1);
+                  return (
+                    <button
+                      className={`file-palette-row${isSelected ? " selected" : ""}`}
+                      key={file.path}
+                      type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      title={file.path}
+                      onMouseEnter={() =>
+                        setFilePalette((current) =>
+                          current ? { ...current, selectedIndex: index } : current,
+                        )
+                      }
+                      onClick={() => {
+                        void openWorkspaceFile(file);
+                      }}
+                    >
+                      <span className="file-palette-name">{file.fileName}</span>
+                      <span className="file-palette-path">{file.directory}</span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </section>
         </div>
       ) : null}
 

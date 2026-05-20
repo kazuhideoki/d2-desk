@@ -108,7 +108,6 @@ export function configureD2Language(monaco: typeof Monaco) {
               completion.description ||
               (completion.detail ? `D2 ${completion.detail}` : "D2 completion"),
             documentation: d2CompletionDocumentation(completion),
-            d2PreviewThemeId: completion.previewThemeId,
             range: replacementRange,
             ...(completionContext.kind === "key" && (completion.insertText || "").endsWith(": ")
               ? {
