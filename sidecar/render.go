@@ -24,7 +24,8 @@ import (
 
 func compile(params compileParams) (compileResult, error) {
 	compileContext := newCompileContext(params.WorkspaceRootPath, params.CurrentFilePath, params.OpenFiles)
-	diagram, svg, err := render(params.Source, compileContext)
+	previewPad := int64(16)
+	diagram, svg, err := render(params.Source, compileContext, &d2svg.RenderOpts{Pad: &previewPad})
 	result := compileResult{
 		SVG:         string(svg),
 		Objects:     buildObjectMap(params.Source, diagram),
@@ -145,10 +146,13 @@ func utf16ColumnCount(text string) int {
 	return count
 }
 
-func render(source string, compileContext compileContext) (*d2target.Diagram, []byte, error) {
+func render(source string, compileContext compileContext, renderOpts *d2svg.RenderOpts) (*d2target.Diagram, []byte, error) {
 	ruler, err := textmeasure.NewRuler()
 	if err != nil {
 		return nil, nil, err
+	}
+	if renderOpts == nil {
+		renderOpts = &d2svg.RenderOpts{}
 	}
 	layoutResolver := func(engine string) (d2graph.LayoutGraph, error) {
 		switch engine {
@@ -160,7 +164,6 @@ func render(source string, compileContext compileContext) (*d2target.Diagram, []
 			return nil, fmt.Errorf("layout %q is not bundled", engine)
 		}
 	}
-	renderOpts := &d2svg.RenderOpts{}
 	compileOpts := &d2lib.CompileOptions{
 		LayoutResolver: layoutResolver,
 		Ruler:          ruler,
@@ -187,7 +190,7 @@ func format(source string) (string, error) {
 
 func export(params exportParams) (exportResult, error) {
 	compileContext := newCompileContext(params.WorkspaceRootPath, params.CurrentFilePath, params.OpenFiles)
-	_, svg, err := render(params.Source, compileContext)
+	_, svg, err := render(params.Source, compileContext, nil)
 	if err != nil && len(svg) == 0 {
 		return exportResult{}, err
 	}

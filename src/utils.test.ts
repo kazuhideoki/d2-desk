@@ -8,6 +8,7 @@ import {
   ensureD2FileName,
   fileNameFromPath,
   filterD2Symbols,
+  fitWidthZoom,
   getDiagramViewBox,
   increaseZoom,
   moveSelectionIndex,
@@ -59,6 +60,14 @@ describe("utils", () => {
     expect(decreaseZoom(2)).toBe(1.9);
   });
 
+  it("calculates a clamped width-fit zoom", () => {
+    expect(fitWidthZoom(500, 1000)).toBe(0.5);
+    expect(fitWidthZoom(1234, 1000)).toBe(1.23);
+    expect(fitWidthZoom(10_000, 100)).toBe(10);
+    expect(fitWidthZoom(500, 0)).toBe(1);
+    expect(fitWidthZoom(Number.NaN, 1000)).toBe(1);
+  });
+
   it("moves a selection index within available items", () => {
     expect(moveSelectionIndex(1, 1, 3)).toBe(2);
     expect(moveSelectionIndex(1, -1, 3)).toBe(0);
@@ -108,6 +117,9 @@ describe("utils", () => {
     expect(normalizeSvgSize('<svg viewBox="0 0 10.2 20.1"><g /></svg>')).toBe(
       '<svg viewBox="0 0 10.2 20.1" width="11" height="21"><g /></svg>',
     );
+    expect(
+      normalizeSvgSize('<svg viewBox="0 0 10 20"><svg width="10" height="20"></svg></svg>'),
+    ).toBe('<svg viewBox="0 0 10 20" width="10" height="20"><svg width="10" height="20"></svg></svg>');
   });
 
   it("leaves SVG markup alone when size data cannot be inferred", () => {

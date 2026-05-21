@@ -6,7 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import { BottomPanel } from "./components/BottomPanel";
 import { EditorPane } from "./components/EditorPane";
-import { PreviewPane } from "./components/PreviewPane";
+import { PreviewPane, type PreviewZoomMode } from "./components/PreviewPane";
 import { TabBar } from "./components/TabBar";
 import { Toolbar } from "./components/Toolbar";
 import { WorkspaceManager } from "./components/WorkspaceManager";
@@ -72,6 +72,8 @@ type CursorObjectLookup = {
   modelVersionId: number | null;
   objects: CompileResult["objects"];
 };
+
+type FocusedPane = "editor" | "preview";
 
 type RenameNodeResult = {
   source: string;
@@ -359,6 +361,7 @@ function App() {
   const [symbolPalette, setSymbolPalette] = useState<SymbolPaletteState | null>(null);
   const [editorZoom, setEditorZoom] = useState(1);
   const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewZoomMode, setPreviewZoomMode] = useState<PreviewZoomMode>("auto");
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decorationIds = useRef<string[]>([]);
@@ -384,6 +387,7 @@ function App() {
   const tabsRef = useRef(tabs);
   const activeTabIdRef = useRef(activeTabId);
   const editorTabIdRef = useRef(activeTabId);
+  const focusedPaneRef = useRef<FocusedPane>("editor");
   const objectLookupRef = useRef<CursorObjectLookup>({
     modelVersionId: null,
     objects: [],
@@ -447,6 +451,18 @@ function App() {
   useEffect(() => {
     activeTabIdRef.current = activeTabId;
   }, [activeTabId]);
+
+  useEffect(() => {
+    const handleFocusIn = (event: FocusEvent) => {
+      const pane = paneFromTarget(event.target);
+      if (pane) {
+        focusedPaneRef.current = pane;
+      }
+    };
+
+    window.addEventListener("focusin", handleFocusIn);
+    return () => window.removeEventListener("focusin", handleFocusIn);
+  }, []);
 
   function invalidateCursorLookup() {
     activeCursorLookupRequestId.current += 1;
@@ -1610,13 +1626,13 @@ function App() {
         void formatDocument();
       } else if (event.key === "+" || event.key === "=") {
         event.preventDefault();
-        zoomIn();
+        zoomFocusedPaneIn();
       } else if (event.key === "-" || event.key === "_") {
         event.preventDefault();
-        zoomOut();
+        zoomFocusedPaneOut();
       } else if (event.key === "0") {
         event.preventDefault();
-        resetView();
+        resetFocusedView();
       } else if (event.key.toLowerCase() === "t") {
         event.preventDefault();
         createNewTab();
@@ -1643,13 +1659,19 @@ function App() {
     openWorkspaceFilePalette,
     quitApplication,
     renameFocusedNode,
+    resetFocusedView,
     saveSource,
+    zoomFocusedPaneIn,
+    zoomFocusedPaneOut,
   ]);
 
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
     editorTabIdRef.current = activeTab?.id ?? activeTabIdRef.current;
+    editor.onDidFocusEditorWidget(() => {
+      focusedPaneRef.current = "editor";
+    });
     let isAutoClosingD2Brace = false;
     const savedViewState = activeTab?.editorViewState;
     if (savedViewState) {
@@ -2021,19 +2043,46 @@ function App() {
     image.src = url;
   }
 
-  function resetView() {
+  function paneFromTarget(target: EventTarget | null): FocusedPane | null {
+    return target instanceof HTMLElement && target.closest(".preview-pane")
+      ? "preview"
+      : target instanceof HTMLElement && target.closest(".editor-pane")
+        ? "editor"
+        : null;
+  }
+
+  function focusedPane() {
+    const focusedTargetPane = paneFromTarget(document.activeElement);
+    if (focusedTargetPane) return focusedTargetPane;
+    if (editorRef.current?.hasTextFocus()) return "editor";
+    return focusedPaneRef.current;
+  }
+
+  function resetFocusedView() {
+    if (focusedPane() === "preview") {
+      setPreviewZoomMode("auto");
+      return;
+    }
+
     setEditorZoom(1);
-    setPreviewZoom(1);
   }
 
-  function zoomIn() {
-    setEditorZoom(increaseZoom);
-    setPreviewZoom(increaseZoom);
+  function zoomFocusedPaneIn() {
+    if (focusedPane() === "preview") {
+      zoomPreviewIn();
+      return;
+    }
+
+    zoomEditorIn();
   }
 
-  function zoomOut() {
-    setEditorZoom(decreaseZoom);
-    setPreviewZoom(decreaseZoom);
+  function zoomFocusedPaneOut() {
+    if (focusedPane() === "preview") {
+      zoomPreviewOut();
+      return;
+    }
+
+    zoomEditorOut();
   }
 
   function resetEditorZoom() {
@@ -2049,16 +2098,22 @@ function App() {
   }
 
   function resetPreviewZoom() {
-    setPreviewZoom(1);
+    setPreviewZoomMode("auto");
   }
 
   function zoomPreviewIn() {
+    setPreviewZoomMode("manual");
     setPreviewZoom(increaseZoom);
   }
 
   function zoomPreviewOut() {
+    setPreviewZoomMode("manual");
     setPreviewZoom(decreaseZoom);
   }
+
+  const setAutoPreviewZoom = useCallback((zoom: number) => {
+    setPreviewZoom((currentZoom) => (currentZoom === zoom ? currentZoom : zoom));
+  }, []);
 
   return (
     <main className="app-shell">
@@ -2076,9 +2131,9 @@ function App() {
         onSave={saveSource}
         onOpenWithEditor={openWithEditor}
         onFormat={formatDocument}
-        onZoomOut={zoomOut}
-        onResetView={resetView}
-        onZoomIn={zoomIn}
+        onZoomOut={zoomFocusedPaneOut}
+        onResetView={resetFocusedView}
+        onZoomIn={zoomFocusedPaneIn}
         onExportSvg={exportSVG}
         onExportPng={exportPNG}
       />
@@ -2452,6 +2507,7 @@ function App() {
           renderedSvg={renderedSvg}
           overlayViewBox={overlayViewBox}
           zoom={previewZoom}
+          zoomMode={previewZoomMode}
           activeId={activeId}
           hoverId={hoverId}
           onHover={(id) => {
@@ -2468,6 +2524,8 @@ function App() {
           onZoomOut={zoomPreviewOut}
           onResetZoom={resetPreviewZoom}
           onZoomIn={zoomPreviewIn}
+          onZoomModeChange={setPreviewZoomMode}
+          onAutoZoomChange={setAutoPreviewZoom}
         />
       </section>
 

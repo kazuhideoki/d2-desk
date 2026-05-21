@@ -1,13 +1,17 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ZoomIn, ZoomOut } from "lucide-react";
 import type { D2Object } from "../types";
-import { connectionPath } from "../utils";
+import { connectionPath, fitWidthZoom } from "../utils";
 import { RepeatButton } from "./RepeatButton";
+
+export type PreviewZoomMode = "auto" | "manual";
 
 type PreviewPaneProps = {
   objects: D2Object[];
   renderedSvg: string;
   overlayViewBox: string;
   zoom: number;
+  zoomMode: PreviewZoomMode;
   activeId: string | null;
   hoverId: string | null;
   onHover: (id: string | null) => void;
@@ -15,13 +19,68 @@ type PreviewPaneProps = {
   onZoomOut: () => void;
   onResetZoom: () => void;
   onZoomIn: () => void;
+  onZoomModeChange: (zoomMode: PreviewZoomMode) => void;
+  onAutoZoomChange: (zoom: number) => void;
 };
+
+type PreviewContentSize = {
+  width: number;
+  height: number;
+};
+
+function parsePositiveNumber(value: string | null) {
+  if (!value) return null;
+  const number = Number.parseFloat(value);
+  return Number.isFinite(number) && number > 0 ? number : null;
+}
+
+function sizeFromViewBox(viewBox: string): PreviewContentSize {
+  const [, , width, height] = viewBox.split(/\s+/).map(Number);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return { width: 800, height: 600 };
+  }
+
+  return { width, height };
+}
+
+function measureSvgSize(
+  svg: SVGSVGElement | null,
+  fallback: PreviewContentSize,
+  currentZoom: number,
+) {
+  if (!svg) return fallback;
+
+  const rect = svg.getBoundingClientRect();
+  const zoomScale = Number.isFinite(currentZoom) && currentZoom > 0 ? currentZoom : 1;
+  const layoutWidth = rect.width > 0 ? rect.width / zoomScale : null;
+  const layoutHeight = rect.height > 0 ? rect.height / zoomScale : null;
+  const viewBox = svg.getAttribute("viewBox")?.split(/\s+/).map(Number) ?? [];
+  const viewBoxWidth =
+    viewBox.length === 4 && Number.isFinite(viewBox[2]) && viewBox[2] > 0 ? viewBox[2] : null;
+  const viewBoxHeight =
+    viewBox.length === 4 && Number.isFinite(viewBox[3]) && viewBox[3] > 0 ? viewBox[3] : null;
+  const attrWidth = parsePositiveNumber(svg.getAttribute("width"));
+  const attrHeight = parsePositiveNumber(svg.getAttribute("height"));
+
+  return {
+    width: layoutWidth ?? attrWidth ?? viewBoxWidth ?? fallback.width,
+    height: layoutHeight ?? attrHeight ?? viewBoxHeight ?? fallback.height,
+  };
+}
+
+function contentWidth(viewport: HTMLElement) {
+  const style = window.getComputedStyle(viewport);
+  const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
+  const paddingRight = Number.parseFloat(style.paddingRight) || 0;
+  return Math.max(0, viewport.clientWidth - paddingLeft - paddingRight);
+}
 
 export function PreviewPane({
   objects,
   renderedSvg,
   overlayViewBox,
   zoom,
+  zoomMode,
   activeId,
   hoverId,
   onHover,
@@ -29,7 +88,59 @@ export function PreviewPane({
   onZoomOut,
   onResetZoom,
   onZoomIn,
+  onZoomModeChange,
+  onAutoZoomChange,
 }: PreviewPaneProps) {
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const svgOutputRef = useRef<HTMLDivElement | null>(null);
+  const fallbackSize = useMemo(() => sizeFromViewBox(overlayViewBox), [overlayViewBox]);
+  const [contentSize, setContentSize] = useState(fallbackSize);
+
+  const updateMeasurements = useCallback(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const svg = svgOutputRef.current?.querySelector("svg");
+    const nextSize = measureSvgSize(svg instanceof SVGSVGElement ? svg : null, fallbackSize, zoom);
+    setContentSize((current) =>
+      current.width === nextSize.width && current.height === nextSize.height ? current : nextSize,
+    );
+
+    if (zoomMode === "auto") {
+      viewport.scrollLeft = 0;
+      viewport.scrollTop = 0;
+      onAutoZoomChange(fitWidthZoom(contentWidth(viewport), nextSize.width));
+    }
+  }, [fallbackSize, onAutoZoomChange, zoom, zoomMode]);
+
+  useEffect(() => {
+    updateMeasurements();
+  }, [renderedSvg, updateMeasurements]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const observer = new ResizeObserver(updateMeasurements);
+    observer.observe(viewport);
+    window.requestAnimationFrame(updateMeasurements);
+    return () => observer.disconnect();
+  }, [updateMeasurements]);
+
+  useEffect(() => {
+    if (zoomMode !== "auto") return;
+
+    const resetScroll = () => {
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      viewport.scrollLeft = 0;
+      viewport.scrollTop = 0;
+    };
+
+    resetScroll();
+    window.requestAnimationFrame(resetScroll);
+  }, [contentSize.height, contentSize.width, zoom, zoomMode]);
+
   return (
     <section className="preview-pane">
       <div className="pane-title">
@@ -39,18 +150,35 @@ export function PreviewPane({
             <RepeatButton className="pane-zoom-button" title="Zoom preview out" onPress={onZoomOut}>
               <ZoomOut size={13} />
             </RepeatButton>
-            <button className="pane-zoom-value" title="Reset preview zoom" onClick={onResetZoom}>
+            <button className="pane-zoom-value" title="Fit preview width" onClick={onResetZoom}>
               {Math.round(zoom * 100)}%
             </button>
             <RepeatButton className="pane-zoom-button" title="Zoom preview in" onPress={onZoomIn}>
               <ZoomIn size={13} />
             </RepeatButton>
           </div>
+          <label className="preview-auto-zoom-toggle" title="Fit preview width automatically">
+            <input
+              type="checkbox"
+              checked={zoomMode === "auto"}
+              onChange={(event) => onZoomModeChange(event.target.checked ? "auto" : "manual")}
+            />
+            <span>Auto</span>
+          </label>
         </div>
       </div>
-      <div className="preview-viewport">
+      <div
+        ref={viewportRef}
+        className="preview-viewport"
+        tabIndex={0}
+        onPointerDown={(event) => event.currentTarget.focus()}
+      >
         <div className="preview-canvas" style={{ transform: `scale(${zoom})` }}>
-          <div className="svg-output" dangerouslySetInnerHTML={{ __html: renderedSvg }} />
+          <div
+            ref={svgOutputRef}
+            className="svg-output"
+            dangerouslySetInnerHTML={{ __html: renderedSvg }}
+          />
           <svg className="overlay" viewBox={overlayViewBox}>
             {objects.map((object) => {
               const isFocused = object.id === (hoverId ?? activeId);
