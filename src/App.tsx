@@ -507,6 +507,73 @@ function App() {
     });
   }, [symbolPalette !== null]);
 
+  useEffect(() => {
+    if (!symbolPalette) return;
+
+    const handleSymbolPaletteKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.key === "Process") {
+        return;
+      }
+      const shouldMoveDown =
+        event.key === "ArrowDown" ||
+        (event.key.toLowerCase() === "n" &&
+          event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey &&
+          !event.shiftKey);
+      const shouldMoveUp =
+        event.key === "ArrowUp" ||
+        (event.key.toLowerCase() === "p" &&
+          event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey &&
+          !event.shiftKey);
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setSymbolPalette(null);
+        setStatus("Symbol search canceled");
+        window.requestAnimationFrame(() => editorRef.current?.focus());
+        return;
+      }
+      if (shouldMoveDown || shouldMoveUp) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setSymbolPalette((current) =>
+          current
+            ? {
+                ...current,
+                selectedIndex: moveSelectionIndex(
+                  current.selectedIndex,
+                  shouldMoveDown ? 1 : -1,
+                  filteredFileSymbols.length,
+                ),
+              }
+            : current,
+        );
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const selectedSymbol =
+          filteredFileSymbols[
+            Math.min(symbolPalette.selectedIndex, filteredFileSymbols.length - 1)
+          ];
+        if (selectedSymbol) {
+          setSymbolPalette(null);
+          setActiveId(selectedSymbol.id);
+          highlightObject(selectedSymbol.id, true);
+          setStatus(`Focused ${selectedSymbol.id}`);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleSymbolPaletteKeyDown, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", handleSymbolPaletteKeyDown, { capture: true });
+  }, [filteredFileSymbols, symbolPalette]);
+
   const persistTabs = useCallback((nextTabs: D2Tab[], nextActiveTabId: string) => {
     const workspaceId = activeWorkspaceIdRef.current;
     if (!workspaceId) {
@@ -901,6 +968,17 @@ function App() {
     highlightObject(hoverId ?? activeId, false);
   }, [activeId, hoverId, visibleCompileResult.objects]);
 
+  useEffect(() => {
+    if (!symbolPalette) return;
+    const selectedSymbol =
+      filteredFileSymbols[
+        Math.min(symbolPalette.selectedIndex, filteredFileSymbols.length - 1)
+      ];
+    const selectedId = selectedSymbol?.id ?? null;
+    setActiveId((currentActiveId) => (currentActiveId === selectedId ? currentActiveId : selectedId));
+    highlightObject(selectedId, Boolean(selectedSymbol), false);
+  }, [filteredFileSymbols, symbolPalette]);
+
   const openSourceFile = useCallback(async () => {
     try {
       const selected = await open({
@@ -1013,6 +1091,7 @@ function App() {
 
   const goToSymbol = useCallback((symbolId: string) => {
     setSymbolPalette(null);
+    setActiveId(symbolId);
     highlightObject(symbolId, true);
     setStatus(`Focused ${symbolId}`);
   }, []);
@@ -1863,7 +1942,7 @@ function App() {
     }
   }
 
-  function highlightObject(id: string | null, reveal: boolean) {
+  function highlightObject(id: string | null, reveal: boolean, focusEditor = true) {
     const editor = editorRef.current;
     const monaco = monacoRef.current;
     if (!editor || !monaco) return;
@@ -1892,7 +1971,9 @@ function App() {
         lineNumber: sourceRanges[0].startLine,
         column: sourceRanges[0].startColumn,
       });
-      editor.focus();
+      if (focusEditor) {
+        editor.focus();
+      }
     }
   }
 
@@ -2202,6 +2283,9 @@ function App() {
             aria-modal="true"
             aria-labelledby="symbol-palette-title"
             onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.key === "Process") {
+                return;
+              }
               if (event.key === "Escape") {
                 event.preventDefault();
                 setSymbolPalette(null);
@@ -2273,6 +2357,7 @@ function App() {
             </header>
             <input
               ref={symbolPaletteInputRef}
+              autoFocus
               aria-label="Search file symbols"
               placeholder="Search symbols"
               value={symbolPalette.query}
