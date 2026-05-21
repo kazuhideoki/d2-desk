@@ -1788,6 +1788,7 @@ function App() {
     ) {
       return;
     }
+    setHoverId((currentHoverId) => (currentHoverId === null ? currentHoverId : null));
     setActiveId((currentActiveId) =>
       currentActiveId === nextActiveId ? currentActiveId : nextActiveId,
     );
@@ -2176,6 +2177,7 @@ function App() {
           onHover={setHoverId}
           onSelect={(id) => {
             invalidateCursorLookup();
+            setHoverId(null);
             setActiveId(id);
             highlightObject(id, true);
           }}
