@@ -371,8 +371,40 @@ select {
   background: #ecfdf5;
 }
 
+.symbol-palette-row {
+  grid-template-columns: 76px minmax(120px, 0.45fr) minmax(0, 1fr) minmax(44px, auto);
+}
+
+.symbol-palette-kind {
+  display: inline-flex;
+  width: 70px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #c7d2d6;
+  border-radius: 999px;
+  color: #415158;
+  background: #f8faf9;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.symbol-palette-kind.shape {
+  border-color: #99f6e4;
+  color: #115e59;
+  background: #ecfdf5;
+}
+
+.symbol-palette-kind.connection {
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
 .file-palette-name,
-.file-palette-path {
+.file-palette-path,
+.symbol-palette-line {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -386,6 +418,13 @@ select {
 .file-palette-path {
   color: #5b6d74;
   font-size: 12px;
+}
+
+.symbol-palette-line {
+  justify-self: end;
+  color: #5b6d74;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .file-palette-message {

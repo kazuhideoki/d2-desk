@@ -350,6 +350,9 @@ pub fn run() {
                 MenuItemBuilder::with_id("open-workspace-file", "Open Workspace File...")
                     .accelerator("Command+P")
                     .build(handle)?;
+            let open_symbols = MenuItemBuilder::with_id("open-symbols", "Go to Symbol in File...")
+                .accelerator("Command+Shift+O")
+                .build(handle)?;
             let save = MenuItemBuilder::with_id("save-file", "Save")
                 .accelerator("CmdOrCtrl+S")
                 .build(handle)?;
@@ -366,6 +369,7 @@ pub fn run() {
             let file_menu = SubmenuBuilder::new(handle, "File")
                 .item(&open)
                 .item(&open_workspace_file)
+                .item(&open_symbols)
                 .item(&save)
                 .separator()
                 .item(&close_tab)
@@ -391,6 +395,8 @@ pub fn run() {
                 let _ = app.emit_to("main", "d2-desk-open", ());
             } else if event.id() == "open-workspace-file" {
                 let _ = app.emit_to("main", "d2-desk-open-workspace-file", ());
+            } else if event.id() == "open-symbols" {
+                let _ = app.emit_to("main", "d2-desk-open-symbols", ());
             } else if event.id() == "save-file" {
                 let _ = app.emit_to("main", "d2-desk-save", ());
             } else if event.id() == "close-tab" {
