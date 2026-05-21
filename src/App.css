@@ -487,6 +487,7 @@ select {
 }
 
 .tab {
+  position: relative;
   display: inline-flex;
   width: 336px;
   min-width: 240px;
@@ -502,6 +503,35 @@ select {
   color: #53676f;
   background: #f4f7f7;
   overflow: hidden;
+}
+
+.tab[data-tab-id] {
+  cursor: grab;
+  touch-action: none;
+}
+
+.tab.dragging {
+  opacity: 0.48;
+}
+
+.tab.drop-before::before,
+.tab.drop-after::after {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  z-index: 1;
+  width: 3px;
+  border-radius: 999px;
+  background: #0f766e;
+  content: "";
+}
+
+.tab.drop-before::before {
+  left: 2px;
+}
+
+.tab.drop-after::after {
+  right: 2px;
 }
 
 .tab.active {
