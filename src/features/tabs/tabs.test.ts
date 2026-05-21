@@ -8,6 +8,7 @@ import {
   loadActiveTabId,
   loadTabs,
   normalizeTab,
+  reorderTabs,
   writeStoredTabs,
 } from "./tabs";
 import type { D2Tab } from "../../types";
@@ -144,6 +145,50 @@ describe("tabs", () => {
     expect(isTabUnsaved(autoChanged)).toBe(true);
     expect(hasTabPendingUserChanges(autoChanged)).toBe(false);
     expect(hasTabPendingUserChanges(userChanged)).toBe(true);
+  });
+
+  it("reorders tabs before or after the drop target", () => {
+    const tabs = [
+      { ...createTab("one.d2", ""), id: "one" },
+      { ...createTab("two.d2", ""), id: "two" },
+      { ...createTab("three.d2", ""), id: "three" },
+      { ...createTab("four.d2", ""), id: "four" },
+    ];
+
+    expect(reorderTabs(tabs, "four", "two", "before").map((tab) => tab.id)).toEqual([
+      "one",
+      "four",
+      "two",
+      "three",
+    ]);
+    expect(reorderTabs(tabs, "one", "three", "after").map((tab) => tab.id)).toEqual([
+      "two",
+      "three",
+      "one",
+      "four",
+    ]);
+  });
+
+  it("keeps tab order when a reorder request is invalid", () => {
+    const tabs = [
+      { ...createTab("one.d2", ""), id: "one" },
+      { ...createTab("two.d2", ""), id: "two" },
+    ];
+
+    expect(reorderTabs(tabs, "one", "one", "before")).toBe(tabs);
+    expect(reorderTabs(tabs, "missing", "two", "after")).toBe(tabs);
+    expect(reorderTabs(tabs, "one", "missing", "after")).toBe(tabs);
+  });
+
+  it("keeps the same tab array when a reorder request does not change the order", () => {
+    const tabs = [
+      { ...createTab("one.d2", ""), id: "one" },
+      { ...createTab("two.d2", ""), id: "two" },
+      { ...createTab("three.d2", ""), id: "three" },
+    ];
+
+    expect(reorderTabs(tabs, "one", "two", "before")).toBe(tabs);
+    expect(reorderTabs(tabs, "three", "two", "after")).toBe(tabs);
   });
 
   it("writes tabs with their active id", () => {

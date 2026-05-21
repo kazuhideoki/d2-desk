@@ -59,6 +59,8 @@ import {
   hasTabPendingUserChanges,
   loadActiveTabId,
   loadTabs,
+  reorderTabs,
+  type TabDropPosition,
   writeStoredTabs,
 } from "./features/tabs/tabs";
 import { Toolbar, type ToolbarCommand } from "./features/toolbar/Toolbar";
@@ -484,6 +486,24 @@ function App() {
       setStatus(`Focused ${nextTab.fileName}`);
     },
     [activateTab, persistActiveEditorViewState, persistTabs],
+  );
+
+  const moveTab = useCallback(
+    (draggedTabId: string, targetTabId: string, position: TabDropPosition) => {
+      const currentTabs = persistActiveEditorViewState();
+      const nextTabs = reorderTabs(currentTabs, draggedTabId, targetTabId, position);
+      if (nextTabs === currentTabs) return;
+
+      tabsRef.current = nextTabs;
+      setTabs(nextTabs);
+      persistTabs(nextTabs, activeTabIdRef.current);
+
+      const movedTab = nextTabs.find((tab) => tab.id === draggedTabId);
+      if (movedTab) {
+        setStatus(`Moved ${movedTab.fileName}`);
+      }
+    },
+    [persistActiveEditorViewState, persistTabs],
   );
 
   const updateActiveTab = useCallback((updates: Partial<D2Tab>) => {
@@ -2239,6 +2259,7 @@ function App() {
           void closeTab(tabId);
         }}
         onCreateTab={createNewTab}
+        onReorderTabs={moveTab}
       />
 
       <section className="workspace">
