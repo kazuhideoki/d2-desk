@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { type AppCommand, filterCommands, isCommandEnabled } from "./commands";
+import { type AppCommand, isCommandEnabled } from "../../shared/commands";
+import { filterCommands } from "./commands";
 
 const noop = () => undefined;
 

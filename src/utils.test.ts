@@ -1,13 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   baseName,
-  buildD2SymbolEntries,
   clampZoom,
   connectionPath,
   decreaseZoom,
   ensureD2FileName,
   fileNameFromPath,
-  filterD2Symbols,
   fitWidthZoom,
   getDiagramViewBox,
   increaseZoom,
@@ -74,43 +72,6 @@ describe("utils", () => {
     expect(moveSelectionIndex(2, 1, 3)).toBe(2);
     expect(moveSelectionIndex(0, -1, 3)).toBe(0);
     expect(moveSelectionIndex(0, 1, 0)).toBe(0);
-  });
-
-  it("builds and filters D2 symbol entries from object source ranges", () => {
-    const symbols = buildD2SymbolEntries([
-      {
-        id: "container.api",
-        kind: "shape",
-        label: "API",
-        sourceRanges: [{ file: "main.d2", startLine: 3, startColumn: 5, endLine: 3, endColumn: 8 }],
-        preview: {},
-      },
-      {
-        id: "api -> db",
-        kind: "connection",
-        src: "api",
-        dst: "db",
-        sourceRanges: [{ file: "main.d2", startLine: 1, startColumn: 1, endLine: 1, endColumn: 10 }],
-        preview: {},
-      },
-      {
-        id: "external",
-        kind: "shape",
-        sourceRanges: [],
-        preview: {},
-      },
-    ]);
-
-    expect(symbols.map((symbol) => symbol.name)).toEqual(["api -> db", "api"]);
-    expect(symbols[1]).toMatchObject({
-      id: "container.api",
-      detail: "container.api - API",
-      line: 3,
-      column: 5,
-    });
-    expect(filterD2Symbols(symbols, "shape api").map((symbol) => symbol.id)).toEqual([
-      "container.api",
-    ]);
   });
 
   it("adds explicit dimensions from a root SVG viewBox", () => {

@@ -1,5 +1,5 @@
-import { sampleSource, tabsStorageKey } from "./constants";
-import type { D2Tab, StoredTabs } from "./types";
+import { sampleSource, tabsStorageKey } from "../../constants";
+import type { D2Tab, StoredTabs } from "../../types";
 
 export function isTabUnsaved(tab: D2Tab) {
   return tab.source !== tab.savedSource;

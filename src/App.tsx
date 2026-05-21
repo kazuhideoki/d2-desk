@@ -17,14 +17,35 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { BottomPanel } from "./components/BottomPanel";
-import { CommandPalette } from "./components/CommandPalette";
-import { EditorPane } from "./components/EditorPane";
-import { PreviewPane, type PreviewZoomMode } from "./components/PreviewPane";
-import { TabBar } from "./components/TabBar";
-import { Toolbar, type ToolbarCommand } from "./components/Toolbar";
-import { WorkspaceManager } from "./components/WorkspaceManager";
-import { isCommandEnabled, type AppCommand } from "./commands";
+import { loadInitialSession, type InitialSession } from "./app/initialSession";
+import { CommandPalette } from "./features/command-palette/CommandPalette";
+import { isCommandEnabled, type AppCommand } from "./shared/commands";
+import { EditorPane } from "./features/editor/EditorPane";
+import { objectIdAtPosition } from "./features/editor/sourceRanges";
+import {
+  completionPreviewSource,
+  isD2IconValueCompletionPosition,
+  monacoCompletionLabelText,
+  pickD2IconCompletion,
+  pickD2IconCompletionByLabel,
+  previewSourceWithInsertText,
+  rememberSuggestPreview,
+  suggestPreviewCacheKey,
+} from "./features/editor/suggestPreview";
+import { filterWorkspaceFiles } from "./features/file-palette/workspaceFileSearch";
+import {
+  WorkspaceFilePalette,
+  type WorkspaceFilePaletteState,
+} from "./features/file-palette/WorkspaceFilePalette";
+import { PreviewPane, type PreviewZoomMode } from "./features/preview/PreviewPane";
+import { RenameNodeDialog, type RenameDialogState } from "./features/rename-node/RenameNodeDialog";
+import { BottomPanel } from "./features/status/BottomPanel";
+import { SymbolPalette, type SymbolPaletteState } from "./features/symbol-palette/SymbolPalette";
+import {
+  buildD2SymbolEntries,
+  filterD2Symbols,
+} from "./features/symbol-palette/symbolSearch";
+import { TabBar } from "./features/tabs/TabBar";
 import { baseEditorFontSize, baseEditorLineHeight } from "./constants";
 import {
   configureD2Language,
@@ -39,7 +60,8 @@ import {
   loadActiveTabId,
   loadTabs,
   writeStoredTabs,
-} from "./tabs";
+} from "./features/tabs/tabs";
+import { Toolbar, type ToolbarCommand } from "./features/toolbar/Toolbar";
 import type {
   CompileResult,
   D2CompletionItem,
@@ -47,19 +69,16 @@ import type {
   ExportResult,
   OpenedD2File,
   SavedD2File,
-  SourceRange,
   StoredWorkspaces,
   WorkspaceFileEntry,
 } from "./types";
 import {
   baseName,
-  buildD2SymbolEntries,
   decreaseZoom,
   downloadBytes,
   downloadURL,
   ensureD2FileName,
   fileNameFromPath,
-  filterD2Symbols,
   getDiagramViewBox,
   increaseZoom,
   moveSelectionIndex,
@@ -68,20 +87,13 @@ import {
 import {
   activateWorkspace,
   addOrTouchWorkspace,
-  getActiveWorkspace,
   loadWorkspaceActiveTabId,
-  loadWorkspaces,
   loadWorkspaceTabs,
   removeWorkspace,
   writeWorkspaceTabs,
-} from "./workspaces";
+} from "./features/workspaces/workspaces";
+import { WorkspaceManager } from "./features/workspaces/WorkspaceManager";
 import "./App.css";
-
-type InitialSession = {
-  workspaceState: StoredWorkspaces;
-  tabs: D2Tab[];
-  activeTabId: string;
-};
 
 type CursorObjectLookup = {
   modelVersionId: number | null;
@@ -95,29 +107,10 @@ type RenameNodeResult = {
   id: string;
 };
 
-type RenameDialogState = {
-  id: string;
-  value: string;
-  error: string | null;
-};
-
 type EditorCursorSnapshot = {
   viewState: Monaco.editor.ICodeEditorViewState | null;
   selections: Monaco.ISelection[] | null;
   position: Monaco.IPosition | null;
-};
-
-type WorkspaceFilePaletteState = {
-  query: string;
-  files: WorkspaceFileEntry[];
-  selectedIndex: number;
-  loading: boolean;
-  error: string | null;
-};
-
-type SymbolPaletteState = {
-  query: string;
-  selectedIndex: number;
 };
 
 type CommandPaletteState = {
@@ -157,202 +150,11 @@ type InternalSuggestController = {
 };
 
 const nodeRenamePattern = /^[A-Za-z0-9_-]+$/;
-const workspaceFileResultLimit = 120;
-const maxSuggestPreviewCacheEntries = 50;
 const tabPersistenceDelayMs = 400;
 
 function lastD2IdSegment(id: string) {
   const parts = id.split(".");
   return parts[parts.length - 1] ?? id;
-}
-
-function loadInitialSession(): InitialSession {
-  const workspaceState = loadWorkspaces();
-  const activeWorkspace = getActiveWorkspace(workspaceState);
-  if (activeWorkspace) {
-    const tabs = loadWorkspaceTabs(activeWorkspace);
-    return {
-      workspaceState,
-      tabs,
-      activeTabId: loadWorkspaceActiveTabId(activeWorkspace, tabs),
-    };
-  }
-
-  const tabs = loadTabs();
-  return {
-    workspaceState,
-    tabs,
-    activeTabId: loadActiveTabId(tabs),
-  };
-}
-
-function sourceRangeContains(range: SourceRange, lineNumber: number, column: number) {
-  if (lineNumber < range.startLine || lineNumber > range.endLine) {
-    return false;
-  }
-  if (lineNumber === range.startLine && column < range.startColumn) {
-    return false;
-  }
-  if (lineNumber === range.endLine && column > range.endColumn) {
-    return false;
-  }
-  return true;
-}
-
-function objectIdAtPosition(
-  objects: CompileResult["objects"],
-  lineNumber: number,
-  column: number,
-) {
-  let bestMatch: { id: string; size: number } | null = null;
-  for (const object of objects) {
-    for (const range of object.sourceRanges ?? []) {
-      if (sourceRangeContains(range, lineNumber, column)) {
-        const size =
-          range.startLine === range.endLine
-            ? range.endColumn - range.startColumn
-            : (range.endLine - range.startLine) * 10000 + range.endColumn - range.startColumn;
-        if (!bestMatch || size < bestMatch.size) {
-          bestMatch = { id: object.id, size };
-        }
-      }
-    }
-  }
-  return bestMatch?.id ?? null;
-}
-
-function normalizeWorkspaceFileQuery(value: string) {
-  return value.trim().toLowerCase();
-}
-
-function workspaceFileMatchScore(file: WorkspaceFileEntry, query: string) {
-  if (!query) return file.relativePath.length;
-
-  const relativePath = file.relativePath.toLowerCase();
-  const fileName = file.fileName.toLowerCase();
-  const tokens = query.split(/\s+/).filter(Boolean);
-  if (tokens.some((token) => !relativePath.includes(token))) {
-    return Number.POSITIVE_INFINITY;
-  }
-
-  let score = relativePath.length;
-  if (relativePath === query) score -= 1000;
-  if (fileName === query) score -= 900;
-  if (fileName.startsWith(query)) score -= 700;
-  if (relativePath.startsWith(query)) score -= 500;
-  score += tokens.reduce((total, token) => total + relativePath.indexOf(token), 0);
-  return score;
-}
-
-function filterWorkspaceFiles(files: WorkspaceFileEntry[], query: string) {
-  const normalizedQuery = normalizeWorkspaceFileQuery(query);
-  return files
-    .map((file) => ({ file, score: workspaceFileMatchScore(file, normalizedQuery) }))
-    .filter((item) => Number.isFinite(item.score))
-    .sort((left, right) =>
-      left.score === right.score
-        ? left.file.relativePath.localeCompare(right.file.relativePath)
-        : left.score - right.score,
-    )
-    .slice(0, workspaceFileResultLimit)
-    .map((item) => item.file);
-}
-
-function completionPreviewSource(
-  monaco: typeof Monaco,
-  model: Monaco.editor.ITextModel,
-  completion: Monaco.languages.CompletionItem,
-) {
-  if (
-    completion.insertTextRules &&
-    completion.insertTextRules & monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
-  ) {
-    return null;
-  }
-  if (completion.additionalTextEdits?.length) {
-    return null;
-  }
-
-  const completionRange =
-    "replace" in completion.range ? completion.range.replace : completion.range;
-  const range = model.validateRange(completionRange);
-  const source = model.getValue();
-  const startOffset = model.getOffsetAt({
-    lineNumber: range.startLineNumber,
-    column: range.startColumn,
-  });
-  const endOffset = model.getOffsetAt({
-    lineNumber: range.endLineNumber,
-    column: range.endColumn,
-  });
-
-  return `${source.slice(0, startOffset)}${completion.insertText}${source.slice(endOffset)}`;
-}
-
-function previewSourceWithInsertText(
-  model: Monaco.editor.ITextModel,
-  range: Monaco.IRange,
-  insertText: string,
-) {
-  const validatedRange = model.validateRange(range);
-  const source = model.getValue();
-  const startOffset = model.getOffsetAt({
-    lineNumber: validatedRange.startLineNumber,
-    column: validatedRange.startColumn,
-  });
-  const endOffset = model.getOffsetAt({
-    lineNumber: validatedRange.endLineNumber,
-    column: validatedRange.endColumn,
-  });
-  return `${source.slice(0, startOffset)}${insertText}${source.slice(endOffset)}`;
-}
-
-function isD2IconValueCompletionPosition(lineContent: string, column: number) {
-  const linePrefix = lineContent.slice(0, Math.max(0, column - 1));
-  return /(?:^|[{\s;])(?:[\w"'-]+(?:\.[\w-]+)*\.)?icon\s*:\s*[\w-]*$/.test(linePrefix);
-}
-
-function pickD2IconCompletion(completions: D2CompletionItem[], typedText: string) {
-  const typed = typedText.toLowerCase();
-  const iconCompletions = completions
-    .filter((completion) => completion.kind === "icon")
-    .filter((completion) => {
-      if (!typed) return true;
-      const searchable = `${completion.label} ${completion.filterText ?? ""}`.toLowerCase();
-      return searchable.includes(typed);
-    })
-    .sort((left, right) => left.label.localeCompare(right.label));
-  return iconCompletions[0] ?? null;
-}
-
-function pickD2IconCompletionByLabel(completions: D2CompletionItem[], label: string) {
-  return (
-    completions.find(
-      (completion) => completion.kind === "icon" && completion.label.toLowerCase() === label,
-    ) ?? null
-  );
-}
-
-function monacoCompletionLabelText(completion: Monaco.languages.CompletionItem) {
-  return typeof completion.label === "string" ? completion.label : completion.label.label;
-}
-
-function suggestPreviewCacheKey(params: unknown) {
-  return JSON.stringify(params);
-}
-
-function rememberSuggestPreview(
-  cache: Map<string, CompileResult>,
-  key: string,
-  result: CompileResult,
-) {
-  cache.delete(key);
-  cache.set(key, result);
-  while (cache.size > maxSuggestPreviewCacheEntries) {
-    const oldestKey = cache.keys().next().value;
-    if (oldestKey === undefined) break;
-    cache.delete(oldestKey);
-  }
 }
 
 function App() {
@@ -2350,330 +2152,83 @@ function App() {
       ) : null}
 
       {renameDialog ? (
-        <div className="modal-backdrop" role="presentation">
-          <form
-            className="rename-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="rename-dialog-title"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void commitRenameNode();
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.preventDefault();
-                setRenameDialog(null);
-                renameEditorCursorSnapshotRef.current = null;
-                setStatus("Rename canceled");
-                window.requestAnimationFrame(() => editorRef.current?.focus());
-              }
-            }}
-          >
-            <header className="rename-dialog-header">
-              <h2 id="rename-dialog-title">Rename node</h2>
-              <span>{renameDialog.id}</span>
-            </header>
-            <input
-              ref={renameInputRef}
-              aria-label="Node name"
-              value={renameDialog.value}
-              onChange={(event) =>
-                setRenameDialog((current) =>
-                  current ? { ...current, value: event.target.value, error: null } : current,
-                )
-              }
-            />
-            {renameDialog.error ? <p className="rename-dialog-error">{renameDialog.error}</p> : null}
-            <footer className="rename-dialog-actions">
-              <button
-                className="dialog-button secondary"
-                type="button"
-                onClick={() => {
-                  setRenameDialog(null);
-                  renameEditorCursorSnapshotRef.current = null;
-                  setStatus("Rename canceled");
-                  window.requestAnimationFrame(() => editorRef.current?.focus());
-                }}
-              >
-                Cancel
-              </button>
-              <button className="dialog-button primary" type="submit">
-                Rename
-              </button>
-            </footer>
-          </form>
-        </div>
+        <RenameNodeDialog
+          state={renameDialog}
+          inputRef={renameInputRef}
+          onSubmit={() => {
+            void commitRenameNode();
+          }}
+          onCancel={() => {
+            setRenameDialog(null);
+            renameEditorCursorSnapshotRef.current = null;
+            setStatus("Rename canceled");
+            window.requestAnimationFrame(() => editorRef.current?.focus());
+          }}
+          onValueChange={(value) =>
+            setRenameDialog((current) =>
+              current ? { ...current, value, error: null } : current,
+            )
+          }
+        />
       ) : null}
 
       {filePalette ? (
-        <div className="modal-backdrop palette-backdrop" role="presentation">
-          <section
-            className="file-palette"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="file-palette-title"
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.preventDefault();
-                setFilePalette(null);
-                setStatus("Open workspace file canceled");
-                window.requestAnimationFrame(() => editorRef.current?.focus());
-                return;
-              }
-              const shouldMoveDown =
-                event.key === "ArrowDown" ||
-                (event.key.toLowerCase() === "n" &&
-                  event.ctrlKey &&
-                  !event.metaKey &&
-                  !event.altKey &&
-                  !event.shiftKey);
-              const shouldMoveUp =
-                event.key === "ArrowUp" ||
-                (event.key.toLowerCase() === "p" &&
-                  event.ctrlKey &&
-                  !event.metaKey &&
-                  !event.altKey &&
-                  !event.shiftKey);
-              if (shouldMoveDown) {
-                event.preventDefault();
-                setFilePalette((current) =>
-                  current
-                    ? {
-                        ...current,
-                        selectedIndex: moveSelectionIndex(
-                          current.selectedIndex,
-                          1,
-                          filteredWorkspaceFiles.length,
-                        ),
-                      }
-                    : current,
-                );
-                return;
-              }
-              if (shouldMoveUp) {
-                event.preventDefault();
-                setFilePalette((current) =>
-                  current
-                    ? {
-                        ...current,
-                        selectedIndex: moveSelectionIndex(
-                          current.selectedIndex,
-                          -1,
-                          filteredWorkspaceFiles.length,
-                        ),
-                      }
-                    : current,
-                );
-                return;
-              }
-              if (event.key === "Enter") {
-                event.preventDefault();
-                const selectedFile =
-                  filteredWorkspaceFiles[
-                    Math.min(filePalette.selectedIndex, filteredWorkspaceFiles.length - 1)
-                  ];
-                if (selectedFile) {
-                  void openWorkspaceFile(selectedFile);
-                }
-              }
-            }}
-          >
-            <header className="file-palette-header">
-              <h2 id="file-palette-title">Open Workspace File</h2>
-              <span>{filePalette.files.length} files</span>
-            </header>
-            <input
-              ref={filePaletteInputRef}
-              aria-label="Search workspace files"
-              placeholder="Search files"
-              value={filePalette.query}
-              onChange={(event) =>
-                setFilePalette((current) =>
-                  current
-                    ? {
-                        ...current,
-                        query: event.target.value,
-                        selectedIndex: 0,
-                      }
-                    : current,
-                )
-              }
-            />
-            <div className="file-palette-results" role="listbox" aria-label="Workspace files">
-              {filePalette.loading ? (
-                <div className="file-palette-message">Indexing...</div>
-              ) : filePalette.error ? (
-                <div className="file-palette-message error">{filePalette.error}</div>
-              ) : filteredWorkspaceFiles.length === 0 ? (
-                <div className="file-palette-message">No matching files</div>
-              ) : (
-                filteredWorkspaceFiles.map((file, index) => {
-                  const isSelected =
-                    index === Math.min(filePalette.selectedIndex, filteredWorkspaceFiles.length - 1);
-                  return (
-                    <button
-                      className={`file-palette-row${isSelected ? " selected" : ""}`}
-                      key={file.path}
-                      type="button"
-                      role="option"
-                      aria-selected={isSelected}
-                      title={file.path}
-                      onMouseEnter={() =>
-                        setFilePalette((current) =>
-                          current ? { ...current, selectedIndex: index } : current,
-                        )
-                      }
-                      onClick={() => {
-                        void openWorkspaceFile(file);
-                      }}
-                    >
-                      <span className="file-palette-name">{file.fileName}</span>
-                      <span className="file-palette-path">{file.directory}</span>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </section>
-        </div>
+        <WorkspaceFilePalette
+          state={filePalette}
+          filteredFiles={filteredWorkspaceFiles}
+          inputRef={filePaletteInputRef}
+          onCancel={() => {
+            setFilePalette(null);
+            setStatus("Open workspace file canceled");
+            window.requestAnimationFrame(() => editorRef.current?.focus());
+          }}
+          onQueryChange={(query) =>
+            setFilePalette((current) =>
+              current
+                ? {
+                    ...current,
+                    query,
+                    selectedIndex: 0,
+                  }
+                : current,
+            )
+          }
+          onSelectedIndexChange={(selectedIndex) =>
+            setFilePalette((current) => (current ? { ...current, selectedIndex } : current))
+          }
+          onOpenFile={(file) => {
+            void openWorkspaceFile(file);
+          }}
+        />
       ) : null}
 
       {symbolPalette ? (
-        <div className="modal-backdrop palette-backdrop" role="presentation">
-          <section
-            className="file-palette"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="symbol-palette-title"
-            onKeyDown={(event) => {
-              if (event.nativeEvent.isComposing || event.key === "Process") {
-                return;
-              }
-              if (event.key === "Escape") {
-                event.preventDefault();
-                setSymbolPalette(null);
-                setStatus("Symbol search canceled");
-                window.requestAnimationFrame(() => editorRef.current?.focus());
-                return;
-              }
-              const shouldMoveDown =
-                event.key === "ArrowDown" ||
-                (event.key.toLowerCase() === "n" &&
-                  event.ctrlKey &&
-                  !event.metaKey &&
-                  !event.altKey &&
-                  !event.shiftKey);
-              const shouldMoveUp =
-                event.key === "ArrowUp" ||
-                (event.key.toLowerCase() === "p" &&
-                  event.ctrlKey &&
-                  !event.metaKey &&
-                  !event.altKey &&
-                  !event.shiftKey);
-              if (shouldMoveDown) {
-                event.preventDefault();
-                setSymbolPalette((current) =>
-                  current
-                    ? {
-                        ...current,
-                        selectedIndex: moveSelectionIndex(
-                          current.selectedIndex,
-                          1,
-                          filteredFileSymbols.length,
-                        ),
-                      }
-                    : current,
-                );
-                return;
-              }
-              if (shouldMoveUp) {
-                event.preventDefault();
-                setSymbolPalette((current) =>
-                  current
-                    ? {
-                        ...current,
-                        selectedIndex: moveSelectionIndex(
-                          current.selectedIndex,
-                          -1,
-                          filteredFileSymbols.length,
-                        ),
-                      }
-                    : current,
-                );
-                return;
-              }
-              if (event.key === "Enter") {
-                event.preventDefault();
-                const selectedSymbol =
-                  filteredFileSymbols[
-                    Math.min(symbolPalette.selectedIndex, filteredFileSymbols.length - 1)
-                  ];
-                if (selectedSymbol) {
-                  goToSymbol(selectedSymbol.id);
-                }
-              }
-            }}
-          >
-            <header className="file-palette-header">
-              <h2 id="symbol-palette-title">Go to Symbol in File</h2>
-              <span>{fileSymbols.length} symbols</span>
-            </header>
-            <input
-              ref={symbolPaletteInputRef}
-              autoFocus
-              aria-label="Search file symbols"
-              placeholder="Search symbols"
-              value={symbolPalette.query}
-              onChange={(event) =>
-                setSymbolPalette((current) =>
-                  current
-                    ? {
-                        ...current,
-                        query: event.target.value,
-                        selectedIndex: 0,
-                      }
-                    : current,
-                )
-              }
-            />
-            <div className="file-palette-results" role="listbox" aria-label="File symbols">
-              {filteredFileSymbols.length === 0 ? (
-                <div className="file-palette-message">No matching symbols</div>
-              ) : (
-                filteredFileSymbols.map((symbol, index) => {
-                  const isSelected =
-                    index === Math.min(symbolPalette.selectedIndex, filteredFileSymbols.length - 1);
-                  return (
-                    <button
-                      className={`file-palette-row symbol-palette-row${
-                        isSelected ? " selected" : ""
-                      }`}
-                      key={`${symbol.id}:${symbol.line}:${symbol.column}`}
-                      type="button"
-                      role="option"
-                      aria-selected={isSelected}
-                      title={symbol.detail}
-                      onMouseEnter={() =>
-                        setSymbolPalette((current) =>
-                          current ? { ...current, selectedIndex: index } : current,
-                        )
-                      }
-                      onClick={() => {
-                        goToSymbol(symbol.id);
-                      }}
-                    >
-                      <span className={`symbol-palette-kind ${symbol.kind}`}>{symbol.kind}</span>
-                      <span className="file-palette-name">{symbol.name}</span>
-                      <span className="file-palette-path">{symbol.detail}</span>
-                      <span className="symbol-palette-line">:{symbol.line}</span>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </section>
-        </div>
+        <SymbolPalette
+          state={symbolPalette}
+          symbols={fileSymbols}
+          filteredSymbols={filteredFileSymbols}
+          inputRef={symbolPaletteInputRef}
+          onCancel={() => {
+            setSymbolPalette(null);
+            setStatus("Symbol search canceled");
+            window.requestAnimationFrame(() => editorRef.current?.focus());
+          }}
+          onQueryChange={(query) =>
+            setSymbolPalette((current) =>
+              current
+                ? {
+                    ...current,
+                    query,
+                    selectedIndex: 0,
+                  }
+                : current,
+            )
+          }
+          onSelectedIndexChange={(selectedIndex) =>
+            setSymbolPalette((current) => (current ? { ...current, selectedIndex } : current))
+          }
+          onGoToSymbol={goToSymbol}
+        />
       ) : null}
 
       <TabBar

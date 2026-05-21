@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { sampleSource, tabsStorageKey } from "./constants";
+import { sampleSource, tabsStorageKey } from "../../constants";
 import {
   createEmptyTab,
   createTab,
@@ -10,7 +10,7 @@ import {
   normalizeTab,
   writeStoredTabs,
 } from "./tabs";
-import type { D2Tab } from "./types";
+import type { D2Tab } from "../../types";
 
 function createMemoryStorage(): Storage {
   const store = new Map<string, string>();

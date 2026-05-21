@@ -1,6 +1,6 @@
-import { workspacesStorageKey } from "./constants";
-import { createTab, normalizeTab } from "./tabs";
-import type { D2Tab, StoredWorkspaces, Workspace } from "./types";
+import { workspacesStorageKey } from "../../constants";
+import { createTab, normalizeTab } from "../tabs/tabs";
+import type { D2Tab, StoredWorkspaces, Workspace } from "../../types";
 
 export function loadWorkspaces(): StoredWorkspaces {
   const stored = localStorage.getItem(workspacesStorageKey);

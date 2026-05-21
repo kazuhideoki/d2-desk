@@ -1,7 +1,7 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { ZoomIn, ZoomOut } from "lucide-react";
-import { RepeatButton } from "./RepeatButton";
+import { RepeatButton } from "../../shared/components/RepeatButton";
 
 type EditorPaneProps = {
   activeTabId: string;
