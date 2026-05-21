@@ -419,9 +419,9 @@ select {
 
 .tab {
   display: inline-flex;
-  width: 168px;
-  min-width: 120px;
-  max-width: 220px;
+  width: 336px;
+  min-width: 240px;
+  max-width: 440px;
   height: 30px;
   align-items: center;
   justify-content: flex-start;
