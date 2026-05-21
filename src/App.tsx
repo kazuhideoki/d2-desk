@@ -24,6 +24,18 @@ import { PreviewPane, type PreviewZoomMode } from "./components/PreviewPane";
 import { TabBar } from "./components/TabBar";
 import { Toolbar, type ToolbarCommand } from "./components/Toolbar";
 import { WorkspaceManager } from "./components/WorkspaceManager";
+import { objectIdAtPosition } from "./app/sourceRanges";
+import {
+  completionPreviewSource,
+  isD2IconValueCompletionPosition,
+  monacoCompletionLabelText,
+  pickD2IconCompletion,
+  pickD2IconCompletionByLabel,
+  previewSourceWithInsertText,
+  rememberSuggestPreview,
+  suggestPreviewCacheKey,
+} from "./app/suggestPreview";
+import { filterWorkspaceFiles } from "./app/workspaceFileSearch";
 import { isCommandEnabled, type AppCommand } from "./commands";
 import { baseEditorFontSize, baseEditorLineHeight } from "./constants";
 import {
@@ -47,7 +59,6 @@ import type {
   ExportResult,
   OpenedD2File,
   SavedD2File,
-  SourceRange,
   StoredWorkspaces,
   WorkspaceFileEntry,
 } from "./types";
@@ -157,8 +168,6 @@ type InternalSuggestController = {
 };
 
 const nodeRenamePattern = /^[A-Za-z0-9_-]+$/;
-const workspaceFileResultLimit = 120;
-const maxSuggestPreviewCacheEntries = 50;
 const tabPersistenceDelayMs = 400;
 
 function lastD2IdSegment(id: string) {
@@ -184,175 +193,6 @@ function loadInitialSession(): InitialSession {
     tabs,
     activeTabId: loadActiveTabId(tabs),
   };
-}
-
-function sourceRangeContains(range: SourceRange, lineNumber: number, column: number) {
-  if (lineNumber < range.startLine || lineNumber > range.endLine) {
-    return false;
-  }
-  if (lineNumber === range.startLine && column < range.startColumn) {
-    return false;
-  }
-  if (lineNumber === range.endLine && column > range.endColumn) {
-    return false;
-  }
-  return true;
-}
-
-function objectIdAtPosition(
-  objects: CompileResult["objects"],
-  lineNumber: number,
-  column: number,
-) {
-  let bestMatch: { id: string; size: number } | null = null;
-  for (const object of objects) {
-    for (const range of object.sourceRanges ?? []) {
-      if (sourceRangeContains(range, lineNumber, column)) {
-        const size =
-          range.startLine === range.endLine
-            ? range.endColumn - range.startColumn
-            : (range.endLine - range.startLine) * 10000 + range.endColumn - range.startColumn;
-        if (!bestMatch || size < bestMatch.size) {
-          bestMatch = { id: object.id, size };
-        }
-      }
-    }
-  }
-  return bestMatch?.id ?? null;
-}
-
-function normalizeWorkspaceFileQuery(value: string) {
-  return value.trim().toLowerCase();
-}
-
-function workspaceFileMatchScore(file: WorkspaceFileEntry, query: string) {
-  if (!query) return file.relativePath.length;
-
-  const relativePath = file.relativePath.toLowerCase();
-  const fileName = file.fileName.toLowerCase();
-  const tokens = query.split(/\s+/).filter(Boolean);
-  if (tokens.some((token) => !relativePath.includes(token))) {
-    return Number.POSITIVE_INFINITY;
-  }
-
-  let score = relativePath.length;
-  if (relativePath === query) score -= 1000;
-  if (fileName === query) score -= 900;
-  if (fileName.startsWith(query)) score -= 700;
-  if (relativePath.startsWith(query)) score -= 500;
-  score += tokens.reduce((total, token) => total + relativePath.indexOf(token), 0);
-  return score;
-}
-
-function filterWorkspaceFiles(files: WorkspaceFileEntry[], query: string) {
-  const normalizedQuery = normalizeWorkspaceFileQuery(query);
-  return files
-    .map((file) => ({ file, score: workspaceFileMatchScore(file, normalizedQuery) }))
-    .filter((item) => Number.isFinite(item.score))
-    .sort((left, right) =>
-      left.score === right.score
-        ? left.file.relativePath.localeCompare(right.file.relativePath)
-        : left.score - right.score,
-    )
-    .slice(0, workspaceFileResultLimit)
-    .map((item) => item.file);
-}
-
-function completionPreviewSource(
-  monaco: typeof Monaco,
-  model: Monaco.editor.ITextModel,
-  completion: Monaco.languages.CompletionItem,
-) {
-  if (
-    completion.insertTextRules &&
-    completion.insertTextRules & monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
-  ) {
-    return null;
-  }
-  if (completion.additionalTextEdits?.length) {
-    return null;
-  }
-
-  const completionRange =
-    "replace" in completion.range ? completion.range.replace : completion.range;
-  const range = model.validateRange(completionRange);
-  const source = model.getValue();
-  const startOffset = model.getOffsetAt({
-    lineNumber: range.startLineNumber,
-    column: range.startColumn,
-  });
-  const endOffset = model.getOffsetAt({
-    lineNumber: range.endLineNumber,
-    column: range.endColumn,
-  });
-
-  return `${source.slice(0, startOffset)}${completion.insertText}${source.slice(endOffset)}`;
-}
-
-function previewSourceWithInsertText(
-  model: Monaco.editor.ITextModel,
-  range: Monaco.IRange,
-  insertText: string,
-) {
-  const validatedRange = model.validateRange(range);
-  const source = model.getValue();
-  const startOffset = model.getOffsetAt({
-    lineNumber: validatedRange.startLineNumber,
-    column: validatedRange.startColumn,
-  });
-  const endOffset = model.getOffsetAt({
-    lineNumber: validatedRange.endLineNumber,
-    column: validatedRange.endColumn,
-  });
-  return `${source.slice(0, startOffset)}${insertText}${source.slice(endOffset)}`;
-}
-
-function isD2IconValueCompletionPosition(lineContent: string, column: number) {
-  const linePrefix = lineContent.slice(0, Math.max(0, column - 1));
-  return /(?:^|[{\s;])(?:[\w"'-]+(?:\.[\w-]+)*\.)?icon\s*:\s*[\w-]*$/.test(linePrefix);
-}
-
-function pickD2IconCompletion(completions: D2CompletionItem[], typedText: string) {
-  const typed = typedText.toLowerCase();
-  const iconCompletions = completions
-    .filter((completion) => completion.kind === "icon")
-    .filter((completion) => {
-      if (!typed) return true;
-      const searchable = `${completion.label} ${completion.filterText ?? ""}`.toLowerCase();
-      return searchable.includes(typed);
-    })
-    .sort((left, right) => left.label.localeCompare(right.label));
-  return iconCompletions[0] ?? null;
-}
-
-function pickD2IconCompletionByLabel(completions: D2CompletionItem[], label: string) {
-  return (
-    completions.find(
-      (completion) => completion.kind === "icon" && completion.label.toLowerCase() === label,
-    ) ?? null
-  );
-}
-
-function monacoCompletionLabelText(completion: Monaco.languages.CompletionItem) {
-  return typeof completion.label === "string" ? completion.label : completion.label.label;
-}
-
-function suggestPreviewCacheKey(params: unknown) {
-  return JSON.stringify(params);
-}
-
-function rememberSuggestPreview(
-  cache: Map<string, CompileResult>,
-  key: string,
-  result: CompileResult,
-) {
-  cache.delete(key);
-  cache.set(key, result);
-  while (cache.size > maxSuggestPreviewCacheEntries) {
-    const oldestKey = cache.keys().next().value;
-    if (oldestKey === undefined) break;
-    cache.delete(oldestKey);
-  }
 }
 
 function App() {
