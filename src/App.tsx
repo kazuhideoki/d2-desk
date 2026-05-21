@@ -392,6 +392,7 @@ function App() {
   const closeTabInFlightRef = useRef(false);
   const quitInFlightRef = useRef(false);
   const activeIdRef = useRef(activeId);
+  const hoverIdRef = useRef(hoverId);
   const compileResultRef = useRef(compileResult);
 
   const activeTab = useMemo(
@@ -454,6 +455,10 @@ function App() {
   useEffect(() => {
     activeIdRef.current = activeId;
   }, [activeId]);
+
+  useEffect(() => {
+    hoverIdRef.current = hoverId;
+  }, [hoverId]);
 
   useEffect(() => {
     compileResultRef.current = compileResult;
@@ -1921,6 +1926,10 @@ function App() {
     ) {
       return;
     }
+    if (hoverIdRef.current !== null) {
+      hoverIdRef.current = null;
+      setHoverId(null);
+    }
     setActiveId((currentActiveId) =>
       currentActiveId === nextActiveId ? currentActiveId : nextActiveId,
     );
@@ -2445,9 +2454,14 @@ function App() {
           zoom={previewZoom}
           activeId={activeId}
           hoverId={hoverId}
-          onHover={setHoverId}
+          onHover={(id) => {
+            hoverIdRef.current = id;
+            setHoverId(id);
+          }}
           onSelect={(id) => {
             invalidateCursorLookup();
+            hoverIdRef.current = null;
+            setHoverId(null);
             setActiveId(id);
             highlightObject(id, true);
           }}
