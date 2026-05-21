@@ -1,6 +1,6 @@
 import type { RefObject } from "react";
-import type { D2SymbolEntry } from "../../utils";
 import { moveSelectionIndex } from "../../utils";
+import type { D2SymbolEntry } from "./symbolSearch";
 
 export type SymbolPaletteState = {
   query: string;

@@ -3,7 +3,7 @@ import {
   FileText,
   type LucideIcon,
 } from "lucide-react";
-import type { AppCommand } from "../command-palette/commands";
+import type { AppCommand } from "../../shared/commands";
 import type { Workspace } from "../../types";
 import { RepeatButton } from "../../shared/components/RepeatButton";
 

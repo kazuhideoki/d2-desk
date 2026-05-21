@@ -17,8 +17,9 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
+import { loadInitialSession, type InitialSession } from "./app/initialSession";
 import { CommandPalette } from "./features/command-palette/CommandPalette";
-import { isCommandEnabled, type AppCommand } from "./features/command-palette/commands";
+import { isCommandEnabled, type AppCommand } from "./shared/commands";
 import { EditorPane } from "./features/editor/EditorPane";
 import { objectIdAtPosition } from "./features/editor/sourceRanges";
 import {
@@ -40,6 +41,10 @@ import { PreviewPane, type PreviewZoomMode } from "./features/preview/PreviewPan
 import { RenameNodeDialog, type RenameDialogState } from "./features/rename-node/RenameNodeDialog";
 import { BottomPanel } from "./features/status/BottomPanel";
 import { SymbolPalette, type SymbolPaletteState } from "./features/symbol-palette/SymbolPalette";
+import {
+  buildD2SymbolEntries,
+  filterD2Symbols,
+} from "./features/symbol-palette/symbolSearch";
 import { TabBar } from "./features/tabs/TabBar";
 import { baseEditorFontSize, baseEditorLineHeight } from "./constants";
 import {
@@ -69,13 +74,11 @@ import type {
 } from "./types";
 import {
   baseName,
-  buildD2SymbolEntries,
   decreaseZoom,
   downloadBytes,
   downloadURL,
   ensureD2FileName,
   fileNameFromPath,
-  filterD2Symbols,
   getDiagramViewBox,
   increaseZoom,
   moveSelectionIndex,
@@ -84,21 +87,13 @@ import {
 import {
   activateWorkspace,
   addOrTouchWorkspace,
-  getActiveWorkspace,
   loadWorkspaceActiveTabId,
-  loadWorkspaces,
   loadWorkspaceTabs,
   removeWorkspace,
   writeWorkspaceTabs,
 } from "./features/workspaces/workspaces";
 import { WorkspaceManager } from "./features/workspaces/WorkspaceManager";
 import "./App.css";
-
-type InitialSession = {
-  workspaceState: StoredWorkspaces;
-  tabs: D2Tab[];
-  activeTabId: string;
-};
 
 type CursorObjectLookup = {
   modelVersionId: number | null;
@@ -160,26 +155,6 @@ const tabPersistenceDelayMs = 400;
 function lastD2IdSegment(id: string) {
   const parts = id.split(".");
   return parts[parts.length - 1] ?? id;
-}
-
-function loadInitialSession(): InitialSession {
-  const workspaceState = loadWorkspaces();
-  const activeWorkspace = getActiveWorkspace(workspaceState);
-  if (activeWorkspace) {
-    const tabs = loadWorkspaceTabs(activeWorkspace);
-    return {
-      workspaceState,
-      tabs,
-      activeTabId: loadWorkspaceActiveTabId(activeWorkspace, tabs),
-    };
-  }
-
-  const tabs = loadTabs();
-  return {
-    workspaceState,
-    tabs,
-    activeTabId: loadActiveTabId(tabs),
-  };
 }
 
 function App() {
