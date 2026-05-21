@@ -240,6 +240,6 @@ func arrowheadAdjustment(start, end *geo.Point, arrowhead d2target.Arrowhead, ed
 }
 
 func nilFallbackDiagram(source string) *d2target.Diagram {
-	diagram, _, _ := render(source, newCompileContext("", "", nil))
+	diagram, _, _ := render(source, newCompileContext("", "", nil), nil)
 	return diagram
 }

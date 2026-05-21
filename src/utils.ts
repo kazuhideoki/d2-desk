@@ -45,6 +45,14 @@ export function decreaseZoom(value: number) {
   return clampZoom(value - zoomStep);
 }
 
+export function fitWidthZoom(availableWidth: number, contentWidth: number) {
+  if (!Number.isFinite(availableWidth) || !Number.isFinite(contentWidth) || contentWidth <= 0) {
+    return 1;
+  }
+
+  return clampZoom(availableWidth / contentWidth);
+}
+
 export function moveSelectionIndex(currentIndex: number, delta: number, itemCount: number) {
   return Math.min(Math.max(currentIndex + delta, 0), Math.max(itemCount - 1, 0));
 }
@@ -110,10 +118,10 @@ export function filterD2Symbols(symbols: D2SymbolEntry[], query: string) {
 }
 
 export function normalizeSvgSize(svg: string) {
-  if (!svg || /<svg[^>]*\swidth=/.test(svg)) return svg;
   const match = svg.match(/<svg([^>]*)viewBox="([^"]+)"([^>]*)>/);
   if (!match) return svg;
   const [, before, viewBox, after] = match;
+  if (/\swidth=/.test(`${before}${after}`)) return svg;
   const parts = viewBox.split(/\s+/).map(Number);
   if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) return svg;
   const [, , width, height] = parts;
