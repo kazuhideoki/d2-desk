@@ -1,54 +1,38 @@
 import {
   Briefcase,
-  Download,
-  FileDown,
-  FileInput,
   FileText,
-  FolderPlus,
-  Focus,
-  SquareArrowOutUpRight,
-  Settings,
-  Save,
-  Wand2,
-  ZoomIn,
-  ZoomOut,
+  type LucideIcon,
 } from "lucide-react";
+import type { AppCommand } from "../commands";
 import type { Workspace } from "../types";
 import { RepeatButton } from "./RepeatButton";
+
+export type ToolbarCommand = AppCommand & {
+  icon: LucideIcon;
+  toolbarGroup: number;
+};
 
 type ToolbarProps = {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
   onWorkspaceChange: (workspaceId: string | null) => void;
-  onOpenWorkspace: () => void;
-  onManageWorkspaces: () => void;
-  onOpen: () => void;
-  onSave: () => void;
-  onOpenWithEditor: () => void;
-  onFormat: () => void;
-  onZoomOut: () => void;
-  onResetView: () => void;
-  onZoomIn: () => void;
-  onExportSvg: () => void;
-  onExportPng: () => void;
+  workspaceCommands: ToolbarCommand[];
+  toolbarCommands: ToolbarCommand[];
+  onRunCommand: (command: AppCommand) => void;
 };
 
 export function Toolbar({
   workspaces,
   activeWorkspaceId,
   onWorkspaceChange,
-  onOpenWorkspace,
-  onManageWorkspaces,
-  onOpen,
-  onSave,
-  onOpenWithEditor,
-  onFormat,
-  onZoomOut,
-  onResetView,
-  onZoomIn,
-  onExportSvg,
-  onExportPng,
+  workspaceCommands,
+  toolbarCommands,
+  onRunCommand,
 }: ToolbarProps) {
+  const orderedToolbarCommands = [...toolbarCommands].sort(
+    (left, right) => left.toolbarGroup - right.toolbarGroup,
+  );
+
   return (
     <header className="topbar">
       <div className="brand">
@@ -69,43 +53,53 @@ export function Toolbar({
             </option>
           ))}
         </select>
-        <button title="Open workspace folder" onClick={onOpenWorkspace}>
-          <FolderPlus size={16} />
-        </button>
-        <button title="Manage workspaces" onClick={onManageWorkspaces}>
-          <Settings size={16} />
-        </button>
+        {workspaceCommands.map((command) => {
+          const Icon = command.icon;
+          return (
+            <button
+              key={command.id}
+              title={command.shortcut ? `${command.title} (${command.shortcut})` : command.title}
+              onClick={() => onRunCommand(command)}
+              disabled={command.enabled === false}
+            >
+              <Icon size={16} />
+            </button>
+          );
+        })}
       </div>
       <div className="toolbar" role="toolbar">
-        <button title="Open D2 file (Command/Ctrl + O)" onClick={onOpen}>
-          <FileInput size={16} />
-        </button>
-        <button title="Save D2 source (Command/Ctrl + S)" onClick={onSave}>
-          <Save size={16} />
-        </button>
-        <button title="Open current D2 file with $EDITOR" onClick={onOpenWithEditor}>
-          <SquareArrowOutUpRight size={16} />
-        </button>
-        <button title="Format document (Command/Ctrl + Shift + I)" onClick={onFormat}>
-          <Wand2 size={16} />
-        </button>
-        <span className="divider" />
-        <RepeatButton title="Zoom out (Command/Ctrl + -)" onPress={onZoomOut}>
-          <ZoomOut size={16} />
-        </RepeatButton>
-        <button title="Reset zoom (Command/Ctrl + 0)" onClick={onResetView}>
-          <Focus size={16} />
-        </button>
-        <RepeatButton title="Zoom in (Command/Ctrl + +)" onPress={onZoomIn}>
-          <ZoomIn size={16} />
-        </RepeatButton>
-        <span className="divider" />
-        <button title="Export SVG" onClick={onExportSvg}>
-          <Download size={16} />
-        </button>
-        <button title="Export PNG" onClick={onExportPng}>
-          <FileDown size={16} />
-        </button>
+        {orderedToolbarCommands.map((command, index) => {
+          const Icon = command.icon;
+          const previousCommand = orderedToolbarCommands[index - 1];
+          const shouldShowDivider =
+            previousCommand !== undefined && previousCommand.toolbarGroup !== command.toolbarGroup;
+          return (
+            <div className="toolbar-command" key={command.id}>
+              {shouldShowDivider ? <span className="divider" /> : null}
+              {command.id === "view.zoomOut" || command.id === "view.zoomIn" ? (
+                <RepeatButton
+                  title={
+                    command.shortcut ? `${command.title} (${command.shortcut})` : command.title
+                  }
+                  onPress={() => onRunCommand(command)}
+                  disabled={command.enabled === false}
+                >
+                  <Icon size={16} />
+                </RepeatButton>
+              ) : (
+                <button
+                  title={
+                    command.shortcut ? `${command.title} (${command.shortcut})` : command.title
+                  }
+                  onClick={() => onRunCommand(command)}
+                  disabled={command.enabled === false}
+                >
+                  <Icon size={16} />
+                </button>
+              )}
+            </div>
+          );
+        })}
       </div>
     </header>
   );

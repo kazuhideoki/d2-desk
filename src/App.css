@@ -51,6 +51,13 @@ button:hover {
   background: #ecfdf5;
 }
 
+button:disabled {
+  border-color: #d8e0e2;
+  color: #8a9aa1;
+  background: #f4f7f7;
+  cursor: not-allowed;
+}
+
 select {
   height: 32px;
   border: 1px solid #ccd5d8;
@@ -104,6 +111,10 @@ select {
   min-width: 0;
   align-items: center;
   gap: 8px;
+}
+
+.toolbar-command {
+  display: contents;
 }
 
 .divider {
@@ -373,6 +384,25 @@ select {
 
 .symbol-palette-row {
   grid-template-columns: 76px minmax(120px, 0.45fr) minmax(0, 1fr) minmax(44px, auto);
+}
+
+.command-palette-row {
+  grid-template-columns: minmax(0, 1fr) max-content;
+  min-height: 42px;
+  height: auto;
+}
+
+.command-palette-main {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.command-palette-shortcut {
+  justify-self: end;
+  color: #5b6d74;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .symbol-palette-kind {

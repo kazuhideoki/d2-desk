@@ -4,12 +4,27 @@ import type * as Monaco from "monaco-editor";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
+import {
+  Download,
+  FileDown,
+  FileInput,
+  Focus,
+  FolderPlus,
+  Save,
+  Settings,
+  SquareArrowOutUpRight,
+  Wand2,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 import { BottomPanel } from "./components/BottomPanel";
+import { CommandPalette } from "./components/CommandPalette";
 import { EditorPane } from "./components/EditorPane";
 import { PreviewPane } from "./components/PreviewPane";
 import { TabBar } from "./components/TabBar";
-import { Toolbar } from "./components/Toolbar";
+import { Toolbar, type ToolbarCommand } from "./components/Toolbar";
 import { WorkspaceManager } from "./components/WorkspaceManager";
+import { isCommandEnabled, type AppCommand } from "./commands";
 import { baseEditorFontSize, baseEditorLineHeight } from "./constants";
 import {
   configureD2Language,
@@ -99,6 +114,11 @@ type WorkspaceFilePaletteState = {
 };
 
 type SymbolPaletteState = {
+  query: string;
+  selectedIndex: number;
+};
+
+type CommandPaletteState = {
   query: string;
   selectedIndex: number;
 };
@@ -357,6 +377,7 @@ function App() {
   const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
   const [filePalette, setFilePalette] = useState<WorkspaceFilePaletteState | null>(null);
   const [symbolPalette, setSymbolPalette] = useState<SymbolPaletteState | null>(null);
+  const [commandPalette, setCommandPalette] = useState<CommandPaletteState | null>(null);
   const [editorZoom, setEditorZoom] = useState(1);
   const [previewZoom, setPreviewZoom] = useState(1);
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -372,6 +393,7 @@ function App() {
   const openSourceFileRef = useRef<() => void>(() => undefined);
   const openWorkspaceFilePaletteRef = useRef<() => void>(() => undefined);
   const openSymbolPaletteRef = useRef<() => void>(() => undefined);
+  const openCommandPaletteRef = useRef<() => void>(() => undefined);
   const saveSourceRef = useRef<() => void>(() => undefined);
   const formatDocumentRef = useRef<() => void>(() => undefined);
   const closeActiveTabRef = useRef<() => void>(() => undefined);
@@ -1025,6 +1047,7 @@ function App() {
     }
 
     setSymbolPalette(null);
+    setCommandPalette(null);
     setFilePalette({
       query: "",
       files: [],
@@ -1087,11 +1110,27 @@ function App() {
   );
 
   const openSymbolPalette = useCallback(() => {
+    setCommandPalette(null);
     setFilePalette(null);
     setSymbolPalette({
       query: "",
       selectedIndex: 0,
     });
+  }, []);
+
+  const openCommandPalette = useCallback(() => {
+    setFilePalette(null);
+    setSymbolPalette(null);
+    setCommandPalette({
+      query: "",
+      selectedIndex: 0,
+    });
+  }, []);
+
+  const closeCommandPalette = useCallback(() => {
+    setCommandPalette(null);
+    setStatus("Command palette canceled");
+    window.requestAnimationFrame(() => editorRef.current?.focus());
   }, []);
 
   const goToSymbol = useCallback((symbolId: string) => {
@@ -1520,6 +1559,7 @@ function App() {
       void openWorkspaceFilePalette();
     };
     openSymbolPaletteRef.current = openSymbolPalette;
+    openCommandPaletteRef.current = openCommandPalette;
     saveSourceRef.current = () => {
       void saveSource();
     };
@@ -1533,6 +1573,7 @@ function App() {
   }, [
     closeActiveTab,
     formatDocument,
+    openCommandPalette,
     openSymbolPalette,
     openSourceFile,
     openWorkspaceFilePalette,
@@ -1553,6 +1594,11 @@ function App() {
     void listen("d2-desk-open-symbols", () => openSymbolPaletteRef.current()).then((unlisten) => {
       unlisteners.push(unlisten);
     });
+    void listen("d2-desk-open-command-palette", () => openCommandPaletteRef.current()).then(
+      (unlisten) => {
+        unlisteners.push(unlisten);
+      },
+    );
     void listen("d2-desk-save", () => saveSourceRef.current()).then((unlisten) => {
       unlisteners.push(unlisten);
     });
@@ -1594,6 +1640,10 @@ function App() {
         event.preventDefault();
         event.stopImmediatePropagation();
         openSymbolPalette();
+      } else if (key === "p" && event.shiftKey) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        openCommandPalette();
       } else if (key === "o") {
         event.preventDefault();
         void openSourceFile();
@@ -1638,6 +1688,7 @@ function App() {
     createNewTab,
     focusAdjacentTab,
     formatDocument,
+    openCommandPalette,
     openSymbolPalette,
     openSourceFile,
     openWorkspaceFilePalette,
@@ -1679,6 +1730,9 @@ function App() {
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyO, () => {
       openSymbolPaletteRef.current();
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP, () => {
+      openCommandPaletteRef.current();
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       saveSourceRef.current();
@@ -2060,6 +2114,146 @@ function App() {
     setPreviewZoom(decreaseZoom);
   }
 
+  const topbarCommands = useMemo<ToolbarCommand[]>(
+    () => [
+      {
+        id: "workspace.openFolder",
+        title: "Open Workspace Folder",
+        category: "Workspace",
+        keywords: ["folder", "directory", "project"],
+        icon: FolderPlus,
+        toolbarGroup: 0,
+        run: () => {
+          void openWorkspaceFolder();
+        },
+      },
+      {
+        id: "workspace.manage",
+        title: "Manage Workspaces",
+        category: "Workspace",
+        keywords: ["settings", "folders", "projects"],
+        icon: Settings,
+        toolbarGroup: 0,
+        run: () => setWorkspaceManagerOpen(true),
+      },
+      {
+        id: "file.open",
+        title: "Open D2 File",
+        category: "File",
+        keywords: ["load"],
+        shortcut: "Command/Ctrl + O",
+        icon: FileInput,
+        toolbarGroup: 1,
+        run: openSourceFile,
+      },
+      {
+        id: "file.save",
+        title: "Save D2 Source",
+        category: "File",
+        keywords: ["write"],
+        shortcut: "Command/Ctrl + S",
+        icon: Save,
+        toolbarGroup: 1,
+        run: saveSource,
+      },
+      {
+        id: "file.openWithEditor",
+        title: "Open Current D2 File with $EDITOR",
+        category: "File",
+        keywords: ["external", "editor"],
+        icon: SquareArrowOutUpRight,
+        toolbarGroup: 1,
+        run: openWithEditor,
+      },
+      {
+        id: "editor.format",
+        title: "Format Document",
+        category: "Edit",
+        keywords: ["source"],
+        shortcut: "Command/Ctrl + Shift + I",
+        icon: Wand2,
+        toolbarGroup: 1,
+        run: formatDocument,
+      },
+      {
+        id: "view.zoomOut",
+        title: "Zoom Out",
+        category: "View",
+        keywords: ["decrease", "scale"],
+        shortcut: "Command/Ctrl + -",
+        icon: ZoomOut,
+        toolbarGroup: 2,
+        run: zoomOut,
+      },
+      {
+        id: "view.resetZoom",
+        title: "Reset Zoom",
+        category: "View",
+        keywords: ["scale", "fit"],
+        shortcut: "Command/Ctrl + 0",
+        icon: Focus,
+        toolbarGroup: 2,
+        run: resetView,
+      },
+      {
+        id: "view.zoomIn",
+        title: "Zoom In",
+        category: "View",
+        keywords: ["increase", "scale"],
+        shortcut: "Command/Ctrl + +",
+        icon: ZoomIn,
+        toolbarGroup: 2,
+        run: zoomIn,
+      },
+      {
+        id: "export.svg",
+        title: "Export SVG",
+        category: "Export",
+        keywords: ["download", "diagram"],
+        icon: Download,
+        toolbarGroup: 3,
+        run: () => {
+          void exportSVG();
+        },
+      },
+      {
+        id: "export.png",
+        title: "Export PNG",
+        category: "Export",
+        keywords: ["download", "image", "diagram"],
+        icon: FileDown,
+        toolbarGroup: 3,
+        run: () => {
+          void exportPNG();
+        },
+      },
+    ],
+    [
+      exportRenderedSvg,
+      fileName,
+      formatDocument,
+      openSourceFile,
+      openWithEditor,
+      openWorkspaceFolder,
+      saveSource,
+      source,
+    ],
+  );
+  const workspaceCommands = useMemo(
+    () => topbarCommands.filter((command) => command.toolbarGroup === 0),
+    [topbarCommands],
+  );
+  const toolbarCommands = useMemo(
+    () => topbarCommands.filter((command) => command.toolbarGroup > 0),
+    [topbarCommands],
+  );
+  const paletteCommands = topbarCommands;
+  const runAppCommand = useCallback((command: AppCommand) => {
+    if (!isCommandEnabled(command)) return;
+    setCommandPalette(null);
+    void command.run();
+  }, []);
+
   return (
     <main className="app-shell">
       <Toolbar
@@ -2068,20 +2262,26 @@ function App() {
         onWorkspaceChange={(workspaceId) => {
           void switchWorkspace(workspaceId);
         }}
-        onOpenWorkspace={() => {
-          void openWorkspaceFolder();
-        }}
-        onManageWorkspaces={() => setWorkspaceManagerOpen(true)}
-        onOpen={openSourceFile}
-        onSave={saveSource}
-        onOpenWithEditor={openWithEditor}
-        onFormat={formatDocument}
-        onZoomOut={zoomOut}
-        onResetView={resetView}
-        onZoomIn={zoomIn}
-        onExportSvg={exportSVG}
-        onExportPng={exportPNG}
+        workspaceCommands={workspaceCommands}
+        toolbarCommands={toolbarCommands}
+        onRunCommand={runAppCommand}
       />
+
+      {commandPalette ? (
+        <CommandPalette
+          commands={paletteCommands}
+          query={commandPalette.query}
+          selectedIndex={commandPalette.selectedIndex}
+          onQueryChange={(query) =>
+            setCommandPalette((current) => (current ? { ...current, query } : current))
+          }
+          onSelectedIndexChange={(selectedIndex) =>
+            setCommandPalette((current) => (current ? { ...current, selectedIndex } : current))
+          }
+          onClose={closeCommandPalette}
+          onRunCommand={runAppCommand}
+        />
+      ) : null}
 
       {workspaceManagerOpen ? (
         <WorkspaceManager
