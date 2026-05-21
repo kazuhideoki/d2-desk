@@ -38,11 +38,13 @@ import type {
 } from "./types";
 import {
   baseName,
+  buildD2SymbolEntries,
   decreaseZoom,
   downloadBytes,
   downloadURL,
   ensureD2FileName,
   fileNameFromPath,
+  filterD2Symbols,
   getDiagramViewBox,
   increaseZoom,
   moveSelectionIndex,
@@ -94,6 +96,11 @@ type WorkspaceFilePaletteState = {
   selectedIndex: number;
   loading: boolean;
   error: string | null;
+};
+
+type SymbolPaletteState = {
+  query: string;
+  selectedIndex: number;
 };
 
 type InternalSuggestCompletionItem = {
@@ -349,6 +356,7 @@ function App() {
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
   const [filePalette, setFilePalette] = useState<WorkspaceFilePaletteState | null>(null);
+  const [symbolPalette, setSymbolPalette] = useState<SymbolPaletteState | null>(null);
   const [editorZoom, setEditorZoom] = useState(1);
   const [previewZoom, setPreviewZoom] = useState(1);
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -360,8 +368,10 @@ function App() {
   const suggestPreviewCacheRef = useRef(new Map<string, CompileResult>());
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const filePaletteInputRef = useRef<HTMLInputElement | null>(null);
+  const symbolPaletteInputRef = useRef<HTMLInputElement | null>(null);
   const openSourceFileRef = useRef<() => void>(() => undefined);
   const openWorkspaceFilePaletteRef = useRef<() => void>(() => undefined);
+  const openSymbolPaletteRef = useRef<() => void>(() => undefined);
   const saveSourceRef = useRef<() => void>(() => undefined);
   const formatDocumentRef = useRef<() => void>(() => undefined);
   const closeActiveTabRef = useRef<() => void>(() => undefined);
@@ -397,6 +407,14 @@ function App() {
   const filteredWorkspaceFiles = useMemo(
     () => (filePalette ? filterWorkspaceFiles(filePalette.files, filePalette.query) : []),
     [filePalette],
+  );
+  const fileSymbols = useMemo(
+    () => buildD2SymbolEntries(compileResult.objects),
+    [compileResult.objects],
+  );
+  const filteredFileSymbols = useMemo(
+    () => (symbolPalette ? filterD2Symbols(fileSymbols, symbolPalette.query) : []),
+    [fileSymbols, symbolPalette],
   );
 
   const activeObject = useMemo(
@@ -480,6 +498,14 @@ function App() {
       filePaletteInputRef.current?.select();
     });
   }, [filePalette !== null]);
+
+  useEffect(() => {
+    if (!symbolPalette) return;
+    window.requestAnimationFrame(() => {
+      symbolPaletteInputRef.current?.focus();
+      symbolPaletteInputRef.current?.select();
+    });
+  }, [symbolPalette !== null]);
 
   const persistTabs = useCallback((nextTabs: D2Tab[], nextActiveTabId: string) => {
     const workspaceId = activeWorkspaceIdRef.current;
@@ -915,6 +941,7 @@ function App() {
       return;
     }
 
+    setSymbolPalette(null);
     setFilePalette({
       query: "",
       files: [],
@@ -975,6 +1002,20 @@ function App() {
     },
     [openFileInNewTab],
   );
+
+  const openSymbolPalette = useCallback(() => {
+    setFilePalette(null);
+    setSymbolPalette({
+      query: "",
+      selectedIndex: 0,
+    });
+  }, []);
+
+  const goToSymbol = useCallback((symbolId: string) => {
+    setSymbolPalette(null);
+    highlightObject(symbolId, true);
+    setStatus(`Focused ${symbolId}`);
+  }, []);
 
   const saveSource = useCallback(async () => {
     try {
@@ -1394,6 +1435,7 @@ function App() {
     openWorkspaceFilePaletteRef.current = () => {
       void openWorkspaceFilePalette();
     };
+    openSymbolPaletteRef.current = openSymbolPalette;
     saveSourceRef.current = () => {
       void saveSource();
     };
@@ -1407,6 +1449,7 @@ function App() {
   }, [
     closeActiveTab,
     formatDocument,
+    openSymbolPalette,
     openSourceFile,
     openWorkspaceFilePalette,
     quitApplication,
@@ -1421,6 +1464,9 @@ function App() {
     void listen("d2-desk-open-workspace-file", () =>
       openWorkspaceFilePaletteRef.current(),
     ).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen("d2-desk-open-symbols", () => openSymbolPaletteRef.current()).then((unlisten) => {
       unlisteners.push(unlisten);
     });
     void listen("d2-desk-save", () => saveSourceRef.current()).then((unlisten) => {
@@ -1460,7 +1506,11 @@ function App() {
       if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
       const key = event.key.toLowerCase();
 
-      if (key === "o") {
+      if (key === "o" && event.shiftKey) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        openSymbolPalette();
+      } else if (key === "o") {
         event.preventDefault();
         void openSourceFile();
       } else if (key === "p" && event.metaKey && !event.ctrlKey && !event.shiftKey) {
@@ -1504,6 +1554,7 @@ function App() {
     createNewTab,
     focusAdjacentTab,
     formatDocument,
+    openSymbolPalette,
     openSourceFile,
     openWorkspaceFilePalette,
     quitApplication,
@@ -1541,6 +1592,9 @@ function App() {
     }
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyO, () => {
       openSourceFileRef.current();
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyO, () => {
+      openSymbolPaletteRef.current();
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       saveSourceRef.current();
@@ -2131,6 +2185,139 @@ function App() {
                     >
                       <span className="file-palette-name">{file.fileName}</span>
                       <span className="file-palette-path">{file.directory}</span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {symbolPalette ? (
+        <div className="modal-backdrop palette-backdrop" role="presentation">
+          <section
+            className="file-palette"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="symbol-palette-title"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setSymbolPalette(null);
+                setStatus("Symbol search canceled");
+                window.requestAnimationFrame(() => editorRef.current?.focus());
+                return;
+              }
+              const shouldMoveDown =
+                event.key === "ArrowDown" ||
+                (event.key.toLowerCase() === "n" &&
+                  event.ctrlKey &&
+                  !event.metaKey &&
+                  !event.altKey &&
+                  !event.shiftKey);
+              const shouldMoveUp =
+                event.key === "ArrowUp" ||
+                (event.key.toLowerCase() === "p" &&
+                  event.ctrlKey &&
+                  !event.metaKey &&
+                  !event.altKey &&
+                  !event.shiftKey);
+              if (shouldMoveDown) {
+                event.preventDefault();
+                setSymbolPalette((current) =>
+                  current
+                    ? {
+                        ...current,
+                        selectedIndex: moveSelectionIndex(
+                          current.selectedIndex,
+                          1,
+                          filteredFileSymbols.length,
+                        ),
+                      }
+                    : current,
+                );
+                return;
+              }
+              if (shouldMoveUp) {
+                event.preventDefault();
+                setSymbolPalette((current) =>
+                  current
+                    ? {
+                        ...current,
+                        selectedIndex: moveSelectionIndex(
+                          current.selectedIndex,
+                          -1,
+                          filteredFileSymbols.length,
+                        ),
+                      }
+                    : current,
+                );
+                return;
+              }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                const selectedSymbol =
+                  filteredFileSymbols[
+                    Math.min(symbolPalette.selectedIndex, filteredFileSymbols.length - 1)
+                  ];
+                if (selectedSymbol) {
+                  goToSymbol(selectedSymbol.id);
+                }
+              }
+            }}
+          >
+            <header className="file-palette-header">
+              <h2 id="symbol-palette-title">Go to Symbol in File</h2>
+              <span>{fileSymbols.length} symbols</span>
+            </header>
+            <input
+              ref={symbolPaletteInputRef}
+              aria-label="Search file symbols"
+              placeholder="Search symbols"
+              value={symbolPalette.query}
+              onChange={(event) =>
+                setSymbolPalette((current) =>
+                  current
+                    ? {
+                        ...current,
+                        query: event.target.value,
+                        selectedIndex: 0,
+                      }
+                    : current,
+                )
+              }
+            />
+            <div className="file-palette-results" role="listbox" aria-label="File symbols">
+              {filteredFileSymbols.length === 0 ? (
+                <div className="file-palette-message">No matching symbols</div>
+              ) : (
+                filteredFileSymbols.map((symbol, index) => {
+                  const isSelected =
+                    index === Math.min(symbolPalette.selectedIndex, filteredFileSymbols.length - 1);
+                  return (
+                    <button
+                      className={`file-palette-row symbol-palette-row${
+                        isSelected ? " selected" : ""
+                      }`}
+                      key={`${symbol.id}:${symbol.line}:${symbol.column}`}
+                      type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      title={symbol.detail}
+                      onMouseEnter={() =>
+                        setSymbolPalette((current) =>
+                          current ? { ...current, selectedIndex: index } : current,
+                        )
+                      }
+                      onClick={() => {
+                        goToSymbol(symbol.id);
+                      }}
+                    >
+                      <span className={`symbol-palette-kind ${symbol.kind}`}>{symbol.kind}</span>
+                      <span className="file-palette-name">{symbol.name}</span>
+                      <span className="file-palette-path">{symbol.detail}</span>
+                      <span className="symbol-palette-line">:{symbol.line}</span>
                     </button>
                   );
                 })
