@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { WorkspaceFileEntry } from "../types";
+import type { WorkspaceFileEntry } from "../../types";
 import {
   filterWorkspaceFiles,
   normalizeWorkspaceFileQuery,

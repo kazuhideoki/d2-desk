@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CompileResult, SourceRange } from "../types";
+import type { CompileResult, SourceRange } from "../../types";
 import { objectIdAtPosition, sourceRangeContains } from "./sourceRanges";
 
 const range = (startLine: number, startColumn: number, endLine: number, endColumn: number) => ({

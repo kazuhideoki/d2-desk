@@ -17,14 +17,10 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { BottomPanel } from "./components/BottomPanel";
-import { CommandPalette } from "./components/CommandPalette";
-import { EditorPane } from "./components/EditorPane";
-import { PreviewPane, type PreviewZoomMode } from "./components/PreviewPane";
-import { TabBar } from "./components/TabBar";
-import { Toolbar, type ToolbarCommand } from "./components/Toolbar";
-import { WorkspaceManager } from "./components/WorkspaceManager";
-import { objectIdAtPosition } from "./app/sourceRanges";
+import { CommandPalette } from "./features/command-palette/CommandPalette";
+import { isCommandEnabled, type AppCommand } from "./features/command-palette/commands";
+import { EditorPane } from "./features/editor/EditorPane";
+import { objectIdAtPosition } from "./features/editor/sourceRanges";
 import {
   completionPreviewSource,
   isD2IconValueCompletionPosition,
@@ -34,9 +30,17 @@ import {
   previewSourceWithInsertText,
   rememberSuggestPreview,
   suggestPreviewCacheKey,
-} from "./app/suggestPreview";
-import { filterWorkspaceFiles } from "./app/workspaceFileSearch";
-import { isCommandEnabled, type AppCommand } from "./commands";
+} from "./features/editor/suggestPreview";
+import { filterWorkspaceFiles } from "./features/file-palette/workspaceFileSearch";
+import {
+  WorkspaceFilePalette,
+  type WorkspaceFilePaletteState,
+} from "./features/file-palette/WorkspaceFilePalette";
+import { PreviewPane, type PreviewZoomMode } from "./features/preview/PreviewPane";
+import { RenameNodeDialog, type RenameDialogState } from "./features/rename-node/RenameNodeDialog";
+import { BottomPanel } from "./features/status/BottomPanel";
+import { SymbolPalette, type SymbolPaletteState } from "./features/symbol-palette/SymbolPalette";
+import { TabBar } from "./features/tabs/TabBar";
 import { baseEditorFontSize, baseEditorLineHeight } from "./constants";
 import {
   configureD2Language,
@@ -51,7 +55,8 @@ import {
   loadActiveTabId,
   loadTabs,
   writeStoredTabs,
-} from "./tabs";
+} from "./features/tabs/tabs";
+import { Toolbar, type ToolbarCommand } from "./features/toolbar/Toolbar";
 import type {
   CompileResult,
   D2CompletionItem,
@@ -85,7 +90,8 @@ import {
   loadWorkspaceTabs,
   removeWorkspace,
   writeWorkspaceTabs,
-} from "./workspaces";
+} from "./features/workspaces/workspaces";
+import { WorkspaceManager } from "./features/workspaces/WorkspaceManager";
 import "./App.css";
 
 type InitialSession = {
@@ -106,29 +112,10 @@ type RenameNodeResult = {
   id: string;
 };
 
-type RenameDialogState = {
-  id: string;
-  value: string;
-  error: string | null;
-};
-
 type EditorCursorSnapshot = {
   viewState: Monaco.editor.ICodeEditorViewState | null;
   selections: Monaco.ISelection[] | null;
   position: Monaco.IPosition | null;
-};
-
-type WorkspaceFilePaletteState = {
-  query: string;
-  files: WorkspaceFileEntry[];
-  selectedIndex: number;
-  loading: boolean;
-  error: string | null;
-};
-
-type SymbolPaletteState = {
-  query: string;
-  selectedIndex: number;
 };
 
 type CommandPaletteState = {
@@ -2190,330 +2177,83 @@ function App() {
       ) : null}
 
       {renameDialog ? (
-        <div className="modal-backdrop" role="presentation">
-          <form
-            className="rename-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="rename-dialog-title"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void commitRenameNode();
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.preventDefault();
-                setRenameDialog(null);
-                renameEditorCursorSnapshotRef.current = null;
-                setStatus("Rename canceled");
-                window.requestAnimationFrame(() => editorRef.current?.focus());
-              }
-            }}
-          >
-            <header className="rename-dialog-header">
-              <h2 id="rename-dialog-title">Rename node</h2>
-              <span>{renameDialog.id}</span>
-            </header>
-            <input
-              ref={renameInputRef}
-              aria-label="Node name"
-              value={renameDialog.value}
-              onChange={(event) =>
-                setRenameDialog((current) =>
-                  current ? { ...current, value: event.target.value, error: null } : current,
-                )
-              }
-            />
-            {renameDialog.error ? <p className="rename-dialog-error">{renameDialog.error}</p> : null}
-            <footer className="rename-dialog-actions">
-              <button
-                className="dialog-button secondary"
-                type="button"
-                onClick={() => {
-                  setRenameDialog(null);
-                  renameEditorCursorSnapshotRef.current = null;
-                  setStatus("Rename canceled");
-                  window.requestAnimationFrame(() => editorRef.current?.focus());
-                }}
-              >
-                Cancel
-              </button>
-              <button className="dialog-button primary" type="submit">
-                Rename
-              </button>
-            </footer>
-          </form>
-        </div>
+        <RenameNodeDialog
+          state={renameDialog}
+          inputRef={renameInputRef}
+          onSubmit={() => {
+            void commitRenameNode();
+          }}
+          onCancel={() => {
+            setRenameDialog(null);
+            renameEditorCursorSnapshotRef.current = null;
+            setStatus("Rename canceled");
+            window.requestAnimationFrame(() => editorRef.current?.focus());
+          }}
+          onValueChange={(value) =>
+            setRenameDialog((current) =>
+              current ? { ...current, value, error: null } : current,
+            )
+          }
+        />
       ) : null}
 
       {filePalette ? (
-        <div className="modal-backdrop palette-backdrop" role="presentation">
-          <section
-            className="file-palette"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="file-palette-title"
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.preventDefault();
-                setFilePalette(null);
-                setStatus("Open workspace file canceled");
-                window.requestAnimationFrame(() => editorRef.current?.focus());
-                return;
-              }
-              const shouldMoveDown =
-                event.key === "ArrowDown" ||
-                (event.key.toLowerCase() === "n" &&
-                  event.ctrlKey &&
-                  !event.metaKey &&
-                  !event.altKey &&
-                  !event.shiftKey);
-              const shouldMoveUp =
-                event.key === "ArrowUp" ||
-                (event.key.toLowerCase() === "p" &&
-                  event.ctrlKey &&
-                  !event.metaKey &&
-                  !event.altKey &&
-                  !event.shiftKey);
-              if (shouldMoveDown) {
-                event.preventDefault();
-                setFilePalette((current) =>
-                  current
-                    ? {
-                        ...current,
-                        selectedIndex: moveSelectionIndex(
-                          current.selectedIndex,
-                          1,
-                          filteredWorkspaceFiles.length,
-                        ),
-                      }
-                    : current,
-                );
-                return;
-              }
-              if (shouldMoveUp) {
-                event.preventDefault();
-                setFilePalette((current) =>
-                  current
-                    ? {
-                        ...current,
-                        selectedIndex: moveSelectionIndex(
-                          current.selectedIndex,
-                          -1,
-                          filteredWorkspaceFiles.length,
-                        ),
-                      }
-                    : current,
-                );
-                return;
-              }
-              if (event.key === "Enter") {
-                event.preventDefault();
-                const selectedFile =
-                  filteredWorkspaceFiles[
-                    Math.min(filePalette.selectedIndex, filteredWorkspaceFiles.length - 1)
-                  ];
-                if (selectedFile) {
-                  void openWorkspaceFile(selectedFile);
-                }
-              }
-            }}
-          >
-            <header className="file-palette-header">
-              <h2 id="file-palette-title">Open Workspace File</h2>
-              <span>{filePalette.files.length} files</span>
-            </header>
-            <input
-              ref={filePaletteInputRef}
-              aria-label="Search workspace files"
-              placeholder="Search files"
-              value={filePalette.query}
-              onChange={(event) =>
-                setFilePalette((current) =>
-                  current
-                    ? {
-                        ...current,
-                        query: event.target.value,
-                        selectedIndex: 0,
-                      }
-                    : current,
-                )
-              }
-            />
-            <div className="file-palette-results" role="listbox" aria-label="Workspace files">
-              {filePalette.loading ? (
-                <div className="file-palette-message">Indexing...</div>
-              ) : filePalette.error ? (
-                <div className="file-palette-message error">{filePalette.error}</div>
-              ) : filteredWorkspaceFiles.length === 0 ? (
-                <div className="file-palette-message">No matching files</div>
-              ) : (
-                filteredWorkspaceFiles.map((file, index) => {
-                  const isSelected =
-                    index === Math.min(filePalette.selectedIndex, filteredWorkspaceFiles.length - 1);
-                  return (
-                    <button
-                      className={`file-palette-row${isSelected ? " selected" : ""}`}
-                      key={file.path}
-                      type="button"
-                      role="option"
-                      aria-selected={isSelected}
-                      title={file.path}
-                      onMouseEnter={() =>
-                        setFilePalette((current) =>
-                          current ? { ...current, selectedIndex: index } : current,
-                        )
-                      }
-                      onClick={() => {
-                        void openWorkspaceFile(file);
-                      }}
-                    >
-                      <span className="file-palette-name">{file.fileName}</span>
-                      <span className="file-palette-path">{file.directory}</span>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </section>
-        </div>
+        <WorkspaceFilePalette
+          state={filePalette}
+          filteredFiles={filteredWorkspaceFiles}
+          inputRef={filePaletteInputRef}
+          onCancel={() => {
+            setFilePalette(null);
+            setStatus("Open workspace file canceled");
+            window.requestAnimationFrame(() => editorRef.current?.focus());
+          }}
+          onQueryChange={(query) =>
+            setFilePalette((current) =>
+              current
+                ? {
+                    ...current,
+                    query,
+                    selectedIndex: 0,
+                  }
+                : current,
+            )
+          }
+          onSelectedIndexChange={(selectedIndex) =>
+            setFilePalette((current) => (current ? { ...current, selectedIndex } : current))
+          }
+          onOpenFile={(file) => {
+            void openWorkspaceFile(file);
+          }}
+        />
       ) : null}
 
       {symbolPalette ? (
-        <div className="modal-backdrop palette-backdrop" role="presentation">
-          <section
-            className="file-palette"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="symbol-palette-title"
-            onKeyDown={(event) => {
-              if (event.nativeEvent.isComposing || event.key === "Process") {
-                return;
-              }
-              if (event.key === "Escape") {
-                event.preventDefault();
-                setSymbolPalette(null);
-                setStatus("Symbol search canceled");
-                window.requestAnimationFrame(() => editorRef.current?.focus());
-                return;
-              }
-              const shouldMoveDown =
-                event.key === "ArrowDown" ||
-                (event.key.toLowerCase() === "n" &&
-                  event.ctrlKey &&
-                  !event.metaKey &&
-                  !event.altKey &&
-                  !event.shiftKey);
-              const shouldMoveUp =
-                event.key === "ArrowUp" ||
-                (event.key.toLowerCase() === "p" &&
-                  event.ctrlKey &&
-                  !event.metaKey &&
-                  !event.altKey &&
-                  !event.shiftKey);
-              if (shouldMoveDown) {
-                event.preventDefault();
-                setSymbolPalette((current) =>
-                  current
-                    ? {
-                        ...current,
-                        selectedIndex: moveSelectionIndex(
-                          current.selectedIndex,
-                          1,
-                          filteredFileSymbols.length,
-                        ),
-                      }
-                    : current,
-                );
-                return;
-              }
-              if (shouldMoveUp) {
-                event.preventDefault();
-                setSymbolPalette((current) =>
-                  current
-                    ? {
-                        ...current,
-                        selectedIndex: moveSelectionIndex(
-                          current.selectedIndex,
-                          -1,
-                          filteredFileSymbols.length,
-                        ),
-                      }
-                    : current,
-                );
-                return;
-              }
-              if (event.key === "Enter") {
-                event.preventDefault();
-                const selectedSymbol =
-                  filteredFileSymbols[
-                    Math.min(symbolPalette.selectedIndex, filteredFileSymbols.length - 1)
-                  ];
-                if (selectedSymbol) {
-                  goToSymbol(selectedSymbol.id);
-                }
-              }
-            }}
-          >
-            <header className="file-palette-header">
-              <h2 id="symbol-palette-title">Go to Symbol in File</h2>
-              <span>{fileSymbols.length} symbols</span>
-            </header>
-            <input
-              ref={symbolPaletteInputRef}
-              autoFocus
-              aria-label="Search file symbols"
-              placeholder="Search symbols"
-              value={symbolPalette.query}
-              onChange={(event) =>
-                setSymbolPalette((current) =>
-                  current
-                    ? {
-                        ...current,
-                        query: event.target.value,
-                        selectedIndex: 0,
-                      }
-                    : current,
-                )
-              }
-            />
-            <div className="file-palette-results" role="listbox" aria-label="File symbols">
-              {filteredFileSymbols.length === 0 ? (
-                <div className="file-palette-message">No matching symbols</div>
-              ) : (
-                filteredFileSymbols.map((symbol, index) => {
-                  const isSelected =
-                    index === Math.min(symbolPalette.selectedIndex, filteredFileSymbols.length - 1);
-                  return (
-                    <button
-                      className={`file-palette-row symbol-palette-row${
-                        isSelected ? " selected" : ""
-                      }`}
-                      key={`${symbol.id}:${symbol.line}:${symbol.column}`}
-                      type="button"
-                      role="option"
-                      aria-selected={isSelected}
-                      title={symbol.detail}
-                      onMouseEnter={() =>
-                        setSymbolPalette((current) =>
-                          current ? { ...current, selectedIndex: index } : current,
-                        )
-                      }
-                      onClick={() => {
-                        goToSymbol(symbol.id);
-                      }}
-                    >
-                      <span className={`symbol-palette-kind ${symbol.kind}`}>{symbol.kind}</span>
-                      <span className="file-palette-name">{symbol.name}</span>
-                      <span className="file-palette-path">{symbol.detail}</span>
-                      <span className="symbol-palette-line">:{symbol.line}</span>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </section>
-        </div>
+        <SymbolPalette
+          state={symbolPalette}
+          symbols={fileSymbols}
+          filteredSymbols={filteredFileSymbols}
+          inputRef={symbolPaletteInputRef}
+          onCancel={() => {
+            setSymbolPalette(null);
+            setStatus("Symbol search canceled");
+            window.requestAnimationFrame(() => editorRef.current?.focus());
+          }}
+          onQueryChange={(query) =>
+            setSymbolPalette((current) =>
+              current
+                ? {
+                    ...current,
+                    query,
+                    selectedIndex: 0,
+                  }
+                : current,
+            )
+          }
+          onSelectedIndexChange={(selectedIndex) =>
+            setSymbolPalette((current) => (current ? { ...current, selectedIndex } : current))
+          }
+          onGoToSymbol={goToSymbol}
+        />
       ) : null}
 
       <TabBar

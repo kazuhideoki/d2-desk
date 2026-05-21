@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { workspacesStorageKey } from "./constants";
-import { createTab } from "./tabs";
-import type { StoredWorkspaces, Workspace } from "./types";
+import { workspacesStorageKey } from "../../constants";
+import { createTab } from "../tabs/tabs";
+import type { StoredWorkspaces, Workspace } from "../../types";
 import {
   activateWorkspace,
   addOrTouchWorkspace,

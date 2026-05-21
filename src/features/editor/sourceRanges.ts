@@ -1,4 +1,4 @@
-import type { CompileResult, SourceRange } from "../types";
+import type { CompileResult, SourceRange } from "../../types";
 
 export function sourceRangeContains(range: SourceRange, lineNumber: number, column: number) {
   if (lineNumber < range.startLine || lineNumber > range.endLine) {

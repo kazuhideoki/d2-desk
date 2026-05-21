@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ZoomIn, ZoomOut } from "lucide-react";
-import type { D2Object } from "../types";
-import { connectionPath, fitWidthZoom } from "../utils";
-import { RepeatButton } from "./RepeatButton";
+import type { D2Object } from "../../types";
+import { connectionPath, fitWidthZoom } from "../../utils";
+import { RepeatButton } from "../../shared/components/RepeatButton";
 
 export type PreviewZoomMode = "auto" | "manual";
 

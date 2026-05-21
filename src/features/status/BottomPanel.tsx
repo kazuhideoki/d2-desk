@@ -1,4 +1,4 @@
-import type { D2Object, Diagnostic } from "../types";
+import type { D2Object, Diagnostic } from "../../types";
 
 type BottomPanelProps = {
   status: string;

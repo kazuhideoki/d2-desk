@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type * as Monaco from "monaco-editor";
-import type { CompileResult, D2CompletionItem } from "../types";
+import type { CompileResult, D2CompletionItem } from "../../types";
 import {
   completionPreviewSource,
   isD2IconValueCompletionPosition,

@@ -3,9 +3,9 @@ import {
   FileText,
   type LucideIcon,
 } from "lucide-react";
-import type { AppCommand } from "../commands";
-import type { Workspace } from "../types";
-import { RepeatButton } from "./RepeatButton";
+import type { AppCommand } from "../command-palette/commands";
+import type { Workspace } from "../../types";
+import { RepeatButton } from "../../shared/components/RepeatButton";
 
 export type ToolbarCommand = AppCommand & {
   icon: LucideIcon;

@@ -1,7 +1,7 @@
 import { useMemo, useRef } from "react";
-import type { AppCommand } from "../commands";
-import { filterCommands, isCommandEnabled } from "../commands";
-import { moveSelectionIndex } from "../utils";
+import type { AppCommand } from "./commands";
+import { filterCommands, isCommandEnabled } from "./commands";
+import { moveSelectionIndex } from "../../utils";
 
 type CommandPaletteProps = {
   commands: AppCommand[];

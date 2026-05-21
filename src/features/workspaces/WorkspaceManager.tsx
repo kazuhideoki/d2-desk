@@ -1,5 +1,5 @@
 import { Trash2, X } from "lucide-react";
-import type { Workspace } from "../types";
+import type { Workspace } from "../../types";
 
 type WorkspaceManagerProps = {
   workspaces: Workspace[];

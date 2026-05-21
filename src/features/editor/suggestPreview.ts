@@ -1,5 +1,5 @@
 import type * as Monaco from "monaco-editor";
-import type { CompileResult, D2CompletionItem } from "../types";
+import type { CompileResult, D2CompletionItem } from "../../types";
 
 export const maxSuggestPreviewCacheEntries = 50;
 

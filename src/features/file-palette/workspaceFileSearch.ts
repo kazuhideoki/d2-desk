@@ -1,4 +1,4 @@
-import type { WorkspaceFileEntry } from "../types";
+import type { WorkspaceFileEntry } from "../../types";
 
 export const workspaceFileResultLimit = 120;
 

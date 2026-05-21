@@ -1,6 +1,6 @@
 import { FileText, Plus, X } from "lucide-react";
-import { hasTabPendingUserChanges } from "../tabs";
-import type { D2Tab } from "../types";
+import { hasTabPendingUserChanges } from "./tabs";
+import type { D2Tab } from "../../types";
 
 type TabBarProps = {
   tabs: D2Tab[];
