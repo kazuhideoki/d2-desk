@@ -23,11 +23,7 @@ import { loadInitialSession, type InitialSession } from "./app/initialSession";
 import { CommandPalette } from "./features/command-palette/CommandPalette";
 import { isCommandEnabled, type AppCommand } from "./shared/commands";
 import { EditorPane } from "./features/editor/EditorPane";
-import {
-  connectionIdAtPosition,
-  objectIdAtPosition,
-  sourceRangeContains,
-} from "./features/editor/sourceRanges";
+import { connectionIdAtPosition } from "./features/editor/sourceRanges";
 import { findSwitchableEdge, switchEdgeDirectionInSource } from "./features/editor/switchEdge";
 import {
   completionPreviewSource,
@@ -77,6 +73,7 @@ import type {
   D2Tab,
   ExportResult,
   OpenedD2File,
+  PerfDebugOptions,
   RenamedD2File,
   SavedD2File,
   StoredWorkspaces,
@@ -104,11 +101,6 @@ import {
 } from "./features/workspaces/workspaces";
 import { WorkspaceManager } from "./features/workspaces/WorkspaceManager";
 import "./App.css";
-
-type CursorObjectLookup = {
-  modelVersionId: number | null;
-  objects: CompileResult["objects"];
-};
 
 type FocusedPane = "editor" | "preview";
 
@@ -171,6 +163,13 @@ type InternalSuggestController = {
 const nodeRenamePattern = /^[A-Za-z0-9_-]+$/;
 const tabPersistenceDelayMs = 400;
 const previewCompileDelayMs = 600;
+const defaultPerfDebugOptions: PerfDebugOptions = {
+  wordWrap: true,
+  autoSuggest: true,
+  suggestPreview: true,
+  previewCompile: true,
+  previewRender: true,
+};
 
 function lastD2IdSegment(id: string) {
   const parts = id.split(".");
@@ -285,6 +284,8 @@ function MainApp() {
   const [previewZoomMode, setPreviewZoomMode] = useState<PreviewZoomMode>("auto");
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const [previewDetached, setPreviewDetached] = useState(false);
+  const [perfDebugOptions, setPerfDebugOptions] =
+    useState<PerfDebugOptions>(defaultPerfDebugOptions);
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decorationIds = useRef<string[]>([]);
@@ -316,12 +317,6 @@ function MainApp() {
   const activeTabIdRef = useRef(activeTabId);
   const editorTabIdRef = useRef(activeTabId);
   const focusedPaneRef = useRef<FocusedPane>("editor");
-  const objectLookupRef = useRef<CursorObjectLookup>({
-    modelVersionId: null,
-    objects: [],
-  });
-  const activeCursorLookupRequestId = useRef(0);
-  const pendingSymbolFocusIdRef = useRef<string | null>(null);
   const closeTabInFlightRef = useRef(false);
   const quitInFlightRef = useRef(false);
   const activeIdRef = useRef(activeId);
@@ -329,6 +324,7 @@ function MainApp() {
   const compileResultRef = useRef(compileResult);
   const compileResultSourceRef = useRef<string | null>(null);
   const detachedPreviewStateRef = useRef<DetachedPreviewState>(emptyDetachedPreviewState);
+  const perfDebugOptionsRef = useRef(perfDebugOptions);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0],
@@ -410,9 +406,11 @@ function MainApp() {
     return () => window.removeEventListener("focusin", handleFocusIn);
   }, []);
 
-  function invalidateCursorLookup() {
-    activeCursorLookupRequestId.current += 1;
-  }
+  const setPerfDebugOption = useCallback((key: keyof PerfDebugOptions, enabled: boolean) => {
+    setPerfDebugOptions((current) =>
+      current[key] === enabled ? current : { ...current, [key]: enabled },
+    );
+  }, []);
 
   useEffect(() => {
     activeIdRef.current = activeId;
@@ -538,10 +536,7 @@ function MainApp() {
         if (selectedSymbol) {
           setSymbolPalette(null);
           setActiveId(selectedSymbol.id);
-          pendingSymbolFocusIdRef.current = selectedSymbol.id;
-          if (!highlightObject(selectedSymbol.id, true)) {
-            pendingSymbolFocusIdRef.current = null;
-          }
+          highlightObject(selectedSymbol.id, true);
           setStatus(`Focused ${selectedSymbol.id}`);
         }
       }
@@ -595,7 +590,6 @@ function MainApp() {
   }, [persistTabs]);
 
   const activateTab = useCallback((tabId: string) => {
-    invalidateCursorLookup();
     activeTabIdRef.current = tabId;
     setActiveTabId(tabId);
     setActiveId(null);
@@ -638,9 +632,6 @@ function MainApp() {
   );
 
   const updateActiveTab = useCallback((updates: Partial<D2Tab>) => {
-    if ("source" in updates) {
-      invalidateCursorLookup();
-    }
     setTabs((currentTabs) => {
       const tabId = activeTabIdRef.current;
       const nextTabs = currentTabs.map((tab) => {
@@ -658,11 +649,7 @@ function MainApp() {
   }, []);
 
   const restoreEditorViewStateAfterSourceUpdate = useCallback(
-    (
-      snapshot: EditorCursorSnapshot | null,
-      expectedSource: string,
-      options: { preserveActiveObject?: boolean } = {},
-    ) => {
+    (snapshot: EditorCursorSnapshot | null, expectedSource: string) => {
       if (!snapshot) {
         window.requestAnimationFrame(() => editorRef.current?.focus());
         return;
@@ -684,7 +671,6 @@ function MainApp() {
         }
 
         pendingEditorViewStateRestoreRef.current = null;
-        invalidateCursorLookup();
         if (snapshot.viewState) {
           editor.restoreViewState(snapshot.viewState);
         }
@@ -694,10 +680,6 @@ function MainApp() {
           editor.setPosition(snapshot.position, "restore-rename-cursor");
         }
         editor.focus();
-        const position = snapshot.position ?? editor.getPosition();
-        if (position && !options.preserveActiveObject) {
-          void updateFocusedObjectFromPosition(editor, position);
-        }
       };
 
       pendingEditorViewStateRestoreRef.current = window.requestAnimationFrame(restore);
@@ -710,7 +692,6 @@ function MainApp() {
     const nextTabs = [...tabsRef.current, nextTab];
     tabsRef.current = nextTabs;
     activeTabIdRef.current = nextTab.id;
-    invalidateCursorLookup();
     setTabs(nextTabs);
     setActiveTabId(nextTab.id);
     persistTabs(nextTabs, nextTab.id);
@@ -725,7 +706,6 @@ function MainApp() {
       const existingTab = currentTabs.find((tab) => tab.filePath === file.path);
       if (existingTab) {
         activeTabIdRef.current = existingTab.id;
-        invalidateCursorLookup();
         setActiveTabId(existingTab.id);
         setActiveId(null);
         setHoverId(null);
@@ -743,7 +723,6 @@ function MainApp() {
       tabsRef.current = nextTabs;
       activeTabIdRef.current = nextTab.id;
       editorTabIdRef.current = nextTab.id;
-      invalidateCursorLookup();
       setTabs(nextTabs);
       setActiveTabId(nextTab.id);
       persistTabs(nextTabs, nextTab.id);
@@ -762,6 +741,16 @@ function MainApp() {
     }
     setSuggestPreviewResult(null);
   }, []);
+
+  useEffect(() => {
+    perfDebugOptionsRef.current = perfDebugOptions;
+    if (!perfDebugOptions.suggestPreview) {
+      clearSuggestPreview();
+    }
+    if (!perfDebugOptions.previewCompile) {
+      activeCompileRequestId.current += 1;
+    }
+  }, [clearSuggestPreview, perfDebugOptions]);
 
   function sidecarSourceParams(nextSource: string) {
     const workspaceId = activeWorkspaceIdRef.current;
@@ -786,6 +775,11 @@ function MainApp() {
 
   const scheduleSuggestPreview = useCallback(
     (previewSource: string, modelVersionId: number, delayMs = 100) => {
+      if (!perfDebugOptionsRef.current.suggestPreview) {
+        clearSuggestPreview();
+        return;
+      }
+
       const latestInputs = latestCompileInputsRef.current;
       if (previewSource === latestInputs.source) {
         clearSuggestPreview();
@@ -853,10 +847,6 @@ function MainApp() {
 
     compileResultRef.current = result;
     compileResultSourceRef.current = currentSource;
-    objectLookupRef.current = {
-      modelVersionId: editorRef.current?.getModel()?.getVersionId() ?? null,
-      objects: result.objects,
-    };
     setCompileResult(result);
     return result;
   }
@@ -897,10 +887,6 @@ function MainApp() {
           setStatus("Diagnostics updated; preview kept from last valid compile");
           return;
         }
-        objectLookupRef.current = {
-          modelVersionId: editorRef.current?.getModel()?.getVersionId() ?? null,
-          objects: result.objects,
-        };
         compileResultSourceRef.current = nextSource;
         setCompileResult(result);
         setStatus("Compiled");
@@ -961,6 +947,10 @@ function MainApp() {
     if (!isEditingIconValueCompletion()) {
       clearSuggestPreview();
     }
+    if (!perfDebugOptions.previewCompile) {
+      activeCompileRequestId.current += 1;
+      return;
+    }
     const requestId = activeCompileRequestId.current + 1;
     activeCompileRequestId.current = requestId;
     const shouldCompileImmediately = previousCompileTabIdRef.current !== activeTabId;
@@ -975,7 +965,14 @@ function MainApp() {
       void compile(source, activeTabId, requestId);
     }, previewCompileDelayMs);
     return () => window.clearTimeout(timeout);
-  }, [activeTabId, clearSuggestPreview, compile, isEditingIconValueCompletion, source]);
+  }, [
+    activeTabId,
+    clearSuggestPreview,
+    compile,
+    isEditingIconValueCompletion,
+    perfDebugOptions.previewCompile,
+    source,
+  ]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -1186,10 +1183,7 @@ function MainApp() {
   const goToSymbol = useCallback((symbolId: string) => {
     setSymbolPalette(null);
     setActiveId(symbolId);
-    pendingSymbolFocusIdRef.current = symbolId;
-    if (!highlightObject(symbolId, true)) {
-      pendingSymbolFocusIdRef.current = null;
-    }
+    highlightObject(symbolId, true);
     setStatus(`Focused ${symbolId}`);
   }, []);
 
@@ -1523,7 +1517,6 @@ function MainApp() {
       if (tabId === activeTabIdRef.current) {
         const nextActiveTab = nextTabs[Math.min(targetIndex, nextTabs.length - 1)] ?? nextTabs[0];
         activeTabIdRef.current = nextActiveTab.id;
-        invalidateCursorLookup();
         setActiveTabId(nextActiveTab.id);
         setActiveId(null);
         setHoverId(null);
@@ -1595,7 +1588,6 @@ function MainApp() {
       tabsRef.current = nextTabs;
       activeTabIdRef.current = nextActiveTabId;
       editorTabIdRef.current = nextActiveTabId;
-      invalidateCursorLookup();
       setWorkspaceState(nextWorkspaceState);
       setTabs(nextTabs);
       setActiveTabId(nextActiveTabId);
@@ -1810,9 +1802,14 @@ function MainApp() {
   }, [sendDetachedPreviewState]);
 
   useEffect(() => {
-    if (!previewDetached) return;
+    if (!previewDetached || !perfDebugOptions.previewRender) return;
     sendDetachedPreviewState();
-  }, [detachedPreviewState, previewDetached, sendDetachedPreviewState]);
+  }, [
+    detachedPreviewState,
+    perfDebugOptions.previewRender,
+    previewDetached,
+    sendDetachedPreviewState,
+  ]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1930,10 +1927,6 @@ function MainApp() {
       window.requestAnimationFrame(() => {
         try {
           editor.restoreViewState(savedViewState);
-          const position = editor.getPosition();
-          if (position) {
-            void updateFocusedObjectFromPosition(editor, position);
-          }
         } catch {
           updateActiveTab({ editorViewState: null });
         }
@@ -1984,6 +1977,11 @@ function MainApp() {
     const suggestWidget = suggestController?.widget?.value;
     const suggestPreviewDisposables: Monaco.IDisposable[] = [];
     const previewFocusedSuggestItem = (item?: InternalSuggestCompletionItem) => {
+      if (!perfDebugOptionsRef.current.suggestPreview) {
+        clearSuggestPreview();
+        return;
+      }
+
       const model = editor.getModel();
       const completion = item?.completion;
       if (!model || !completion) {
@@ -2010,6 +2008,11 @@ function MainApp() {
       }
     };
     const previewCurrentIconValueSuggestion = (preferredLabel?: string) => {
+      if (!perfDebugOptionsRef.current.suggestPreview) {
+        clearSuggestPreview();
+        return;
+      }
+
       const model = editor.getModel();
       const position = editor.getPosition();
       if (!model || !position) return;
@@ -2095,6 +2098,10 @@ function MainApp() {
     }
     suggestPreviewDisposables.push(
       editor.onDidChangeModelContent(() => {
+        if (!perfDebugOptionsRef.current.suggestPreview) {
+          clearSuggestPreview();
+          return;
+        }
         if (suggestWidget?.getFocusedItem) {
           queuePreviewCurrentFocusedSuggestItem();
         }
@@ -2150,6 +2157,8 @@ function MainApp() {
       const currentPosition = editor.getPosition();
       if (!currentPosition) return;
 
+      if (!perfDebugOptionsRef.current.autoSuggest) return;
+
       const lineContent = model.getLineContent(currentPosition.lineNumber);
       if (isD2LineCommentPosition(lineContent, currentPosition.column)) return;
 
@@ -2173,56 +2182,7 @@ function MainApp() {
         }, 0);
       }
     });
-    editor.onDidChangeCursorPosition((event) => {
-      void updateFocusedObjectFromPosition(editor, event.position);
-    });
   };
-
-  async function updateFocusedObjectFromPosition(
-    editor: Monaco.editor.IStandaloneCodeEditor,
-    position: Monaco.IPosition,
-  ) {
-    const requestId = activeCursorLookupRequestId.current + 1;
-    activeCursorLookupRequestId.current = requestId;
-    const tabId = activeTabIdRef.current;
-    const model = editor.getModel();
-    const modelVersionId = model?.getVersionId() ?? null;
-    const lookup = objectLookupRef.current;
-
-    const nextActiveId =
-      modelVersionId !== null && modelVersionId === lookup.modelVersionId
-        ? objectIdAtPosition(lookup.objects, position.lineNumber, position.column)
-        : await objectIdAtCurrentPosition(editor.getValue(), position);
-    if (requestId !== activeCursorLookupRequestId.current) {
-      return;
-    }
-    if (
-      tabId !== activeTabIdRef.current ||
-      model !== editor.getModel() ||
-      modelVersionId !== (editor.getModel()?.getVersionId() ?? null)
-    ) {
-      return;
-    }
-    if (hoverIdRef.current !== null) {
-      hoverIdRef.current = null;
-      setHoverId(null);
-    }
-    if (pendingSymbolFocusIdRef.current !== null) {
-      const pendingObject = lookup.objects.find(
-        (object) => object.id === pendingSymbolFocusIdRef.current,
-      );
-      const positionIsInsidePendingSymbol = pendingObject?.sourceRanges?.some((range) =>
-        sourceRangeContains(range, position.lineNumber, position.column),
-      );
-      pendingSymbolFocusIdRef.current = null;
-      if (positionIsInsidePendingSymbol) {
-        return;
-      }
-    }
-    setActiveId((currentActiveId) =>
-      currentActiveId === nextActiveId ? currentActiveId : nextActiveId,
-    );
-  }
 
   async function objectIdAtCurrentPosition(source: string, position: Monaco.IPosition) {
     try {
@@ -2731,7 +2691,7 @@ function MainApp() {
 
       <section
         className={
-          previewDetached
+          !perfDebugOptions.previewRender || previewDetached
             ? "workspace preview-detached"
             : previewFullscreen
               ? "workspace preview-fullscreen"
@@ -2745,6 +2705,7 @@ function MainApp() {
           zoom={editorZoom}
           editorFontSize={editorFontSize}
           editorLineHeight={editorLineHeight}
+          perfDebugOptions={perfDebugOptions}
           beforeMount={configureD2Language}
           onMount={handleMount}
           onChange={(value) => updateActiveTab({ source: value })}
@@ -2753,7 +2714,7 @@ function MainApp() {
           onZoomIn={zoomEditorIn}
         />
 
-        {previewDetached ? null : (
+        {previewDetached || !perfDebugOptions.previewRender ? null : (
           <PreviewPane
             objects={visibleCompileResult.objects}
             renderedSvg={renderedSvg}
@@ -2767,7 +2728,6 @@ function MainApp() {
               setHoverId(id);
             }}
             onSelect={(id) => {
-              invalidateCursorLookup();
               hoverIdRef.current = null;
               setHoverId(null);
               setActiveId(id);
@@ -2786,6 +2746,8 @@ function MainApp() {
         status={status}
         activeObject={activeObject}
         diagnostics={compileResult.diagnostics}
+        perfDebugOptions={perfDebugOptions}
+        onPerfDebugOptionChange={setPerfDebugOption}
       />
     </main>
   );
