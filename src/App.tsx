@@ -23,8 +23,8 @@ import { loadInitialSession, type InitialSession } from "./app/initialSession";
 import { CommandPalette } from "./features/command-palette/CommandPalette";
 import { isCommandEnabled, type AppCommand } from "./shared/commands";
 import { EditorPane } from "./features/editor/EditorPane";
-import { objectIdAtPosition } from "./features/editor/sourceRanges";
-import { switchEdgeDirectionInSource } from "./features/editor/switchEdge";
+import { objectIdAtPosition, sourceRangeContains } from "./features/editor/sourceRanges";
+import { findSwitchableEdge, switchEdgeDirectionInSource } from "./features/editor/switchEdge";
 import {
   completionPreviewSource,
   isD2IconValueCompletionPosition,
@@ -317,6 +317,7 @@ function MainApp() {
     objects: [],
   });
   const activeCursorLookupRequestId = useRef(0);
+  const pendingSymbolFocusIdRef = useRef<string | null>(null);
   const closeTabInFlightRef = useRef(false);
   const quitInFlightRef = useRef(false);
   const activeIdRef = useRef(activeId);
@@ -532,7 +533,10 @@ function MainApp() {
         if (selectedSymbol) {
           setSymbolPalette(null);
           setActiveId(selectedSymbol.id);
-          highlightObject(selectedSymbol.id, true);
+          pendingSymbolFocusIdRef.current = selectedSymbol.id;
+          if (!highlightObject(selectedSymbol.id, true)) {
+            pendingSymbolFocusIdRef.current = null;
+          }
           setStatus(`Focused ${selectedSymbol.id}`);
         }
       }
@@ -1149,7 +1153,10 @@ function MainApp() {
   const goToSymbol = useCallback((symbolId: string) => {
     setSymbolPalette(null);
     setActiveId(symbolId);
-    highlightObject(symbolId, true);
+    pendingSymbolFocusIdRef.current = symbolId;
+    if (!highlightObject(symbolId, true)) {
+      pendingSymbolFocusIdRef.current = null;
+    }
     setStatus(`Focused ${symbolId}`);
   }, []);
 
@@ -1322,13 +1329,19 @@ function MainApp() {
     const shouldPreferEditorCursor = editor?.hasTextFocus() ?? false;
     let targetId = shouldPreferEditorCursor ? null : (hoverIdRef.current ?? activeIdRef.current);
 
-    if (!targetId && editorPosition) {
-      targetId = await objectIdAtCurrentPosition(currentSource, editorPosition);
+    const cursorId = editorPosition
+      ? await objectIdAtCurrentPosition(currentSource, editorPosition)
+      : null;
+    if (!targetId) {
+      targetId = cursorId;
     }
 
-    const selectedObject =
-      compileResultRef.current.objects.find((object) => object.id === targetId) ?? null;
-    if (!selectedObject || selectedObject.kind !== "connection") {
+    const selectedObject = findSwitchableEdge(
+      compileResultRef.current.objects,
+      targetId,
+      cursorId,
+    );
+    if (!selectedObject) {
       setStatus("Select an edge to switch");
       window.requestAnimationFrame(() => editorRef.current?.focus());
       return;
@@ -1348,11 +1361,20 @@ function MainApp() {
       return;
     }
 
-    updateActiveTab({ source: result.source, editorViewState: editorCursorSnapshot?.viewState });
-    setActiveId(selectedObject.id);
+    const nextActiveId = await objectIdAtCurrentPosition(result.source, result.cursorPosition);
+    const nextEditorCursorSnapshot = editorCursorSnapshot
+      ? {
+          ...editorCursorSnapshot,
+          selections: null,
+          position: result.cursorPosition,
+        }
+      : null;
+    updateActiveTab({ source: result.source, editorViewState: nextEditorCursorSnapshot?.viewState });
+    activeIdRef.current = nextActiveId ?? selectedObject.id;
+    setActiveId(activeIdRef.current);
     setHoverId(null);
-    setStatus(`Switched ${selectedObject.id}`);
-    restoreEditorViewStateAfterSourceUpdate(editorCursorSnapshot, result.source);
+    setStatus(`Switched ${activeIdRef.current}`);
+    restoreEditorViewStateAfterSourceUpdate(nextEditorCursorSnapshot, result.source);
   }, [restoreEditorViewStateAfterSourceUpdate, updateActiveTab]);
 
   const commitRenameNode = useCallback(async () => {
@@ -2139,6 +2161,18 @@ function MainApp() {
       hoverIdRef.current = null;
       setHoverId(null);
     }
+    if (pendingSymbolFocusIdRef.current !== null) {
+      const pendingObject = lookup.objects.find(
+        (object) => object.id === pendingSymbolFocusIdRef.current,
+      );
+      const positionIsInsidePendingSymbol = pendingObject?.sourceRanges?.some((range) =>
+        sourceRangeContains(range, position.lineNumber, position.column),
+      );
+      pendingSymbolFocusIdRef.current = null;
+      if (positionIsInsidePendingSymbol) {
+        return;
+      }
+    }
     setActiveId((currentActiveId) =>
       currentActiveId === nextActiveId ? currentActiveId : nextActiveId,
     );
@@ -2163,7 +2197,7 @@ function MainApp() {
   function highlightObject(id: string | null, reveal: boolean, focusEditor = true) {
     const editor = editorRef.current;
     const monaco = monacoRef.current;
-    if (!editor || !monaco) return;
+    if (!editor || !monaco) return false;
     const object = compileResult.objects.find((item) => item.id === id);
     const sourceRanges = object?.sourceRanges ?? [];
     const decorations =
@@ -2192,7 +2226,9 @@ function MainApp() {
       if (focusEditor) {
         editor.focus();
       }
+      return true;
     }
+    return false;
   }
 
   async function exportSVG() {

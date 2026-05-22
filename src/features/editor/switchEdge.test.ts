@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { D2Object, SourceRange } from "../../types";
-import { switchEdgeDirectionInSource } from "./switchEdge";
+import { findSwitchableEdge, switchEdgeDirectionInSource } from "./switchEdge";
 
 const range = (startColumn: number, endColumn: number): SourceRange => ({
   file: "main.d2",
@@ -25,13 +25,21 @@ describe("switchEdgeDirectionInSource", () => {
   it("swaps endpoints and flips -> to <- without changing the edge meaning", () => {
     const result = switchEdgeDirectionInSource("api -> db\n", edge(5, 10));
 
-    expect(result).toEqual({ ok: true, source: "db <- api\n" });
+    expect(result).toEqual({
+      ok: true,
+      source: "db <- api\n",
+      cursorPosition: { lineNumber: 1, column: 4 },
+    });
   });
 
   it("swaps endpoints and flips <- to ->", () => {
     const result = switchEdgeDirectionInSource("db <- api\n", edge(4, 10));
 
-    expect(result).toEqual({ ok: true, source: "api -> db\n" });
+    expect(result).toEqual({
+      ok: true,
+      source: "api -> db\n",
+      cursorPosition: { lineNumber: 1, column: 5 },
+    });
   });
 
   it("keeps labels, indentation, trailing comments, and mirrored operator spacing", () => {
@@ -40,7 +48,11 @@ describe("switchEdgeDirectionInSource", () => {
       sourceRanges: [range(9, 11), range(3, 25)],
     });
 
-    expect(result).toEqual({ ok: true, source: "  db    <-   api: calls # comment\n" });
+    expect(result).toEqual({
+      ok: true,
+      source: "  db    <-   api: calls # comment\n",
+      cursorPosition: { lineNumber: 1, column: 9 },
+    });
   });
 
   it("rejects undirected and bidirectional edges", () => {
@@ -64,5 +76,27 @@ describe("switchEdgeDirectionInSource", () => {
       ok: false,
       reason: "Switch Edge supports a single edge statement",
     });
+  });
+});
+
+describe("findSwitchableEdge", () => {
+  it("falls back to the cursor edge when the preferred edge id is stale", () => {
+    const stalePreferredEdge = {
+      ...edge(5, 10),
+      id: "(api -> db)[0]",
+    };
+    const currentEdge = {
+      ...edge(4, 10),
+      id: "(db <- api)[0]",
+    };
+    const api = {
+      ...edge(1, 4),
+      id: "api",
+      kind: "shape" as const,
+    };
+
+    expect(findSwitchableEdge([currentEdge, api], stalePreferredEdge.id, currentEdge.id)).toBe(
+      currentEdge,
+    );
   });
 });

@@ -482,10 +482,7 @@ func connectionEndpointSegmentEnd(text string) int {
 	return len(text)
 }
 
-func directedConnectionEndpoints(leftPath, rightPath, operator string) (string, string) {
-	if operator == "<-" {
-		return rightPath, leftPath
-	}
+func directedConnectionEndpoints(leftPath, rightPath, _ string) (string, string) {
 	return leftPath, rightPath
 }
 

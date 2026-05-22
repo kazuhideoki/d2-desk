@@ -753,6 +753,27 @@ func TestNodeAtFindsConnectionOperator(t *testing.T) {
 	}
 }
 
+func TestNodeAtFindsLeftArrowConnectionOperator(t *testing.T) {
+	source := "db <- api: query"
+	compiled, err := compile(compileParams{Source: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	connection := findConnection(compiled.Objects, "query")
+	if connection == nil {
+		t.Fatalf("expected left arrow connection in %#v", compiled.Objects)
+	}
+	if !hasRange(connection.SourceRanges, 1, 4, 6) {
+		t.Fatalf("expected left arrow connection to include arrow operator range, got %#v", connection.SourceRanges)
+	}
+
+	result := nodeAt(nodeAtParams{Source: source, Line: 1, Column: 5})
+	if result["id"] != connection.ID {
+		t.Fatalf("expected connection at left arrow operator, got %#v; connection %#v", result, connection)
+	}
+}
+
 func TestFormatPreservesValidDocument(t *testing.T) {
 	formatted, err := format("api: API Server\napi -> db")
 	if err != nil {

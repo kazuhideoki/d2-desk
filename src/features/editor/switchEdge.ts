@@ -10,6 +10,10 @@ type SwitchEdgeResult =
   | {
       ok: true;
       source: string;
+      cursorPosition: {
+        lineNumber: number;
+        column: number;
+      };
     }
   | {
       ok: false;
@@ -146,9 +150,32 @@ export function switchEdgeDirectionInSource(
   }
 
   const switchedHead = `${left.leading}${right.core}${right.leading}${nextOperator}${left.trailing}${left.core}${right.trailing}`;
+  const nextOperatorColumn =
+    scopeStart + left.leading.length + right.core.length + right.leading.length + 1;
   const nextLine = `${line.slice(0, scopeStart)}${switchedHead}${tail}${line.slice(scopeEnd)}`;
   lines[scopeRange.startLine - 1] = nextLine;
-  return { ok: true, source: lines.join("") };
+  return {
+    ok: true,
+    source: lines.join(""),
+    cursorPosition: {
+      lineNumber: scopeRange.startLine,
+      column: nextOperatorColumn,
+    },
+  };
+}
+
+export function findSwitchableEdge(
+  objects: D2Object[],
+  preferredId: string | null,
+  cursorId: string | null,
+) {
+  const preferredObject = objects.find((object) => object.id === preferredId);
+  if (preferredObject?.kind === "connection") {
+    return preferredObject;
+  }
+
+  const cursorObject = objects.find((object) => object.id === cursorId);
+  return cursorObject?.kind === "connection" ? cursorObject : null;
 }
 
 export type { SwitchEdgeResult };
