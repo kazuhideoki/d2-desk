@@ -3,6 +3,7 @@ import { ZoomIn, ZoomOut } from "lucide-react";
 import type { D2Board, D2Object } from "../../types";
 import { connectionPath, fitBoundsZoom, settleAutoZoom } from "../../utils";
 import { RepeatButton } from "../../shared/components/RepeatButton";
+import { boardOptionLabel, boardPathKey } from "./boards";
 
 export type PreviewZoomMode = "auto" | "manual";
 
@@ -87,17 +88,6 @@ function availableContentSize(viewport: HTMLElement): PreviewContentSize {
     width: Math.max(0, viewportWidth - paddingLeft - paddingRight),
     height: Math.max(0, viewportHeight - paddingTop - paddingBottom),
   };
-}
-
-function boardPathKey(path: string[]) {
-  return JSON.stringify(path);
-}
-
-function boardOptionLabel(board: D2Board) {
-  if (board.kind === "root") return "Root";
-  const kindLabel = board.kind[0]?.toUpperCase() + board.kind.slice(1);
-  const indent = board.depth > 1 ? `${"  ".repeat(board.depth - 1)}` : "";
-  return `${indent}${kindLabel} / ${board.label || board.name}`;
 }
 
 export function PreviewPane({

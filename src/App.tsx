@@ -43,6 +43,11 @@ import {
 import { PreviewPane, type PreviewZoomMode } from "./features/preview/PreviewPane";
 import { getPreviewCompileDelayMs } from "./features/preview/compileSchedule";
 import {
+  adjacentBoardPath,
+  boardDisplayName,
+  boardPathKey,
+} from "./features/preview/boards";
+import {
   nextPreviewViewMode,
   previewViewModeStatus,
   type PreviewViewMode,
@@ -206,10 +211,6 @@ async function copyTextToClipboard(text: string) {
 function lastD2IdSegment(id: string) {
   const parts = id.split(".");
   return parts[parts.length - 1] ?? id;
-}
-
-function boardPathKey(path: string[]) {
-  return JSON.stringify(path);
 }
 
 function hasBoardPath(boards: CompileResult["boards"] | undefined, path: string[]) {
@@ -882,6 +883,24 @@ function MainApp() {
       setStatus(boardPath.length === 0 ? "Previewing root board" : `Previewing ${boardPath.join(".")}`);
     },
     [clearSuggestPreview],
+  );
+
+  const switchPreviewBoard = useCallback(
+    (direction: -1 | 1) => {
+      const boards = compileResultRef.current.boards ?? [];
+      const nextPath = adjacentBoardPath(boards, selectedBoardPathRef.current, direction);
+      if (!nextPath) {
+        setStatus("No other compositions");
+        return;
+      }
+
+      selectPreviewBoard(nextPath);
+      const nextBoard = boards.find((board) => boardPathKey(board.path) === boardPathKey(nextPath));
+      if (nextBoard) {
+        setStatus(`Previewing ${boardDisplayName(nextBoard)}`);
+      }
+    },
+    [selectPreviewBoard],
   );
 
   function sidecarSourceParams(nextSource: string) {
@@ -2061,6 +2080,10 @@ function MainApp() {
           event.preventDefault();
           event.stopImmediatePropagation();
           focusAdjacentTab(event.key === "ArrowRight" ? 1 : -1);
+        } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          switchPreviewBoard(event.key === "ArrowDown" ? 1 : -1);
         }
         return;
       }
@@ -2132,6 +2155,7 @@ function MainApp() {
     renameFocusedNode,
     resetFocusedView,
     saveSource,
+    switchPreviewBoard,
     toggleBottomPanel,
     toggleDetachedPreview,
     togglePreviewViewMode,
@@ -2746,6 +2770,24 @@ function MainApp() {
         run: toggleBottomPanel,
       },
       {
+        id: "view.previousComposition",
+        title: "Previous Composition",
+        category: "View",
+        keywords: ["board", "composition", "layer", "scenario", "step", "preview"],
+        shortcut: "Command/Ctrl + Option + Up",
+        enabled: (compileResult.boards?.length ?? 0) > 1,
+        run: () => switchPreviewBoard(-1),
+      },
+      {
+        id: "view.nextComposition",
+        title: "Next Composition",
+        category: "View",
+        keywords: ["board", "composition", "layer", "scenario", "step", "preview"],
+        shortcut: "Command/Ctrl + Option + Down",
+        enabled: (compileResult.boards?.length ?? 0) > 1,
+        run: () => switchPreviewBoard(1),
+      },
+      {
         id: "editor.switchEdgeDirection",
         title: "Switch Edge Notation",
         category: "Edit",
@@ -2776,9 +2818,11 @@ function MainApp() {
     [
       copyFocusedTabAbsolutePath,
       bottomPanelVisible,
+      compileResult.boards,
       currentFilePath,
       renameFocusedFile,
       switchFocusedEdgeDirection,
+      switchPreviewBoard,
       toggleBottomPanel,
       topbarCommands,
     ],
