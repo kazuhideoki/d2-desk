@@ -24,6 +24,7 @@ import { CommandPalette } from "./features/command-palette/CommandPalette";
 import { isCommandEnabled, type AppCommand } from "./shared/commands";
 import { EditorPane } from "./features/editor/EditorPane";
 import { objectIdAtPosition } from "./features/editor/sourceRanges";
+import { switchEdgeDirectionInSource } from "./features/editor/switchEdge";
 import {
   completionPreviewSource,
   isD2IconValueCompletionPosition,
@@ -1259,6 +1260,46 @@ function MainApp() {
     setStatus(`Renaming ${targetId}`);
   }, []);
 
+  const switchFocusedEdgeDirection = useCallback(async () => {
+    const editor = editorRef.current;
+    const currentSource = latestCompileInputsRef.current.source;
+    const editorPosition = editor?.getPosition() ?? null;
+    const shouldPreferEditorCursor = editor?.hasTextFocus() ?? false;
+    let targetId = shouldPreferEditorCursor ? null : (hoverIdRef.current ?? activeIdRef.current);
+
+    if (!targetId && editorPosition) {
+      targetId = await objectIdAtCurrentPosition(currentSource, editorPosition);
+    }
+
+    const selectedObject =
+      compileResultRef.current.objects.find((object) => object.id === targetId) ?? null;
+    if (!selectedObject || selectedObject.kind !== "connection") {
+      setStatus("Select an edge to switch");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+
+    const editorCursorSnapshot = editor
+      ? {
+          viewState: editor.saveViewState(),
+          selections: editor.getSelections(),
+          position: editor.getPosition(),
+        }
+      : null;
+    const result = switchEdgeDirectionInSource(currentSource, selectedObject);
+    if (!result.ok) {
+      setStatus(result.reason);
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+
+    updateActiveTab({ source: result.source, editorViewState: editorCursorSnapshot?.viewState });
+    setActiveId(selectedObject.id);
+    setHoverId(null);
+    setStatus(`Switched ${selectedObject.id}`);
+    restoreEditorViewStateAfterSourceUpdate(editorCursorSnapshot, result.source);
+  }, [restoreEditorViewStateAfterSourceUpdate, updateActiveTab]);
+
   const commitRenameNode = useCallback(async () => {
     if (!renameDialog) return;
 
@@ -2358,7 +2399,21 @@ function MainApp() {
     () => topbarCommands.filter((command) => command.toolbarGroup > 0),
     [topbarCommands],
   );
-  const paletteCommands = topbarCommands;
+  const paletteCommands = useMemo<AppCommand[]>(
+    () => [
+      ...topbarCommands,
+      {
+        id: "editor.switchEdgeDirection",
+        title: "Switch Edge Notation",
+        category: "Edit",
+        keywords: ["edge", "notation", "direction", "flip", "reverse", "connection"],
+        run: () => {
+          void switchFocusedEdgeDirection();
+        },
+      },
+    ],
+    [switchFocusedEdgeDirection, topbarCommands],
+  );
   const runAppCommand = useCallback((command: AppCommand) => {
     if (!isCommandEnabled(command)) return;
     setCommandPalette(null);
