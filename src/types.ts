@@ -97,6 +97,10 @@ export type SavedD2File = {
   path: string;
 };
 
+export type RenamedD2File = {
+  path: string;
+};
+
 export type WorkspaceFileEntry = {
   path: string;
   relativePath: string;

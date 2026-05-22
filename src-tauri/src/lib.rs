@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
@@ -32,6 +32,11 @@ struct OpenedD2File {
 
 #[derive(Debug, Serialize)]
 struct SavedD2File {
+    path: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RenamedD2File {
     path: String,
 }
 
@@ -79,6 +84,39 @@ fn write_d2_file(path: String, contents: String) -> Result<SavedD2File, String> 
 
     Ok(SavedD2File {
         path: path_to_string(path),
+    })
+}
+
+#[tauri::command]
+fn rename_d2_file(path: String, file_name: String) -> Result<RenamedD2File, String> {
+    let source_path = PathBuf::from(path);
+    if !source_path.exists() {
+        return Err(format!("file does not exist: {}", source_path.display()));
+    }
+    if !source_path.is_file() {
+        return Err(format!("path is not a file: {}", source_path.display()));
+    }
+
+    let target_path = renamed_file_path(&source_path, &file_name)?;
+    if target_path == source_path {
+        return Ok(RenamedD2File {
+            path: path_to_string(target_path),
+        });
+    }
+    if target_path.exists() {
+        return Err(format!("file already exists: {}", target_path.display()));
+    }
+
+    fs::rename(&source_path, &target_path).map_err(|err| {
+        format!(
+            "failed to rename {} to {}: {err}",
+            source_path.display(),
+            target_path.display()
+        )
+    })?;
+
+    Ok(RenamedD2File {
+        path: path_to_string(target_path),
     })
 }
 
@@ -230,6 +268,27 @@ fn ensure_d2_extension(path: PathBuf) -> PathBuf {
     } else {
         path.with_extension("d2")
     }
+}
+
+fn renamed_file_path(source_path: &Path, file_name: &str) -> Result<PathBuf, String> {
+    let trimmed_name = file_name.trim();
+    if trimmed_name.is_empty() {
+        return Err("file name cannot be empty".to_string());
+    }
+
+    let requested_path = Path::new(trimmed_name);
+    let components = requested_path.components().collect::<Vec<_>>();
+    if components.len() != 1 || !matches!(components[0], Component::Normal(_)) {
+        return Err("use a file name, not a path".to_string());
+    }
+
+    let parent = source_path.parent().ok_or_else(|| {
+        format!(
+            "failed to resolve parent folder for {}",
+            source_path.display()
+        )
+    })?;
+    Ok(parent.join(ensure_d2_extension(PathBuf::from(trimmed_name))))
 }
 
 fn is_d2_file(path: &Path) -> bool {
@@ -477,6 +536,7 @@ pub fn run() {
             sidecar_call,
             read_d2_file,
             write_d2_file,
+            rename_d2_file,
             list_workspace_files,
             open_file_with_editor,
             close_current_window,
@@ -534,6 +594,29 @@ mod tests {
         assert!(is_d2_file(Path::new("diagram.D2")));
         assert!(!is_d2_file(Path::new("diagram.txt")));
         assert!(!is_d2_file(Path::new("diagram")));
+    }
+
+    #[test]
+    fn renamed_file_path_stays_in_source_directory() {
+        let source = Path::new("/workspace/current.d2");
+
+        assert_eq!(
+            renamed_file_path(source, "next").expect("build renamed path"),
+            PathBuf::from("/workspace/next.d2")
+        );
+        assert_eq!(
+            renamed_file_path(source, "next.d2").expect("build renamed path"),
+            PathBuf::from("/workspace/next.d2")
+        );
+    }
+
+    #[test]
+    fn renamed_file_path_rejects_empty_names_and_paths() {
+        let source = Path::new("/workspace/current.d2");
+
+        assert!(renamed_file_path(source, "").is_err());
+        assert!(renamed_file_path(source, "nested/next.d2").is_err());
+        assert!(renamed_file_path(source, "../next.d2").is_err());
     }
 
     fn temp_workspace(name: &str) -> PathBuf {

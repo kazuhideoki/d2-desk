@@ -73,6 +73,7 @@ import type {
   D2Tab,
   ExportResult,
   OpenedD2File,
+  RenamedD2File,
   SavedD2File,
   StoredWorkspaces,
   WorkspaceFileEntry,
@@ -271,6 +272,7 @@ function MainApp() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
+  const [renameFileDialog, setRenameFileDialog] = useState<RenameDialogState | null>(null);
   const [filePalette, setFilePalette] = useState<WorkspaceFilePaletteState | null>(null);
   const [symbolPalette, setSymbolPalette] = useState<SymbolPaletteState | null>(null);
   const [commandPalette, setCommandPalette] = useState<CommandPaletteState | null>(null);
@@ -288,6 +290,7 @@ function MainApp() {
   const suggestPreviewTimeoutRef = useRef<number | null>(null);
   const suggestPreviewCacheRef = useRef(new Map<string, CompileResult>());
   const renameInputRef = useRef<HTMLInputElement | null>(null);
+  const renameFileInputRef = useRef<HTMLInputElement | null>(null);
   const filePaletteInputRef = useRef<HTMLInputElement | null>(null);
   const symbolPaletteInputRef = useRef<HTMLInputElement | null>(null);
   const openSourceFileRef = useRef<() => void>(() => undefined);
@@ -448,6 +451,14 @@ function MainApp() {
       renameInputRef.current?.select();
     });
   }, [renameDialog?.id]);
+
+  useEffect(() => {
+    if (!renameFileDialog) return;
+    window.requestAnimationFrame(() => {
+      renameFileInputRef.current?.focus();
+      renameFileInputRef.current?.select();
+    });
+  }, [renameFileDialog?.id]);
 
   useEffect(() => {
     if (!filePalette) return;
@@ -1200,6 +1211,50 @@ function MainApp() {
       setStatus(String(error));
     }
   }, [currentFilePath, fileName, source, updateActiveTab]);
+
+  const renameFocusedFile = useCallback(() => {
+    if (!currentFilePath) {
+      setStatus("Save the file before renaming");
+      return;
+    }
+
+    setCommandPalette(null);
+    setFilePalette(null);
+    setSymbolPalette(null);
+    setRenameDialog(null);
+    setRenameFileDialog({ id: currentFilePath, value: fileName, error: null });
+    setStatus(`Renaming ${fileName}`);
+  }, [currentFilePath, fileName]);
+
+  const commitRenameFile = useCallback(async () => {
+    if (!renameFileDialog || !currentFilePath) return;
+
+    const nextFileName = renameFileDialog.value.trim();
+    if (nextFileName === fileName) {
+      setStatus("Rename unchanged");
+      setRenameFileDialog(null);
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+
+    try {
+      const result = await invoke<RenamedD2File>("rename_d2_file", {
+        path: currentFilePath,
+        fileName: nextFileName,
+      });
+      updateActiveTab({
+        fileName: fileNameFromPath(result.path),
+        filePath: result.path,
+      });
+      setRenameFileDialog(null);
+      setStatus(`Renamed ${fileName} to ${fileNameFromPath(result.path)}`);
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+    } catch (error) {
+      setRenameFileDialog((current) =>
+        current ? { ...current, error: String(error).replace(/^Error: /, "") } : current,
+      );
+    }
+  }, [currentFilePath, fileName, renameFileDialog, updateActiveTab]);
 
   const formatDocument = useCallback(async () => {
     try {
@@ -2411,8 +2466,16 @@ function MainApp() {
           void switchFocusedEdgeDirection();
         },
       },
+      {
+        id: "file.renameFocused",
+        title: "Rename Focused File",
+        category: "File",
+        keywords: ["current", "active", "tab", "filename"],
+        enabled: Boolean(currentFilePath),
+        run: renameFocusedFile,
+      },
     ],
-    [switchFocusedEdgeDirection, topbarCommands],
+    [currentFilePath, renameFocusedFile, switchFocusedEdgeDirection, topbarCommands],
   );
   const runAppCommand = useCallback((command: AppCommand) => {
     if (!isCommandEnabled(command)) return;
@@ -2479,6 +2542,28 @@ function MainApp() {
           }}
           onValueChange={(value) =>
             setRenameDialog((current) =>
+              current ? { ...current, value, error: null } : current,
+            )
+          }
+        />
+      ) : null}
+
+      {renameFileDialog ? (
+        <RenameNodeDialog
+          state={renameFileDialog}
+          inputRef={renameFileInputRef}
+          title="Rename file"
+          inputLabel="File name"
+          onSubmit={() => {
+            void commitRenameFile();
+          }}
+          onCancel={() => {
+            setRenameFileDialog(null);
+            setStatus("Rename file canceled");
+            window.requestAnimationFrame(() => editorRef.current?.focus());
+          }}
+          onValueChange={(value) =>
+            setRenameFileDialog((current) =>
               current ? { ...current, value, error: null } : current,
             )
           }

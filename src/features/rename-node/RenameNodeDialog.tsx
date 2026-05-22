@@ -9,6 +9,8 @@ export type RenameDialogState = {
 type RenameNodeDialogProps = {
   state: RenameDialogState;
   inputRef: RefObject<HTMLInputElement | null>;
+  title?: string;
+  inputLabel?: string;
   onSubmit: () => void;
   onCancel: () => void;
   onValueChange: (value: string) => void;
@@ -17,6 +19,8 @@ type RenameNodeDialogProps = {
 export function RenameNodeDialog({
   state,
   inputRef,
+  title = "Rename node",
+  inputLabel = "Node name",
   onSubmit,
   onCancel,
   onValueChange,
@@ -40,12 +44,12 @@ export function RenameNodeDialog({
         }}
       >
         <header className="rename-dialog-header">
-          <h2 id="rename-dialog-title">Rename node</h2>
+          <h2 id="rename-dialog-title">{title}</h2>
           <span>{state.id}</span>
         </header>
         <input
           ref={inputRef}
-          aria-label="Node name"
+          aria-label={inputLabel}
           value={state.value}
           onChange={(event) => onValueChange(event.target.value)}
         />
