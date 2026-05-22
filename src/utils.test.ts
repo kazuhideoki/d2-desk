@@ -6,7 +6,7 @@ import {
   decreaseZoom,
   ensureD2FileName,
   fileNameFromPath,
-  fitWidthZoom,
+  fitBoundsZoom,
   getDiagramViewBox,
   increaseZoom,
   moveSelectionIndex,
@@ -59,18 +59,23 @@ describe("utils", () => {
     expect(decreaseZoom(2)).toBe(1.9);
   });
 
-  it("calculates a clamped width-fit zoom", () => {
-    expect(fitWidthZoom(500, 1000)).toBe(0.5);
-    expect(fitWidthZoom(1234, 1000)).toBe(1.23);
-    expect(fitWidthZoom(10_000, 100)).toBe(10);
-    expect(fitWidthZoom(500, 0)).toBe(1);
-    expect(fitWidthZoom(Number.NaN, 1000)).toBe(1);
+  it("calculates a clamped bounds-fit zoom", () => {
+    expect(fitBoundsZoom(500, 600, 1000, 600)).toBe(0.5);
+    expect(fitBoundsZoom(1234, 300, 1000, 600)).toBe(0.5);
+    expect(fitBoundsZoom(500, 50, 1000, 1000)).toBe(0.05);
+    expect(fitBoundsZoom(1234, 1200, 1000, 600)).toBe(1.23);
+    expect(fitBoundsZoom(10_000, 10_000, 100, 100)).toBe(10);
+    expect(fitBoundsZoom(500, 600, 0, 600)).toBe(1);
+    expect(fitBoundsZoom(Number.NaN, 600, 1000, 600)).toBe(1);
   });
 
   it("keeps auto zoom stable around one-step resize thresholds", () => {
     expect(settleAutoZoom(1.23, 1.24)).toBe(1.23);
     expect(settleAutoZoom(1.23, 1.25)).toBe(1.23);
     expect(settleAutoZoom(1.23, 1.26)).toBe(1.26);
+    expect(settleAutoZoom(0.1, 0.09)).toBe(0.09);
+    expect(settleAutoZoom(0.09, 0.08)).toBe(0.08);
+    expect(settleAutoZoom(0.09, 0.086)).toBe(0.09);
     expect(settleAutoZoom(Number.NaN, 1.24)).toBe(1.24);
   });
 
