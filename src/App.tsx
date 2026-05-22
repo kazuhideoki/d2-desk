@@ -659,12 +659,27 @@ function MainApp() {
     return nextTabs;
   }, [persistTabs]);
 
-  const activateTab = useCallback((tabId: string) => {
-    activeTabIdRef.current = tabId;
-    setActiveTabId(tabId);
-    setActiveId(null);
-    setHoverId(null);
+  const focusEditorAfterTabActivation = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      editorRef.current?.focus();
+      window.setTimeout(() => editorRef.current?.focus(), 0);
+    });
   }, []);
+
+  const activateTab = useCallback(
+    (tabId: string) => {
+      const currentTabs = persistActiveEditorViewState();
+      if (!currentTabs.some((tab) => tab.id === tabId)) return;
+
+      activeTabIdRef.current = tabId;
+      setActiveTabId(tabId);
+      setActiveId(null);
+      setHoverId(null);
+      persistTabs(currentTabs, tabId);
+      focusEditorAfterTabActivation();
+    },
+    [focusEditorAfterTabActivation, persistActiveEditorViewState, persistTabs],
+  );
 
   const focusAdjacentTab = useCallback(
     (direction: -1 | 1) => {
@@ -677,10 +692,9 @@ function MainApp() {
       const nextIndex = (activeIndex + direction + currentTabs.length) % currentTabs.length;
       const nextTab = currentTabs[nextIndex];
       activateTab(nextTab.id);
-      persistTabs(currentTabs, nextTab.id);
       setStatus(`Focused ${nextTab.fileName}`);
     },
-    [activateTab, persistActiveEditorViewState, persistTabs],
+    [activateTab, persistActiveEditorViewState],
   );
 
   const moveTab = useCallback(

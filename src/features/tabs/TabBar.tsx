@@ -77,6 +77,10 @@ export function TabBar({
     if (wasDragging && target && sourceTabId !== target.tabId) {
       event.preventDefault();
       onReorderTabs(sourceTabId, target.tabId, target.position);
+      return;
+    }
+    if (!wasDragging) {
+      onActivateTab(sourceTabId);
     }
   }
 
@@ -118,10 +122,6 @@ export function TabBar({
               data-tab-id={tab.id}
               title={tab.fileName}
               onPointerDown={(event) => {
-                if (tabs.length <= 1) {
-                  event.preventDefault();
-                  return;
-                }
                 event.currentTarget.setPointerCapture(event.pointerId);
                 setDragState({
                   tabId: tab.id,
@@ -131,7 +131,6 @@ export function TabBar({
                 });
               }}
               onMouseDown={(event) => {
-                if (tabs.length <= 1) return;
                 setDragState({
                   tabId: tab.id,
                   startX: event.clientX,
@@ -154,6 +153,8 @@ export function TabBar({
               }}
               onPointerUp={(event) => {
                 const sourceTabId = dragState?.tabId ?? null;
+                const wasDragging =
+                  dragState?.isDragging || hasDragged(event.clientX, event.clientY);
                 const target = sourceTabId
                   ? (dropTargetFromPoint(event.clientX, event.clientY, sourceTabId) ?? dropTarget)
                   : null;
@@ -161,9 +162,13 @@ export function TabBar({
                   event.currentTarget.releasePointerCapture(event.pointerId);
                 }
                 resetDragState();
-                if (sourceTabId && target && sourceTabId !== target.tabId) {
+                if (sourceTabId && wasDragging && target && sourceTabId !== target.tabId) {
                   event.preventDefault();
                   onReorderTabs(sourceTabId, target.tabId, target.position);
+                  return;
+                }
+                if (sourceTabId && !wasDragging) {
+                  onActivateTab(sourceTabId);
                 }
               }}
               onPointerCancel={resetDragState}
@@ -173,6 +178,9 @@ export function TabBar({
                 type="button"
                 role="tab"
                 aria-selected={tab.id === activeTabId}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                }}
                 onClick={() => {
                   onActivateTab(tab.id);
                 }}
@@ -188,6 +196,12 @@ export function TabBar({
                 type="button"
                 aria-label={`Close ${tab.fileName}`}
                 title={`Close ${tab.fileName}`}
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                }}
+                onMouseDown={(event) => {
+                  event.stopPropagation();
+                }}
                 onClick={(event) => {
                   event.stopPropagation();
                   onCloseTab(tab.id);
