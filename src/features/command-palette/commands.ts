@@ -1,4 +1,5 @@
 import type { AppCommand } from "../../shared/commands";
+import type { Workspace } from "../../types";
 
 function normalizeCommandQuery(value: string) {
   return value.trim().toLowerCase();
@@ -48,4 +49,39 @@ export function filterCommands(commands: AppCommand[], query: string) {
       return left.index - right.index;
     })
     .map((item) => item.command);
+}
+
+export function createWorkspaceSelectionCommands(
+  workspaces: Workspace[],
+  activeWorkspaceId: string | null,
+  onSelectWorkspace: (workspaceId: string | null) => void | Promise<void>,
+): AppCommand[] {
+  const noWorkspaceCommand: AppCommand = {
+    id: "workspace.select.none",
+    title: "No Workspace",
+    category: "Workspace",
+    keywords: ["select", "switch", "change", "project", "folder", "none"],
+    enabled: activeWorkspaceId !== null,
+    run: () => onSelectWorkspace(null),
+  };
+
+  return [
+    noWorkspaceCommand,
+    ...workspaces.map((workspace) => ({
+      id: `workspace.select.${workspace.id}`,
+      title: workspace.name,
+      category: "Workspace" as const,
+      keywords: [
+        "select",
+        "switch",
+        "change",
+        "project",
+        "folder",
+        workspace.name,
+        workspace.rootPath,
+      ],
+      enabled: workspace.id !== activeWorkspaceId,
+      run: () => onSelectWorkspace(workspace.id),
+    })),
+  ];
 }

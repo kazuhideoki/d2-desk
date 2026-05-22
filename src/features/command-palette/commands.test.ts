@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { type AppCommand, isCommandEnabled } from "../../shared/commands";
-import { filterCommands } from "./commands";
+import type { Workspace } from "../../types";
+import { createWorkspaceSelectionCommands, filterCommands } from "./commands";
 
 const noop = () => undefined;
 
@@ -56,4 +57,44 @@ describe("commands", () => {
     expect(isCommandEnabled(commands[0])).toBe(true);
     expect(isCommandEnabled({ ...commands[0], enabled: false })).toBe(false);
   });
+
+  it("builds workspace selection commands for registered workspaces", () => {
+    const selectedWorkspaceIds: Array<string | null> = [];
+    const workspaceCommands = createWorkspaceSelectionCommands(
+      [
+        workspace({ id: "one", name: "Diagrams", rootPath: "/tmp/diagrams" }),
+        workspace({ id: "two", name: "Architecture", rootPath: "/tmp/architecture" }),
+      ],
+      "one",
+      (workspaceId) => {
+        selectedWorkspaceIds.push(workspaceId);
+      },
+    );
+
+    expect(workspaceCommands.map((command) => command.title)).toEqual([
+      "No Workspace",
+      "Diagrams",
+      "Architecture",
+    ]);
+    expect(workspaceCommands.map((command) => command.enabled)).toEqual([true, false, true]);
+    expect(filterCommands(workspaceCommands, "architecture").map((command) => command.id)).toEqual([
+      "workspace.select.two",
+    ]);
+
+    workspaceCommands[2].run();
+    expect(selectedWorkspaceIds).toEqual(["two"]);
+  });
 });
+
+function workspace(overrides: Partial<Workspace> = {}): Workspace {
+  return {
+    id: "workspace",
+    name: "Workspace",
+    rootPath: "/tmp/workspace",
+    createdAt: "2026-05-22T00:00:00.000Z",
+    lastOpenedAt: "2026-05-22T00:00:00.000Z",
+    activeTabId: "tab",
+    tabs: [],
+    ...overrides,
+  };
+}
