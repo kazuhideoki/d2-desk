@@ -917,7 +917,7 @@ pub fn run() {
                     .accelerator("Command+Shift+P")
                     .build(handle)?;
             let toggle_preview_fullscreen =
-                MenuItemBuilder::with_id("toggle-preview-fullscreen", "Toggle Preview Fullscreen")
+                MenuItemBuilder::with_id("toggle-preview-fullscreen", "Toggle Preview View")
                     .accelerator("Command+Alt+P")
                     .build(handle)?;
             let toggle_detached_preview =
