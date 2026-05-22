@@ -57,6 +57,15 @@ type completeParams struct {
 	Column int    `json:"column"`
 }
 
+type semanticTokenParams struct {
+	Source string `json:"source"`
+}
+
+type semanticToken struct {
+	TokenType   string      `json:"tokenType"`
+	SourceRange sourceRange `json:"sourceRange"`
+}
+
 type diagnostic struct {
 	Message     string      `json:"message"`
 	Severity    string      `json:"severity"`

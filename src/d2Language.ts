@@ -1,11 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import type * as Monaco from "monaco-editor";
-import type { D2CompletionItem, WorkspaceFileEntry } from "./types";
+import type { D2CompletionItem, D2SemanticToken, SourceRange, WorkspaceFileEntry } from "./types";
 
 const d2ValueCompletionPattern =
   /(?:^|[{\s;])(?:[\w"'-]+(?:\.[\w-]+)*\.)?[\w-]+(?:\.[\w-]+)*\s*:\s*([\w-]*)$/;
 
 let didRegisterD2Completions = false;
+let didRegisterD2SemanticTokens = false;
 const d2CompletionTriggerCharacters = [
   ":",
   " ",
@@ -14,6 +15,14 @@ const d2CompletionTriggerCharacters = [
   "/",
   ..."-_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
 ];
+const d2SemanticTokenLegend: Monaco.languages.SemanticTokensLegend = {
+  tokenTypes: ["boolean"],
+  tokenModifiers: [],
+};
+const d2SemanticTokenTypeIndexes = new Map(
+  d2SemanticTokenLegend.tokenTypes.map((tokenType, index) => [tokenType, index]),
+);
+const d2SemanticTokenSlowThresholdMs = 50;
 
 type D2CompletionContext =
   | {
@@ -40,7 +49,13 @@ type D2ImportCompletionContext = {
   }[];
 };
 
+type D2SemanticTokenCacheEntry = {
+  versionId: number;
+  promise: Promise<Monaco.languages.SemanticTokens>;
+};
+
 let d2ImportCompletionContextProvider: (() => D2ImportCompletionContext) | null = null;
+const d2SemanticTokenCache = new Map<string, D2SemanticTokenCacheEntry>();
 
 export function setD2ImportCompletionContextProvider(
   provider: (() => D2ImportCompletionContext) | null,
@@ -70,6 +85,40 @@ export function configureD2Language(monaco: typeof Monaco) {
       ],
     },
   });
+  if (!didRegisterD2SemanticTokens) {
+    didRegisterD2SemanticTokens = true;
+    monaco.languages.registerDocumentSemanticTokensProvider("d2", {
+      getLegend() {
+        return d2SemanticTokenLegend;
+      },
+      provideDocumentSemanticTokens(model, _lastResultId, token) {
+        const versionId = model.getVersionId();
+        const cacheKey = model.uri.toString();
+        const cached = d2SemanticTokenCache.get(cacheKey);
+        if (cached?.versionId === versionId) {
+          return cached.promise;
+        }
+
+        const source = model.getValue();
+        const startedAt = performance.now();
+        const promise = getD2SemanticTokens(source)
+          .then((tokens) => {
+            logSlowD2SemanticTokens(performance.now() - startedAt, source.length, tokens.length);
+            if (token.isCancellationRequested || model.isDisposed() || model.getVersionId() !== versionId) {
+              return emptyD2SemanticTokens();
+            }
+            return {
+              resultId: String(versionId),
+              data: encodeD2SemanticTokens(tokens),
+            };
+          })
+          .catch(() => emptyD2SemanticTokens());
+        d2SemanticTokenCache.set(cacheKey, { versionId, promise });
+        return promise;
+      },
+      releaseDocumentSemanticTokens() {},
+    });
+  }
   if (!didRegisterD2Completions) {
     didRegisterD2Completions = true;
     monaco.languages.registerCompletionItemProvider("d2", {
@@ -167,6 +216,7 @@ export function configureD2Language(monaco: typeof Monaco) {
       { token: "keyword", foreground: "4fc1ff" },
       { token: "type", foreground: "4ec9b0" },
       { token: "string", foreground: "ce9178" },
+      { token: "boolean", foreground: "569cd6" },
       { token: "delimiter", foreground: "d4d4d4" },
     ],
     colors: {
@@ -176,6 +226,59 @@ export function configureD2Language(monaco: typeof Monaco) {
       "editorCursor.foreground": "#f8fafc",
     },
   });
+}
+
+async function getD2SemanticTokens(source: string) {
+  return invoke<D2SemanticToken[]>("sidecar_call", {
+    method: "semanticTokens",
+    params: { source },
+  });
+}
+
+function emptyD2SemanticTokens(): Monaco.languages.SemanticTokens {
+  return { data: new Uint32Array() };
+}
+
+function logSlowD2SemanticTokens(durationMs: number, sourceLength: number, tokenCount: number) {
+  if (durationMs < d2SemanticTokenSlowThresholdMs) return;
+  console.debug("D2 semantic tokens were slow", {
+    durationMs: Math.round(durationMs),
+    sourceLength,
+    tokenCount,
+  });
+}
+
+export function encodeD2SemanticTokens(tokens: D2SemanticToken[]) {
+  const sortedTokens = [...tokens].sort((a, b) => compareSourceRanges(a.sourceRange, b.sourceRange));
+  const data: number[] = [];
+  let previousLine = 0;
+  let previousStartColumn = 0;
+
+  for (const token of sortedTokens) {
+    const range = token.sourceRange;
+    if (range.endLine !== range.startLine || range.endColumn <= range.startColumn) {
+      continue;
+    }
+
+    const tokenTypeIndex = d2SemanticTokenTypeIndexes.get(token.tokenType);
+    if (tokenTypeIndex === undefined) {
+      continue;
+    }
+
+    const line = range.startLine - 1;
+    const startColumn = range.startColumn - 1;
+    const deltaLine = line - previousLine;
+    const deltaStartColumn = deltaLine === 0 ? startColumn - previousStartColumn : startColumn;
+    data.push(deltaLine, deltaStartColumn, range.endColumn - range.startColumn, tokenTypeIndex, 0);
+    previousLine = line;
+    previousStartColumn = startColumn;
+  }
+
+  return new Uint32Array(data);
+}
+
+function compareSourceRanges(a: SourceRange, b: SourceRange) {
+  return a.startLine - b.startLine || a.startColumn - b.startColumn || a.endLine - b.endLine || a.endColumn - b.endColumn;
 }
 
 export function isD2LineCommentPosition(lineContent: string, column: number) {

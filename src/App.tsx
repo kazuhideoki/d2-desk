@@ -494,10 +494,15 @@ function MainApp() {
     selectedBoardPathRef.current = selectedBoardPath;
   }, [selectedBoardPath]);
 
+  function invalidateCursorLookup() {
+    compileResultSourceRef.current = null;
+  }
+
   useEffect(() => {
     if (selectedBoardPath.length === 0) return;
     if (compileResult.boards && hasBoardPath(compileResult.boards, selectedBoardPath)) return;
     setSelectedBoardPath([]);
+    invalidateCursorLookup();
     setActiveId(null);
     setHoverId(null);
   }, [compileResult.boards, selectedBoardPath]);
@@ -847,6 +852,7 @@ function MainApp() {
   const selectPreviewBoard = useCallback(
     (boardPath: string[]) => {
       clearSuggestPreview();
+      invalidateCursorLookup();
       setActiveId(null);
       setHoverId(null);
       setSelectedBoardPath(boardPath);

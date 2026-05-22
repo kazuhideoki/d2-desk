@@ -73,6 +73,7 @@ export function EditorPane({
           wordWrap: perfDebugOptions.wordWrap ? "on" : "off",
           quickSuggestions: perfDebugOptions.autoSuggest,
           suggestOnTriggerCharacters: perfDebugOptions.autoSuggest,
+          "semanticHighlighting.enabled": true,
           tabSize: 2,
           automaticLayout: true,
         }}
