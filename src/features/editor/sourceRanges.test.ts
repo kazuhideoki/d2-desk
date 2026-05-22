@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CompileResult, SourceRange } from "../../types";
-import { objectIdAtPosition, sourceRangeContains } from "./sourceRanges";
+import { connectionIdAtPosition, objectIdAtPosition, sourceRangeContains } from "./sourceRanges";
 
 const range = (startLine: number, startColumn: number, endLine: number, endColumn: number) => ({
   file: "main.d2",
@@ -16,6 +16,16 @@ const object = (
 ): CompileResult["objects"][number] => ({
   id,
   kind: "shape",
+  sourceRanges,
+  preview: {},
+});
+
+const connection = (
+  id: string,
+  sourceRanges: SourceRange[] | null,
+): CompileResult["objects"][number] => ({
+  id,
+  kind: "connection",
   sourceRanges,
   preview: {},
 });
@@ -53,5 +63,18 @@ describe("sourceRanges", () => {
 
     expect(objectIdAtPosition(objects, 1, 1)).toBeNull();
     expect(objectIdAtPosition(objects, 2, 2)).toBe("api");
+  });
+
+  it("can prefer a connection over endpoint shapes at the same editor position", () => {
+    const objects: CompileResult["objects"] = [
+      object("api", [range(1, 1, 1, 4)]),
+      object("db", [range(1, 8, 1, 10)]),
+      connection("(api -> db)[0]", [range(1, 5, 1, 7), range(1, 1, 1, 10)]),
+    ];
+
+    expect(objectIdAtPosition(objects, 1, 2)).toBe("api");
+    expect(connectionIdAtPosition(objects, 1, 2)).toBe("(api -> db)[0]");
+    expect(connectionIdAtPosition(objects, 1, 6)).toBe("(api -> db)[0]");
+    expect(connectionIdAtPosition(objects, 2, 1)).toBeNull();
   });
 });

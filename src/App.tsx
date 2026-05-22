@@ -23,7 +23,7 @@ import { loadInitialSession, type InitialSession } from "./app/initialSession";
 import { CommandPalette } from "./features/command-palette/CommandPalette";
 import { isCommandEnabled, type AppCommand } from "./shared/commands";
 import { EditorPane } from "./features/editor/EditorPane";
-import { objectIdAtPosition } from "./features/editor/sourceRanges";
+import { connectionIdAtPosition, objectIdAtPosition } from "./features/editor/sourceRanges";
 import { switchEdgeDirectionInSource } from "./features/editor/switchEdge";
 import {
   completionPreviewSource,
@@ -322,6 +322,8 @@ function MainApp() {
   const activeIdRef = useRef(activeId);
   const hoverIdRef = useRef(hoverId);
   const compileResultRef = useRef(compileResult);
+  const compileResultSourceRef = useRef<string | null>(null);
+  const lastSwitchedConnectionRef = useRef<{ id: string; source: string } | null>(null);
   const detachedPreviewStateRef = useRef<DetachedPreviewState>(emptyDetachedPreviewState);
 
   const activeTab = useMemo(
@@ -649,7 +651,11 @@ function MainApp() {
   }, []);
 
   const restoreEditorViewStateAfterSourceUpdate = useCallback(
-    (snapshot: EditorCursorSnapshot | null, expectedSource: string) => {
+    (
+      snapshot: EditorCursorSnapshot | null,
+      expectedSource: string,
+      options: { preserveActiveObject?: boolean } = {},
+    ) => {
       if (!snapshot) {
         window.requestAnimationFrame(() => editorRef.current?.focus());
         return;
@@ -682,7 +688,7 @@ function MainApp() {
         }
         editor.focus();
         const position = snapshot.position ?? editor.getPosition();
-        if (position) {
+        if (position && !options.preserveActiveObject) {
           void updateFocusedObjectFromPosition(editor, position);
         }
       };
@@ -825,6 +831,29 @@ function MainApp() {
     [clearSuggestPreview],
   );
 
+  async function compileCurrentSourceForLookup(currentSource: string) {
+    if (compileResultSourceRef.current === currentSource) {
+      return compileResultRef.current;
+    }
+
+    const result = await invoke<CompileResult>("sidecar_call", {
+      method: "compile",
+      params: sidecarSourceParams(currentSource),
+    });
+    if (result.diagnostics.length > 0) {
+      return null;
+    }
+
+    compileResultRef.current = result;
+    compileResultSourceRef.current = currentSource;
+    objectLookupRef.current = {
+      modelVersionId: editorRef.current?.getModel()?.getVersionId() ?? null,
+      objects: result.objects,
+    };
+    setCompileResult(result);
+    return result;
+  }
+
   const isEditingIconValueCompletion = useCallback(() => {
     const editor = editorRef.current;
     const model = editor?.getModel();
@@ -865,6 +894,7 @@ function MainApp() {
           modelVersionId: editorRef.current?.getModel()?.getVersionId() ?? null,
           objects: result.objects,
         };
+        compileResultSourceRef.current = nextSource;
         setCompileResult(result);
         setStatus("Compiled");
       } catch (error) {
@@ -1317,17 +1347,46 @@ function MainApp() {
 
   const switchFocusedEdgeDirection = useCallback(async () => {
     const editor = editorRef.current;
-    const currentSource = latestCompileInputsRef.current.source;
+    const currentSource = editor?.getValue() ?? latestCompileInputsRef.current.source;
+    const currentCompileResult = await compileCurrentSourceForLookup(currentSource);
+    if (!currentCompileResult) {
+      setStatus("Switch Edge requires a valid diagram");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
     const editorPosition = editor?.getPosition() ?? null;
     const shouldPreferEditorCursor = editor?.hasTextFocus() ?? false;
-    let targetId = shouldPreferEditorCursor ? null : (hoverIdRef.current ?? activeIdRef.current);
+    const hoveredOrActiveId = hoverIdRef.current ?? activeIdRef.current;
+    const hoveredOrActiveObject =
+      currentCompileResult.objects.find((object) => object.id === hoveredOrActiveId) ?? null;
+    let targetId =
+      !shouldPreferEditorCursor && hoveredOrActiveObject?.kind === "connection"
+        ? hoveredOrActiveObject.id
+        : null;
 
     if (!targetId && editorPosition) {
-      targetId = await objectIdAtCurrentPosition(currentSource, editorPosition);
+      targetId =
+        connectionIdAtPosition(
+          currentCompileResult.objects,
+          editorPosition.lineNumber,
+          editorPosition.column,
+        ) ?? (await connectionIdAtCurrentPosition(currentSource, editorPosition));
+    }
+
+    if (!targetId && hoveredOrActiveObject?.kind === "connection") {
+      targetId = hoveredOrActiveObject.id;
+    }
+    if (!targetId && lastSwitchedConnectionRef.current?.source === currentSource) {
+      const lastSwitchedObject =
+        currentCompileResult.objects.find(
+          (object) =>
+            object.kind === "connection" && object.id === lastSwitchedConnectionRef.current?.id,
+        ) ?? null;
+      targetId = lastSwitchedObject?.id ?? null;
     }
 
     const selectedObject =
-      compileResultRef.current.objects.find((object) => object.id === targetId) ?? null;
+      currentCompileResult.objects.find((object) => object.id === targetId) ?? null;
     if (!selectedObject || selectedObject.kind !== "connection") {
       setStatus("Select an edge to switch");
       window.requestAnimationFrame(() => editorRef.current?.focus());
@@ -1350,9 +1409,14 @@ function MainApp() {
 
     updateActiveTab({ source: result.source, editorViewState: editorCursorSnapshot?.viewState });
     setActiveId(selectedObject.id);
+    activeIdRef.current = selectedObject.id;
     setHoverId(null);
+    hoverIdRef.current = null;
+    lastSwitchedConnectionRef.current = { id: selectedObject.id, source: result.source };
     setStatus(`Switched ${selectedObject.id}`);
-    restoreEditorViewStateAfterSourceUpdate(editorCursorSnapshot, result.source);
+    restoreEditorViewStateAfterSourceUpdate(editorCursorSnapshot, result.source, {
+      preserveActiveObject: true,
+    });
   }, [restoreEditorViewStateAfterSourceUpdate, updateActiveTab]);
 
   const commitRenameNode = useCallback(async () => {
@@ -2158,6 +2222,13 @@ function MainApp() {
     } catch {
       return null;
     }
+  }
+
+  async function connectionIdAtCurrentPosition(source: string, position: Monaco.IPosition) {
+    const targetId = await objectIdAtCurrentPosition(source, position);
+    const targetObject =
+      compileResultRef.current.objects.find((object) => object.id === targetId) ?? null;
+    return targetObject?.kind === "connection" ? targetObject.id : null;
   }
 
   function highlightObject(id: string | null, reveal: boolean, focusEditor = true) {

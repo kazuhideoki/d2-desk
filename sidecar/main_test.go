@@ -753,6 +753,25 @@ func TestNodeAtFindsConnectionOperator(t *testing.T) {
 	}
 }
 
+func TestCompileMapsReverseConnectionOperator(t *testing.T) {
+	result, err := compile(compileParams{Source: "db <- api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection := findConnectionByID(result.Objects, "(db <- api)[0]")
+	if connection == nil {
+		t.Fatalf("expected reverse connection in %#v", result.Objects)
+	}
+	if !hasRange(connection.SourceRanges, 1, 4, 6) {
+		t.Fatalf("expected reverse connection to include arrow operator range, got %#v", connection.SourceRanges)
+	}
+
+	cursor := nodeAt(nodeAtParams{Source: "db <- api", Line: 1, Column: 5})
+	if cursor["id"] != connection.ID {
+		t.Fatalf("expected cursor on reverse connection arrow to focus connection, got %#v", cursor)
+	}
+}
+
 func TestFormatPreservesValidDocument(t *testing.T) {
 	formatted, err := format("api: API Server\napi -> db")
 	if err != nil {
