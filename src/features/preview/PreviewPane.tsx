@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ZoomIn, ZoomOut } from "lucide-react";
 import type { D2Object } from "../../types";
-import { connectionPath, fitWidthZoom } from "../../utils";
+import { connectionPath, fitWidthZoom, settleAutoZoom } from "../../utils";
 import { RepeatButton } from "../../shared/components/RepeatButton";
 
 export type PreviewZoomMode = "auto" | "manual";
@@ -50,10 +50,6 @@ function measureSvgSize(
 ) {
   if (!svg) return fallback;
 
-  const rect = svg.getBoundingClientRect();
-  const zoomScale = Number.isFinite(currentZoom) && currentZoom > 0 ? currentZoom : 1;
-  const layoutWidth = rect.width > 0 ? rect.width / zoomScale : null;
-  const layoutHeight = rect.height > 0 ? rect.height / zoomScale : null;
   const viewBox = svg.getAttribute("viewBox")?.split(/\s+/).map(Number) ?? [];
   const viewBoxWidth =
     viewBox.length === 4 && Number.isFinite(viewBox[2]) && viewBox[2] > 0 ? viewBox[2] : null;
@@ -61,18 +57,24 @@ function measureSvgSize(
     viewBox.length === 4 && Number.isFinite(viewBox[3]) && viewBox[3] > 0 ? viewBox[3] : null;
   const attrWidth = parsePositiveNumber(svg.getAttribute("width"));
   const attrHeight = parsePositiveNumber(svg.getAttribute("height"));
+  const rect = svg.getBoundingClientRect();
+  const zoomScale = Number.isFinite(currentZoom) && currentZoom > 0 ? currentZoom : 1;
+  const layoutWidth = rect.width > 0 ? rect.width / zoomScale : null;
+  const layoutHeight = rect.height > 0 ? rect.height / zoomScale : null;
 
   return {
-    width: layoutWidth ?? attrWidth ?? viewBoxWidth ?? fallback.width,
-    height: layoutHeight ?? attrHeight ?? viewBoxHeight ?? fallback.height,
+    width: attrWidth ?? viewBoxWidth ?? layoutWidth ?? fallback.width,
+    height: attrHeight ?? viewBoxHeight ?? layoutHeight ?? fallback.height,
   };
 }
 
-function contentWidth(viewport: HTMLElement) {
+function availableContentWidth(viewport: HTMLElement) {
   const style = window.getComputedStyle(viewport);
   const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
   const paddingRight = Number.parseFloat(style.paddingRight) || 0;
-  return Math.max(0, viewport.clientWidth - paddingLeft - paddingRight);
+  const rectWidth = viewport.getBoundingClientRect().width;
+  const viewportWidth = rectWidth > 0 ? rectWidth : viewport.clientWidth;
+  return Math.max(0, viewportWidth - paddingLeft - paddingRight);
 }
 
 export function PreviewPane({
@@ -109,7 +111,8 @@ export function PreviewPane({
     if (zoomMode === "auto") {
       viewport.scrollLeft = 0;
       viewport.scrollTop = 0;
-      onAutoZoomChange(fitWidthZoom(contentWidth(viewport), nextSize.width));
+      const nextZoom = fitWidthZoom(availableContentWidth(viewport), nextSize.width);
+      onAutoZoomChange(settleAutoZoom(zoom, nextZoom));
     }
   }, [fallbackSize, onAutoZoomChange, zoom, zoomMode]);
 
