@@ -9,6 +9,7 @@ import {
   loadTabs,
   normalizeTab,
   reorderTabs,
+  tabAbsolutePath,
   writeStoredTabs,
 } from "./tabs";
 import type { D2Tab } from "../../types";
@@ -145,6 +146,14 @@ describe("tabs", () => {
     expect(isTabUnsaved(autoChanged)).toBe(true);
     expect(hasTabPendingUserChanges(autoChanged)).toBe(false);
     expect(hasTabPendingUserChanges(userChanged)).toBe(true);
+  });
+
+  it("returns a copyable absolute path only for file-backed tabs", () => {
+    expect(tabAbsolutePath({ ...createTab("main.d2", ""), filePath: "/tmp/main.d2" })).toBe(
+      "/tmp/main.d2",
+    );
+    expect(tabAbsolutePath(createTab("untitled.d2", ""))).toBeNull();
+    expect(tabAbsolutePath(null)).toBeNull();
   });
 
   it("reorders tabs before or after the drop target", () => {

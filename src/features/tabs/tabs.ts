@@ -9,6 +9,10 @@ export function hasTabPendingUserChanges(tab: D2Tab) {
   return tab.hasUserChanges && isTabUnsaved(tab);
 }
 
+export function tabAbsolutePath(tab: Pick<D2Tab, "filePath"> | null | undefined) {
+  return tab?.filePath && tab.filePath.length > 0 ? tab.filePath : null;
+}
+
 export type TabDropPosition = "before" | "after";
 
 export function reorderTabs(
