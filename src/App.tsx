@@ -1758,25 +1758,7 @@ function MainApp() {
     quitInFlightRef.current = true;
 
     try {
-      const currentTabs = persistActiveEditorViewState();
-      const unsavedTabs = currentTabs.filter(hasTabPendingUserChanges);
-      if (unsavedTabs.length > 0) {
-        const fileList = unsavedTabs.map((tab) => tab.fileName).join(", ");
-        const shouldQuit = await confirm(
-          `${fileList} ${unsavedTabs.length === 1 ? "has" : "have"} unsaved changes. Quit anyway?`,
-          {
-            title: "Unsaved changes",
-            kind: "warning",
-            okLabel: "Quit without saving",
-            cancelLabel: "Cancel",
-          },
-        );
-        if (!shouldQuit) {
-          setStatus("Quit canceled");
-          return;
-        }
-      }
-
+      persistActiveEditorViewState();
       setStatus("Quitting");
       try {
         await invoke("quit_application");
