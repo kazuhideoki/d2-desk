@@ -31,6 +31,10 @@ export function getActiveWorkspace(state: StoredWorkspaces) {
   return state.workspaces.find((workspace) => workspace.id === state.activeWorkspaceId) ?? null;
 }
 
+export function activeWorkspaceDirectoryPath(state: StoredWorkspaces) {
+  return getActiveWorkspace(state)?.rootPath ?? null;
+}
+
 export function createWorkspace(rootPath: string): Workspace {
   const now = new Date().toISOString();
   const firstTab = createTab("untitled.d2", "");

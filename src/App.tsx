@@ -10,7 +10,6 @@ import {
   FileDown,
   FileInput,
   Focus,
-  FolderPlus,
   Maximize2,
   Save,
   Settings,
@@ -98,6 +97,7 @@ import {
   normalizeSvgSize,
 } from "./utils";
 import {
+  activeWorkspaceDirectoryPath,
   activateWorkspace,
   addOrTouchWorkspace,
   loadWorkspaceActiveTabId,
@@ -1861,6 +1861,21 @@ function MainApp() {
     }
   }, [applyWorkspaceSelection, confirmLeavingCurrentWorkspace]);
 
+  const openActiveWorkspaceInFinder = useCallback(async () => {
+    const workspacePath = activeWorkspaceDirectoryPath(workspaceStateRef.current);
+    if (!workspacePath) {
+      setStatus("Open a workspace folder first");
+      return;
+    }
+
+    try {
+      await invoke("open_workspace_in_finder", { rootPath: workspacePath });
+      setStatus(`Opened ${workspacePath} in Finder`);
+    } catch (error) {
+      setStatus(String(error));
+    }
+  }, []);
+
   const removeRegisteredWorkspace = useCallback(
     async (workspaceId: string) => {
       const workspace = workspaceStateRef.current.workspaces.find((item) => item.id === workspaceId);
@@ -2572,17 +2587,6 @@ function MainApp() {
   const topbarCommands = useMemo<ToolbarCommand[]>(
     () => [
       {
-        id: "workspace.openFolder",
-        title: "Open Workspace Folder",
-        category: "Workspace",
-        keywords: ["folder", "directory", "project"],
-        icon: FolderPlus,
-        toolbarGroup: 0,
-        run: () => {
-          void openWorkspaceFolder();
-        },
-      },
-      {
         id: "workspace.manage",
         title: "Manage Workspaces",
         category: "Workspace",
@@ -2709,7 +2713,6 @@ function MainApp() {
       formatDocument,
       openSourceFile,
       openWithEditor,
-      openWorkspaceFolder,
       previewDetached,
       saveSource,
       source,
@@ -2728,6 +2731,25 @@ function MainApp() {
   const paletteCommands = useMemo<AppCommand[]>(
     () => [
       ...topbarCommands,
+      {
+        id: "workspace.openActiveInFinder",
+        title: "Open Current Workspace in Finder",
+        category: "Workspace",
+        keywords: ["current", "active", "finder", "folder", "directory", "reveal", "show"],
+        enabled: Boolean(activeWorkspaceDirectoryPath(workspaceState)),
+        run: () => {
+          void openActiveWorkspaceInFinder();
+        },
+      },
+      {
+        id: "workspace.openFolder",
+        title: "Open Workspace Folder",
+        category: "Workspace",
+        keywords: ["add", "register", "switch", "folder", "directory", "project"],
+        run: () => {
+          void openWorkspaceFolder();
+        },
+      },
       {
         id: "view.toggleBottomPanel",
         title: bottomPanelVisible ? "Hide Bottom Panel" : "Show Bottom Panel",
@@ -2768,10 +2790,13 @@ function MainApp() {
       copyFocusedTabAbsolutePath,
       bottomPanelVisible,
       currentFilePath,
+      openActiveWorkspaceInFinder,
+      openWorkspaceFolder,
       renameFocusedFile,
       switchFocusedEdgeDirection,
       toggleBottomPanel,
       topbarCommands,
+      workspaceState,
     ],
   );
   const runAppCommand = useCallback((command: AppCommand) => {

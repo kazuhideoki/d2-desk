@@ -194,6 +194,29 @@ fn open_file_with_editor(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_workspace_in_finder(root_path: String) -> Result<(), String> {
+    let root = PathBuf::from(root_path);
+    let root = root
+        .canonicalize()
+        .map_err(|err| format!("failed to open workspace folder {}: {err}", root.display()))?;
+    if !root.is_dir() {
+        return Err(format!("workspace is not a folder: {}", root.display()));
+    }
+
+    let status = Command::new("open")
+        .arg("-a")
+        .arg("Finder")
+        .arg(&root)
+        .status()
+        .map_err(|err| format!("failed to open Finder: {err}"))?;
+    if !status.success() {
+        return Err(format!("failed to open Finder: open exited with {status}"));
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 fn list_workspace_files(root_path: String) -> Result<Vec<WorkspaceFileEntry>, String> {
     let root = PathBuf::from(root_path);
     let root = root
@@ -1023,6 +1046,7 @@ pub fn run() {
             rename_d2_file,
             list_workspace_files,
             open_file_with_editor,
+            open_workspace_in_finder,
             close_current_window,
             open_preview_window,
             close_preview_window,

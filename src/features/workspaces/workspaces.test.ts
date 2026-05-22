@@ -4,6 +4,7 @@ import { createTab } from "../tabs/tabs";
 import type { StoredWorkspaces, Workspace } from "../../types";
 import {
   activateWorkspace,
+  activeWorkspaceDirectoryPath,
   addOrTouchWorkspace,
   getActiveWorkspace,
   loadWorkspaceActiveTabId,
@@ -122,11 +123,13 @@ describe("workspaces", () => {
 
     expect(activated.activeWorkspaceId).toBe("two");
     expect(getActiveWorkspace(activated)?.id).toBe("two");
+    expect(activeWorkspaceDirectoryPath(activated)).toBe("/tmp/project");
 
     const removed = removeWorkspace(activated, "two");
 
     expect(removed.activeWorkspaceId).toBeNull();
     expect(removed.workspaces.map((item) => item.id)).toEqual(["one"]);
+    expect(activeWorkspaceDirectoryPath(removed)).toBeNull();
   });
 
   it("updates tabs for only the target workspace", () => {
