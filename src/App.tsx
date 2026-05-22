@@ -325,12 +325,9 @@ function MainApp() {
   const [previewZoomMode, setPreviewZoomMode] = useState<PreviewZoomMode>("auto");
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const [previewDetached, setPreviewDetached] = useState(false);
-<<<<<<< HEAD
   const [perfDebugOptions, setPerfDebugOptions] =
     useState<PerfDebugOptions>(defaultPerfDebugOptions);
-=======
   const [selectedBoardPath, setSelectedBoardPath] = useState<string[]>([]);
->>>>>>> feature/d2lang-composition-preview-ux
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decorationIds = useRef<string[]>([]);
@@ -379,12 +376,8 @@ function MainApp() {
   );
   const source = activeTab?.source ?? "";
   const fileName = activeTab?.fileName ?? "untitled.d2";
-<<<<<<< HEAD
   const currentFilePath = tabAbsolutePath(activeTab);
-=======
-  const currentFilePath = activeTab?.filePath ?? null;
   const selectedBoardPathKey = useMemo(() => boardPathKey(selectedBoardPath), [selectedBoardPath]);
->>>>>>> feature/d2lang-composition-preview-ux
   const latestCompileInputsRef = useRef({ tabId: activeTabId, source });
   latestCompileInputsRef.current = { tabId: activeTabId, source };
   const visibleCompileResult = suggestPreviewResult ?? compileResult;
@@ -490,6 +483,10 @@ function MainApp() {
   useEffect(() => {
     selectedBoardPathRef.current = selectedBoardPath;
   }, [selectedBoardPath]);
+
+  function invalidateCursorLookup() {
+    compileResultSourceRef.current = null;
+  }
 
   useEffect(() => {
     if (selectedBoardPath.length === 0) return;
@@ -818,7 +815,6 @@ function MainApp() {
     setSuggestPreviewResult(null);
   }, []);
 
-<<<<<<< HEAD
   useEffect(() => {
     perfDebugOptionsRef.current = perfDebugOptions;
     if (!perfDebugOptions.suggestPreview) {
@@ -828,7 +824,7 @@ function MainApp() {
       activeCompileRequestId.current += 1;
     }
   }, [clearSuggestPreview, perfDebugOptions]);
-=======
+
   const selectPreviewBoard = useCallback(
     (boardPath: string[]) => {
       clearSuggestPreview();
@@ -841,7 +837,6 @@ function MainApp() {
     },
     [clearSuggestPreview],
   );
->>>>>>> feature/d2lang-composition-preview-ux
 
   function sidecarSourceParams(nextSource: string) {
     const workspaceId = activeWorkspaceIdRef.current;
@@ -939,15 +934,7 @@ function MainApp() {
     }
 
     compileResultRef.current = result;
-<<<<<<< HEAD
-    compileResultSourceRef.current = currentSource;
-=======
     compileResultSourceRef.current = currentCompileResultKey;
-    objectLookupRef.current = {
-      modelVersionId: editorRef.current?.getModel()?.getVersionId() ?? null,
-      objects: result.objects,
-    };
->>>>>>> feature/d2lang-composition-preview-ux
     setCompileResult(result);
     return result;
   }
@@ -988,15 +975,7 @@ function MainApp() {
           setStatus("Diagnostics updated; preview kept from last valid compile");
           return;
         }
-<<<<<<< HEAD
-        compileResultSourceRef.current = nextSource;
-=======
-        objectLookupRef.current = {
-          modelVersionId: editorRef.current?.getModel()?.getVersionId() ?? null,
-          objects: result.objects,
-        };
         compileResultSourceRef.current = compileResultKey(nextSource, selectedBoardPathRef.current);
->>>>>>> feature/d2lang-composition-preview-ux
         setCompileResult(result);
         setStatus("Compiled");
       } catch (error) {
@@ -1082,11 +1061,8 @@ function MainApp() {
     clearSuggestPreview,
     compile,
     isEditingIconValueCompletion,
-<<<<<<< HEAD
     perfDebugOptions.previewCompile,
-=======
     selectedBoardPathKey,
->>>>>>> feature/d2lang-composition-preview-ux
     source,
   ]);
 

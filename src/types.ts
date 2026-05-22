@@ -76,6 +76,11 @@ export type D2CompletionItem = {
   colorSwatches?: string[];
 };
 
+export type D2SemanticToken = {
+  tokenType: "boolean";
+  sourceRange: SourceRange;
+};
+
 export type D2Tab = {
   id: string;
   fileName: string;

@@ -102,6 +102,22 @@ func TestHandleDispatchesMethods(t *testing.T) {
 			},
 		},
 		{
+			name: "semanticTokens",
+			request: request{
+				Method: "semanticTokens",
+				Params: mustParams(t, semanticTokenParams{Source: "api: { style.shadow: true }"}),
+			},
+			validate: func(t *testing.T, result any) {
+				tokens, ok := result.([]semanticToken)
+				if !ok {
+					t.Fatalf("expected semantic tokens, got %T", result)
+				}
+				if !hasSemanticToken(tokens, "boolean", 1, 22, 1, 26) {
+					t.Fatalf("expected boolean semantic token, got %#v", tokens)
+				}
+			},
+		},
+		{
 			name: "export",
 			request: request{
 				Method: "export",
@@ -1476,6 +1492,24 @@ func TestCompleteReturnsAdditionalValueCompletions(t *testing.T) {
 	}
 }
 
+func TestSemanticTokensReturnsOnlyBooleanTypedValues(t *testing.T) {
+	source := "true: label\napi: true\nhoge: { hoge: true }\napi: { style.shadow: true; label: \"false\" }\nvars: { d2-config: { sketch: false } }"
+	tokens, err := semanticTokens(semanticTokenParams{Source: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(tokens) != 2 {
+		t.Fatalf("expected 2 boolean tokens, got %#v", tokens)
+	}
+	if !hasSemanticToken(tokens, "boolean", 4, 22, 4, 26) {
+		t.Fatalf("expected style.shadow true token, got %#v", tokens)
+	}
+	if !hasSemanticToken(tokens, "boolean", 5, 30, 5, 35) {
+		t.Fatalf("expected sketch false token, got %#v", tokens)
+	}
+}
+
 func TestCompleteReturnsThemeMetadata(t *testing.T) {
 	source := "vars: {\n  d2-config: {\n    theme-id: \n  }\n}"
 	items, err := complete(completeParams{Source: source, Line: 2, Column: len("    theme-id: ")})
@@ -1749,6 +1783,19 @@ func hasCompletionKind(items []completionItem, label, kind string) bool {
 func hasCompletionInsertText(items []completionItem, label, insertText string) bool {
 	for _, item := range items {
 		if item.Label == label && item.InsertText == insertText {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSemanticToken(tokens []semanticToken, tokenType string, line, startColumn, endLine, endColumn int) bool {
+	for _, token := range tokens {
+		if token.TokenType == tokenType &&
+			token.SourceRange.StartLine == line &&
+			token.SourceRange.StartColumn == startColumn &&
+			token.SourceRange.EndLine == endLine &&
+			token.SourceRange.EndColumn == endColumn {
 			return true
 		}
 	}
