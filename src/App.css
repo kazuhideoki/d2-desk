@@ -75,6 +75,10 @@ select {
   background: #eef2f3;
 }
 
+.app-shell.bottom-panel-hidden {
+  grid-template-rows: 48px 38px minmax(0, 1fr) 0;
+}
+
 .topbar {
   display: flex;
   align-items: center;
