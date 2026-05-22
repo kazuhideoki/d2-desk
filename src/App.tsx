@@ -63,6 +63,7 @@ import {
   loadActiveTabId,
   loadTabs,
   reorderTabs,
+  tabAbsolutePath,
   type TabDropPosition,
   writeStoredTabs,
 } from "./features/tabs/tabs";
@@ -170,6 +171,26 @@ const defaultPerfDebugOptions: PerfDebugOptions = {
   previewCompile: true,
   previewRender: true,
 };
+
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.setAttribute("readonly", "");
+  textArea.style.position = "fixed";
+  textArea.style.left = "-9999px";
+  document.body.appendChild(textArea);
+  textArea.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textArea);
+  if (!copied) {
+    throw new Error("Clipboard copy failed");
+  }
+}
 
 function lastD2IdSegment(id: string) {
   const parts = id.split(".");
@@ -332,7 +353,7 @@ function MainApp() {
   );
   const source = activeTab?.source ?? "";
   const fileName = activeTab?.fileName ?? "untitled.d2";
-  const currentFilePath = activeTab?.filePath ?? null;
+  const currentFilePath = tabAbsolutePath(activeTab);
   const latestCompileInputsRef = useRef({ tabId: activeTabId, source });
   latestCompileInputsRef.current = { tabId: activeTabId, source };
   const visibleCompileResult = suggestPreviewResult ?? compileResult;
@@ -1259,6 +1280,20 @@ function MainApp() {
     setRenameFileDialog({ id: currentFilePath, value: fileName, error: null });
     setStatus(`Renaming ${fileName}`);
   }, [currentFilePath, fileName]);
+
+  const copyFocusedTabAbsolutePath = useCallback(async () => {
+    if (!currentFilePath) {
+      setStatus("Save the file before copying path");
+      return;
+    }
+
+    try {
+      await copyTextToClipboard(currentFilePath);
+      setStatus(`Copied absolute path: ${currentFilePath}`);
+    } catch (error) {
+      setStatus(String(error));
+    }
+  }, [currentFilePath]);
 
   const commitRenameFile = useCallback(async () => {
     if (!renameFileDialog || !currentFilePath) return;
@@ -2523,8 +2558,24 @@ function MainApp() {
         enabled: Boolean(currentFilePath),
         run: renameFocusedFile,
       },
+      {
+        id: "file.copyFocusedAbsolutePath",
+        title: "Copy Absolute Path",
+        category: "File",
+        keywords: ["current", "active", "tab", "filepath", "path", "clipboard"],
+        enabled: Boolean(currentFilePath),
+        run: () => {
+          void copyFocusedTabAbsolutePath();
+        },
+      },
     ],
-    [currentFilePath, renameFocusedFile, switchFocusedEdgeDirection, topbarCommands],
+    [
+      copyFocusedTabAbsolutePath,
+      currentFilePath,
+      renameFocusedFile,
+      switchFocusedEdgeDirection,
+      topbarCommands,
+    ],
   );
   const runAppCommand = useCallback((command: AppCommand) => {
     if (!isCommandEnabled(command)) return;
