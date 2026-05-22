@@ -110,23 +110,6 @@ select {
   min-width: 144px;
 }
 
-.toolbar {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-}
-
-.toolbar-command {
-  display: contents;
-}
-
-.divider {
-  width: 1px;
-  height: 24px;
-  background: #d8e0e2;
-}
-
 .hidden-input {
   display: none;
 }

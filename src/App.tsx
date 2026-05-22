@@ -5,20 +5,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
-import {
-  Download,
-  FileDown,
-  FileInput,
-  Focus,
-  FolderPlus,
-  Maximize2,
-  Save,
-  Settings,
-  SquareArrowOutUpRight,
-  Wand2,
-  ZoomIn,
-  ZoomOut,
-} from "lucide-react";
 import { loadInitialSession, type InitialSession } from "./app/initialSession";
 import { CommandPalette } from "./features/command-palette/CommandPalette";
 import { isCommandEnabled, type AppCommand } from "./shared/commands";
@@ -72,7 +58,7 @@ import {
   type TabDropPosition,
   writeStoredTabs,
 } from "./features/tabs/tabs";
-import { Toolbar, type ToolbarCommand } from "./features/toolbar/Toolbar";
+import { Toolbar } from "./features/toolbar/Toolbar";
 import type {
   CompileResult,
   D2CompletionItem,
@@ -2569,15 +2555,13 @@ function MainApp() {
     setPreviewZoom(decreaseZoom);
   }
 
-  const topbarCommands = useMemo<ToolbarCommand[]>(
+  const paletteCommands = useMemo<AppCommand[]>(
     () => [
       {
         id: "workspace.openFolder",
         title: "Open Workspace Folder",
         category: "Workspace",
         keywords: ["folder", "directory", "project"],
-        icon: FolderPlus,
-        toolbarGroup: 0,
         run: () => {
           void openWorkspaceFolder();
         },
@@ -2587,9 +2571,17 @@ function MainApp() {
         title: "Manage Workspaces",
         category: "Workspace",
         keywords: ["settings", "folders", "projects"],
-        icon: Settings,
-        toolbarGroup: 0,
         run: () => setWorkspaceManagerOpen(true),
+      },
+      {
+        id: "file.openWorkspaceFile",
+        title: "Open Workspace File",
+        category: "File",
+        keywords: ["workspace", "project", "quick open", "finder"],
+        shortcut: "Command + P",
+        run: () => {
+          void openWorkspaceFilePalette();
+        },
       },
       {
         id: "file.open",
@@ -2597,9 +2589,15 @@ function MainApp() {
         category: "File",
         keywords: ["load"],
         shortcut: "Command/Ctrl + O",
-        icon: FileInput,
-        toolbarGroup: 1,
         run: openSourceFile,
+      },
+      {
+        id: "file.newTab",
+        title: "New Tab",
+        category: "File",
+        keywords: ["create", "blank"],
+        shortcut: "Command/Ctrl + T",
+        run: createNewTab,
       },
       {
         id: "file.save",
@@ -2607,8 +2605,6 @@ function MainApp() {
         category: "File",
         keywords: ["write"],
         shortcut: "Command/Ctrl + S",
-        icon: Save,
-        toolbarGroup: 1,
         run: saveSource,
       },
       {
@@ -2616,134 +2612,7 @@ function MainApp() {
         title: "Open Current D2 File with $EDITOR",
         category: "File",
         keywords: ["external", "editor"],
-        icon: SquareArrowOutUpRight,
-        toolbarGroup: 1,
         run: openWithEditor,
-      },
-      {
-        id: "editor.format",
-        title: "Format Document",
-        category: "Edit",
-        keywords: ["source"],
-        shortcut: "Command/Ctrl + Shift + I",
-        icon: Wand2,
-        toolbarGroup: 1,
-        run: formatDocument,
-      },
-      {
-        id: "view.togglePreviewViewMode",
-        title: "Toggle Preview View",
-        category: "View",
-        keywords: ["layout", "fullscreen", "focus", "hide editor", "preview only", "editor only"],
-        shortcut: "Command + Option + P",
-        icon: Maximize2,
-        toolbarGroup: 2,
-        run: togglePreviewViewMode,
-      },
-      {
-        id: "view.toggleDetachedPreview",
-        title: previewDetached ? "Attach Preview to Main Window" : "Detach Preview to Window",
-        category: "View",
-        keywords: ["preview", "detach", "separate", "window", "attach"],
-        shortcut: "Command + Option + Shift + P",
-        icon: SquareArrowOutUpRight,
-        toolbarGroup: 2,
-        run: toggleDetachedPreview,
-      },
-      {
-        id: "view.zoomOut",
-        title: "Zoom Out",
-        category: "View",
-        keywords: ["decrease", "scale"],
-        shortcut: "Command/Ctrl + -",
-        icon: ZoomOut,
-        toolbarGroup: 2,
-        run: zoomFocusedPaneOut,
-      },
-      {
-        id: "view.resetZoom",
-        title: "Reset Zoom",
-        category: "View",
-        keywords: ["scale", "fit"],
-        shortcut: "Command/Ctrl + 0",
-        icon: Focus,
-        toolbarGroup: 2,
-        run: resetFocusedView,
-      },
-      {
-        id: "view.zoomIn",
-        title: "Zoom In",
-        category: "View",
-        keywords: ["increase", "scale"],
-        shortcut: "Command/Ctrl + +",
-        icon: ZoomIn,
-        toolbarGroup: 2,
-        run: zoomFocusedPaneIn,
-      },
-      {
-        id: "export.svg",
-        title: "Export SVG",
-        category: "Export",
-        keywords: ["download", "diagram"],
-        icon: Download,
-        toolbarGroup: 3,
-        run: () => {
-          void exportSVG();
-        },
-      },
-      {
-        id: "export.png",
-        title: "Export PNG",
-        category: "Export",
-        keywords: ["download", "image", "diagram"],
-        icon: FileDown,
-        toolbarGroup: 3,
-        run: () => {
-          void exportPNG();
-        },
-      },
-    ],
-    [
-      exportRenderedSvg,
-      fileName,
-      formatDocument,
-      openSourceFile,
-      openWithEditor,
-      openWorkspaceFolder,
-      previewDetached,
-      saveSource,
-      source,
-      toggleDetachedPreview,
-      togglePreviewViewMode,
-    ],
-  );
-  const workspaceCommands = useMemo(
-    () => topbarCommands.filter((command) => command.toolbarGroup === 0),
-    [topbarCommands],
-  );
-  const toolbarCommands = useMemo(
-    () => topbarCommands.filter((command) => command.toolbarGroup > 0),
-    [topbarCommands],
-  );
-  const paletteCommands = useMemo<AppCommand[]>(
-    () => [
-      ...topbarCommands,
-      {
-        id: "view.toggleBottomPanel",
-        title: bottomPanelVisible ? "Hide Bottom Panel" : "Show Bottom Panel",
-        category: "View",
-        keywords: ["bottom", "panel", "status", "diagnostics", "debug"],
-        shortcut: "Command/Ctrl + J",
-        run: toggleBottomPanel,
-      },
-      {
-        id: "editor.switchEdgeDirection",
-        title: "Switch Edge Notation",
-        category: "Edit",
-        keywords: ["edge", "notation", "direction", "flip", "reverse", "connection"],
-        run: () => {
-          void switchFocusedEdgeDirection();
-        },
       },
       {
         id: "file.renameFocused",
@@ -2763,15 +2632,159 @@ function MainApp() {
           void copyFocusedTabAbsolutePath();
         },
       },
+      {
+        id: "file.closeTab",
+        title: "Close Tab",
+        category: "File",
+        keywords: ["current", "active"],
+        shortcut: "Command/Ctrl + W",
+        run: closeActiveTab,
+      },
+      {
+        id: "file.quit",
+        title: "Quit D2 Desk",
+        category: "File",
+        keywords: ["exit", "close application"],
+        shortcut: "Command/Ctrl + Q",
+        run: () => {
+          void quitApplication();
+        },
+      },
+      {
+        id: "editor.format",
+        title: "Format Document",
+        category: "Edit",
+        keywords: ["source"],
+        shortcut: "Command/Ctrl + Shift + I",
+        run: formatDocument,
+      },
+      {
+        id: "editor.goToSymbol",
+        title: "Go to Symbol in File",
+        category: "Edit",
+        keywords: ["outline", "node", "jump", "navigate"],
+        shortcut: "Command/Ctrl + Shift + O",
+        run: openSymbolPalette,
+      },
+      {
+        id: "editor.renameFocusedNode",
+        title: "Rename Focused Node",
+        category: "Edit",
+        keywords: ["symbol", "node", "refactor"],
+        shortcut: "F2",
+        run: () => {
+          void renameFocusedNode();
+        },
+      },
+      {
+        id: "editor.switchEdgeDirection",
+        title: "Switch Edge Notation",
+        category: "Edit",
+        keywords: ["edge", "notation", "direction", "flip", "reverse", "connection"],
+        run: () => {
+          void switchFocusedEdgeDirection();
+        },
+      },
+      {
+        id: "view.openCommandPalette",
+        title: "Command Palette",
+        category: "View",
+        keywords: ["commands", "actions"],
+        shortcut: "Command/Ctrl + Shift + P",
+        run: openCommandPalette,
+      },
+      {
+        id: "view.togglePreviewViewMode",
+        title: "Toggle Preview View",
+        category: "View",
+        keywords: ["layout", "fullscreen", "focus", "hide editor", "preview only", "editor only"],
+        shortcut: "Command + Option + P",
+        run: togglePreviewViewMode,
+      },
+      {
+        id: "view.toggleDetachedPreview",
+        title: previewDetached ? "Attach Preview to Main Window" : "Detach Preview to Window",
+        category: "View",
+        keywords: ["preview", "detach", "separate", "window", "attach"],
+        shortcut: "Command + Option + Shift + P",
+        run: toggleDetachedPreview,
+      },
+      {
+        id: "view.toggleBottomPanel",
+        title: bottomPanelVisible ? "Hide Bottom Panel" : "Show Bottom Panel",
+        category: "View",
+        keywords: ["bottom", "panel", "status", "diagnostics", "debug"],
+        shortcut: "Command/Ctrl + J",
+        run: toggleBottomPanel,
+      },
+      {
+        id: "view.zoomOut",
+        title: "Zoom Out",
+        category: "View",
+        keywords: ["decrease", "scale"],
+        shortcut: "Command/Ctrl + -",
+        run: zoomFocusedPaneOut,
+      },
+      {
+        id: "view.resetZoom",
+        title: "Reset Zoom",
+        category: "View",
+        keywords: ["scale", "fit"],
+        shortcut: "Command/Ctrl + 0",
+        run: resetFocusedView,
+      },
+      {
+        id: "view.zoomIn",
+        title: "Zoom In",
+        category: "View",
+        keywords: ["increase", "scale"],
+        shortcut: "Command/Ctrl + +",
+        run: zoomFocusedPaneIn,
+      },
+      {
+        id: "export.svg",
+        title: "Export SVG",
+        category: "Export",
+        keywords: ["download", "diagram"],
+        run: () => {
+          void exportSVG();
+        },
+      },
+      {
+        id: "export.png",
+        title: "Export PNG",
+        category: "Export",
+        keywords: ["download", "image", "diagram"],
+        run: () => {
+          void exportPNG();
+        },
+      },
     ],
     [
-      copyFocusedTabAbsolutePath,
       bottomPanelVisible,
+      closeActiveTab,
+      copyFocusedTabAbsolutePath,
+      createNewTab,
       currentFilePath,
+      exportRenderedSvg,
+      fileName,
+      formatDocument,
+      openCommandPalette,
+      openSourceFile,
+      openSymbolPalette,
+      openWithEditor,
+      openWorkspaceFilePalette,
+      openWorkspaceFolder,
+      previewDetached,
+      quitApplication,
+      renameFocusedNode,
       renameFocusedFile,
+      saveSource,
+      source,
       switchFocusedEdgeDirection,
       toggleBottomPanel,
-      topbarCommands,
+      toggleDetachedPreview,
+      togglePreviewViewMode,
     ],
   );
   const runAppCommand = useCallback((command: AppCommand) => {
@@ -2800,9 +2813,6 @@ function MainApp() {
         onWorkspaceChange={(workspaceId) => {
           void switchWorkspace(workspaceId);
         }}
-        workspaceCommands={workspaceCommands}
-        toolbarCommands={toolbarCommands}
-        onRunCommand={runAppCommand}
       />
 
       {commandPalette ? (
