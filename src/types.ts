@@ -117,6 +117,13 @@ export type SavedD2File = {
 
 export type RenamedD2File = {
   path: string;
+  updatedReferences: RenamedD2FileReferenceUpdate[];
+};
+
+export type RenamedD2FileReferenceUpdate = {
+  path: string;
+  contents: string;
+  saved: boolean;
 };
 
 export type WorkspaceFileEntry = {

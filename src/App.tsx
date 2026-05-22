@@ -1395,23 +1395,60 @@ function MainApp() {
     }
 
     try {
+      const workspaceId = activeWorkspaceIdRef.current;
+      const workspace = workspaceId
+        ? workspaceStateRef.current.workspaces.find((item) => item.id === workspaceId)
+        : null;
       const result = await invoke<RenamedD2File>("rename_d2_file", {
         path: currentFilePath,
         fileName: nextFileName,
+        workspaceRootPath: workspace?.rootPath ?? null,
+        openFiles: tabsRef.current
+          .filter((tab) => tab.filePath)
+          .map((tab) => ({
+            path: tab.filePath!,
+            source: tab.source,
+            hasUserChanges: tab.hasUserChanges,
+          })),
       });
-      updateActiveTab({
-        fileName: fileNameFromPath(result.path),
-        filePath: result.path,
+      const updatedReferencesByPath = new Map(
+        result.updatedReferences.map((update) => [update.path, update]),
+      );
+      setTabs((currentTabs) => {
+        const nextTabs = currentTabs.map((tab) => {
+          const nextPath = tab.filePath === currentFilePath ? result.path : tab.filePath;
+          const referenceUpdate = nextPath ? updatedReferencesByPath.get(nextPath) : undefined;
+          const nextTab = {
+            ...tab,
+            filePath: nextPath,
+            fileName: nextPath === result.path ? fileNameFromPath(result.path) : tab.fileName,
+          };
+          if (referenceUpdate) {
+            nextTab.source = referenceUpdate.contents;
+            if (referenceUpdate.saved) {
+              nextTab.savedSource = referenceUpdate.contents;
+            }
+            nextTab.hasUserChanges = nextTab.source !== nextTab.savedSource;
+          }
+          return nextTab;
+        });
+        tabsRef.current = nextTabs;
+        return nextTabs;
       });
       setRenameFileDialog(null);
-      setStatus(`Renamed ${fileName} to ${fileNameFromPath(result.path)}`);
+      const updatedCount = result.updatedReferences.length;
+      setStatus(
+        updatedCount === 0
+          ? `Renamed ${fileName} to ${fileNameFromPath(result.path)}`
+          : `Renamed ${fileName} to ${fileNameFromPath(result.path)}; updated ${updatedCount} import reference file${updatedCount === 1 ? "" : "s"}`,
+      );
       window.requestAnimationFrame(() => editorRef.current?.focus());
     } catch (error) {
       setRenameFileDialog((current) =>
         current ? { ...current, error: String(error).replace(/^Error: /, "") } : current,
       );
     }
-  }, [currentFilePath, fileName, renameFileDialog, updateActiveTab]);
+  }, [currentFilePath, fileName, renameFileDialog]);
 
   const formatDocument = useCallback(async () => {
     try {

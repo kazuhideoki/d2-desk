@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -36,8 +37,33 @@ struct SavedD2File {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct RenamedD2File {
     path: String,
+    updated_references: Vec<UpdatedD2Reference>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdatedD2Reference {
+    path: String,
+    contents: String,
+    saved: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenD2FileForRename {
+    path: String,
+    source: String,
+    has_user_changes: bool,
+}
+
+struct PlannedReferenceUpdate {
+    path: PathBuf,
+    reported_path: PathBuf,
+    contents: String,
+    save_to_disk: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -88,7 +114,12 @@ fn write_d2_file(path: String, contents: String) -> Result<SavedD2File, String> 
 }
 
 #[tauri::command]
-fn rename_d2_file(path: String, file_name: String) -> Result<RenamedD2File, String> {
+fn rename_d2_file(
+    path: String,
+    file_name: String,
+    workspace_root_path: Option<String>,
+    open_files: Option<Vec<OpenD2FileForRename>>,
+) -> Result<RenamedD2File, String> {
     let source_path = PathBuf::from(path);
     if !source_path.exists() {
         return Err(format!("file does not exist: {}", source_path.display()));
@@ -96,16 +127,29 @@ fn rename_d2_file(path: String, file_name: String) -> Result<RenamedD2File, Stri
     if !source_path.is_file() {
         return Err(format!("path is not a file: {}", source_path.display()));
     }
+    let source_abs = source_path
+        .canonicalize()
+        .map_err(|err| format!("failed to resolve {}: {err}", source_path.display()))?;
 
     let target_path = renamed_file_path(&source_path, &file_name)?;
     if target_path == source_path {
         return Ok(RenamedD2File {
             path: path_to_string(target_path),
+            updated_references: Vec::new(),
         });
     }
     if target_path.exists() {
         return Err(format!("file already exists: {}", target_path.display()));
     }
+    let target_abs = absolute_target_path(&target_path)?;
+
+    let reference_updates = plan_d2_import_reference_updates(
+        workspace_root_path.as_deref(),
+        &source_abs,
+        &target_abs,
+        &target_path,
+        open_files.unwrap_or_default(),
+    )?;
 
     fs::rename(&source_path, &target_path).map_err(|err| {
         format!(
@@ -115,8 +159,11 @@ fn rename_d2_file(path: String, file_name: String) -> Result<RenamedD2File, Stri
         )
     })?;
 
+    let updated_references = apply_d2_import_reference_updates(reference_updates)?;
+
     Ok(RenamedD2File {
         path: path_to_string(target_path),
+        updated_references,
     })
 }
 
@@ -156,8 +203,39 @@ fn list_workspace_files(root_path: String) -> Result<Vec<WorkspaceFileEntry>, St
         return Err(format!("workspace is not a folder: {}", root.display()));
     }
 
+    let paths = collect_workspace_d2_paths(&root)?;
     let mut files = Vec::new();
-    let mut pending = vec![root.clone()];
+
+    for path in paths {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let relative_path = path
+            .strip_prefix(&root)
+            .map(relative_path_to_string)
+            .unwrap_or_else(|_| path_to_string(path.clone()));
+        let directory = Path::new(&relative_path)
+            .parent()
+            .map(relative_path_to_string)
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| ".".to_string());
+
+        files.push(WorkspaceFileEntry {
+            path: path_to_string(path),
+            relative_path,
+            file_name: name,
+            directory,
+        });
+    }
+
+    files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    Ok(files)
+}
+
+fn collect_workspace_d2_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut paths = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
 
     while let Some(directory) = pending.pop() {
         let mut entries = fs::read_dir(&directory)
@@ -191,31 +269,16 @@ fn list_workspace_files(root_path: String) -> Result<Vec<WorkspaceFileEntry>, St
                 continue;
             }
 
-            let relative_path = path
-                .strip_prefix(&root)
-                .map(relative_path_to_string)
-                .unwrap_or_else(|_| path_to_string(path.clone()));
-            let directory = Path::new(&relative_path)
-                .parent()
-                .map(relative_path_to_string)
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| ".".to_string());
-
-            files.push(WorkspaceFileEntry {
-                path: path_to_string(path),
-                relative_path,
-                file_name: name,
-                directory,
-            });
-            if files.len() >= 5000 {
-                files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
-                return Ok(files);
+            paths.push(path);
+            if paths.len() >= 5000 {
+                paths.sort();
+                return Ok(paths);
             }
         }
     }
 
-    files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
-    Ok(files)
+    paths.sort();
+    Ok(paths)
 }
 
 #[tauri::command]
@@ -300,6 +363,407 @@ fn renamed_file_path(source_path: &Path, file_name: &str) -> Result<PathBuf, Str
         )
     })?;
     Ok(parent.join(ensure_d2_extension(PathBuf::from(trimmed_name))))
+}
+
+fn absolute_target_path(target_path: &Path) -> Result<PathBuf, String> {
+    let parent = target_path.parent().ok_or_else(|| {
+        format!(
+            "failed to resolve parent folder for {}",
+            target_path.display()
+        )
+    })?;
+    let parent = parent
+        .canonicalize()
+        .map_err(|err| format!("failed to resolve {}: {err}", parent.display()))?;
+    let file_name = target_path
+        .file_name()
+        .ok_or_else(|| format!("failed to resolve file name for {}", target_path.display()))?;
+    Ok(parent.join(file_name))
+}
+
+fn plan_d2_import_reference_updates(
+    workspace_root_path: Option<&str>,
+    source_path: &Path,
+    target_path: &Path,
+    target_report_path: &Path,
+    open_files: Vec<OpenD2FileForRename>,
+) -> Result<Vec<PlannedReferenceUpdate>, String> {
+    let Some(workspace_root_path) = workspace_root_path else {
+        return Ok(Vec::new());
+    };
+    if workspace_root_path.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let root = PathBuf::from(workspace_root_path)
+        .canonicalize()
+        .map_err(|err| format!("failed to open workspace folder {workspace_root_path}: {err}"))?;
+    if !root.is_dir() || !is_path_within(source_path, &root) || !is_path_within(target_path, &root)
+    {
+        return Ok(Vec::new());
+    }
+
+    let open_files_by_path = open_files
+        .into_iter()
+        .filter_map(|file| {
+            let path = canonical_or_absolute(Path::new(&file.path)).ok()?;
+            Some((path, file))
+        })
+        .collect::<HashMap<_, _>>();
+
+    let updates = collect_workspace_d2_paths(&root)?
+        .into_iter()
+        .filter_map(|path| {
+            let absolute_path = canonical_or_absolute(&path).ok()?;
+            let opened = open_files_by_path.get(&absolute_path);
+            let contents = match opened {
+                Some(opened) => opened.source.clone(),
+                None => match fs::read_to_string(&path) {
+                    Ok(contents) => contents,
+                    Err(_) => return None,
+                },
+            };
+            let update_path = if same_path(&absolute_path, source_path) {
+                target_path.to_path_buf()
+            } else {
+                absolute_path.clone()
+            };
+            let reported_path = if same_path(&absolute_path, source_path) {
+                target_report_path.to_path_buf()
+            } else if let Some(opened) = opened {
+                PathBuf::from(&opened.path)
+            } else {
+                absolute_path.clone()
+            };
+            let importer_dir = update_path.parent().unwrap_or(&root);
+            let rewritten = rewrite_d2_import_references(
+                &contents,
+                &root,
+                importer_dir,
+                source_path,
+                target_path,
+            );
+            if rewritten == contents {
+                return None;
+            }
+
+            Some(PlannedReferenceUpdate {
+                path: update_path,
+                reported_path,
+                contents: rewritten,
+                save_to_disk: opened
+                    .map(|opened| !opened.has_user_changes)
+                    .unwrap_or(true),
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(updates)
+}
+
+fn apply_d2_import_reference_updates(
+    updates: Vec<PlannedReferenceUpdate>,
+) -> Result<Vec<UpdatedD2Reference>, String> {
+    let mut applied = Vec::new();
+    for update in updates {
+        if update.save_to_disk {
+            fs::write(&update.path, &update.contents)
+                .map_err(|err| format!("failed to write {}: {err}", update.path.display()))?;
+        }
+        applied.push(UpdatedD2Reference {
+            path: path_to_string(update.reported_path),
+            contents: update.contents,
+            saved: update.save_to_disk,
+        });
+    }
+    Ok(applied)
+}
+
+fn rewrite_d2_import_references(
+    source: &str,
+    workspace_root: &Path,
+    importer_dir: &Path,
+    old_path: &Path,
+    new_path: &Path,
+) -> String {
+    let bytes = source.as_bytes();
+    let mut rewritten = String::with_capacity(source.len());
+    let mut last_copied = 0;
+    let mut index = 0;
+    let mut quote: Option<u8> = None;
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(quote_byte) = quote {
+            if byte == b'\\' {
+                index = (index + 2).min(bytes.len());
+                continue;
+            }
+            if byte == quote_byte {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+
+        if byte == b'"' || byte == b'\'' {
+            quote = Some(byte);
+            index += 1;
+            continue;
+        }
+
+        if byte == b'#' {
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            continue;
+        }
+
+        if byte != b'@' || !is_d2_import_start(bytes, index) {
+            index += 1;
+            continue;
+        }
+
+        let import_start = index + 1;
+        let mut import_end = import_start;
+        while import_end < bytes.len() && is_d2_import_token_byte(bytes[import_end]) {
+            import_end += 1;
+        }
+        if import_end == import_start {
+            index += 1;
+            continue;
+        }
+
+        let import_text = &source[import_start..import_end];
+        if let Some(next_import_text) = renamed_import_text(
+            import_text,
+            workspace_root,
+            importer_dir,
+            old_path,
+            new_path,
+        ) {
+            rewritten.push_str(&source[last_copied..import_start]);
+            rewritten.push_str(&next_import_text);
+            last_copied = import_end;
+        }
+        index = import_end;
+    }
+
+    if last_copied == 0 {
+        source.to_string()
+    } else {
+        rewritten.push_str(&source[last_copied..]);
+        rewritten
+    }
+}
+
+fn renamed_import_text(
+    import_text: &str,
+    workspace_root: &Path,
+    importer_dir: &Path,
+    old_path: &Path,
+    new_path: &Path,
+) -> Option<String> {
+    matching_import_file_part(import_text, workspace_root, importer_dir, old_path).map(
+        |(file_part, suffix)| {
+            let relative = is_relative_import_specifier(file_part);
+            let keep_extension = has_d2_extension(file_part);
+            format!(
+                "{}{}",
+                import_specifier(
+                    workspace_root,
+                    importer_dir,
+                    new_path,
+                    relative,
+                    keep_extension
+                ),
+                suffix
+            )
+        },
+    )
+}
+
+fn matching_import_file_part<'a>(
+    import_text: &'a str,
+    workspace_root: &Path,
+    importer_dir: &Path,
+    old_path: &Path,
+) -> Option<(&'a str, &'a str)> {
+    let mut end_indexes = vec![import_text.len()];
+    end_indexes.extend(
+        d2_import_node_separator_indexes(import_text)
+            .into_iter()
+            .rev(),
+    );
+
+    end_indexes.into_iter().find_map(|end_index| {
+        let file_part = &import_text[..end_index];
+        if file_part.is_empty() {
+            return None;
+        }
+        let import_path = absolute_import_path(workspace_root, importer_dir, file_part)?;
+        if same_path(&import_path, old_path) {
+            Some((file_part, &import_text[end_index..]))
+        } else {
+            None
+        }
+    })
+}
+
+fn absolute_import_path(
+    workspace_root: &Path,
+    importer_dir: &Path,
+    specifier: &str,
+) -> Option<PathBuf> {
+    let base = if is_relative_import_specifier(specifier) {
+        importer_dir
+    } else {
+        workspace_root
+    };
+    let path = normalize_path(&base.join(specifier));
+    let path = if path.extension().is_some() {
+        path
+    } else {
+        path.with_extension("d2")
+    };
+    is_path_within(&path, workspace_root).then_some(path)
+}
+
+fn import_specifier(
+    workspace_root: &Path,
+    importer_dir: &Path,
+    target_path: &Path,
+    relative: bool,
+    keep_extension: bool,
+) -> String {
+    let path = if relative {
+        let mut value = relative_path_between(importer_dir, target_path);
+        if !value.starts_with('.') {
+            value = format!("./{value}");
+        }
+        value
+    } else {
+        target_path
+            .strip_prefix(workspace_root)
+            .map(relative_path_to_string)
+            .unwrap_or_else(|_| relative_path_to_string(target_path))
+    };
+
+    if keep_extension {
+        path
+    } else {
+        strip_d2_extension(&path)
+    }
+}
+
+fn d2_import_node_separator_indexes(import_text: &str) -> Vec<usize> {
+    let bytes = import_text.as_bytes();
+    let mut indexes = Vec::new();
+    for index in 0..bytes.len() {
+        if bytes[index] != b'.' || index == 0 {
+            continue;
+        }
+        let previous = bytes[index - 1];
+        let next = bytes.get(index + 1).copied().unwrap_or_default();
+        if next == b'/' || next == b'.' || (previous == b'.' && next == b'/') {
+            continue;
+        }
+        indexes.push(index);
+    }
+    indexes
+}
+
+fn is_d2_import_start(bytes: &[u8], at_index: usize) -> bool {
+    at_index == 0
+        || !matches!(bytes[at_index - 1], b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'/' | b'-')
+}
+
+fn is_d2_import_token_byte(byte: u8) -> bool {
+    matches!(byte, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'.' | b'/' | b'-')
+}
+
+fn is_relative_import_specifier(specifier: &str) -> bool {
+    specifier == "."
+        || specifier == ".."
+        || specifier.starts_with("./")
+        || specifier.starts_with("../")
+}
+
+fn has_d2_extension(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("d2"))
+}
+
+fn strip_d2_extension(path: &str) -> String {
+    if path.to_ascii_lowercase().ends_with(".d2") {
+        path[..path.len() - 3].to_string()
+    } else {
+        path.to_string()
+    }
+}
+
+fn relative_path_between(from_directory: &Path, target_path: &Path) -> String {
+    let from_parts = normal_path_parts(from_directory);
+    let target_parts = normal_path_parts(target_path);
+    let mut common_len = 0;
+    while common_len < from_parts.len()
+        && common_len < target_parts.len()
+        && from_parts[common_len] == target_parts[common_len]
+    {
+        common_len += 1;
+    }
+
+    let mut parts = Vec::new();
+    parts.extend(std::iter::repeat("..".to_string()).take(from_parts.len() - common_len));
+    parts.extend(target_parts[common_len..].iter().cloned());
+    parts.join("/")
+}
+
+fn normal_path_parts(path: &Path) -> Vec<String> {
+    normalize_path(path)
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => Some(value.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn canonical_or_absolute(path: &Path) -> Result<PathBuf, String> {
+    if let Ok(path) = path.canonicalize() {
+        return Ok(path);
+    }
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|err| err.to_string())?
+            .join(path)
+    };
+    Ok(normalize_path(&path))
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
+fn is_path_within(path: &Path, root: &Path) -> bool {
+    normalize_path(path).starts_with(normalize_path(root))
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    normalize_path(left) == normalize_path(right)
 }
 
 fn is_d2_file(path: &Path) -> bool {
@@ -637,6 +1101,80 @@ mod tests {
         assert!(renamed_file_path(source, "").is_err());
         assert!(renamed_file_path(source, "nested/next.d2").is_err());
         assert!(renamed_file_path(source, "../next.d2").is_err());
+    }
+
+    #[test]
+    fn rename_d2_file_updates_workspace_import_references() {
+        let workspace = temp_workspace("rename-imports");
+        let nested = workspace.join("nested");
+        fs::create_dir(&nested).expect("create nested directory");
+        let source = workspace.join("components.d2");
+        fs::write(&source, "service\n").expect("write source file");
+        fs::write(
+            workspace.join("main.d2"),
+            "...@components\napi: @components.service\nquoted: \"@components\"\n# @components\n",
+        )
+        .expect("write main file");
+        fs::write(nested.join("diagram.d2"), "...@../components\n").expect("write nested file");
+
+        let result = rename_d2_file(
+            path_to_string(source),
+            "shared".to_string(),
+            Some(path_to_string(workspace.clone())),
+            Some(Vec::new()),
+        )
+        .expect("rename file");
+
+        assert_eq!(PathBuf::from(result.path), workspace.join("shared.d2"));
+        assert_eq!(result.updated_references.len(), 2);
+        assert_eq!(
+            fs::read_to_string(workspace.join("main.d2")).expect("read main"),
+            "...@shared\napi: @shared.service\nquoted: \"@components\"\n# @components\n"
+        );
+        assert_eq!(
+            fs::read_to_string(nested.join("diagram.d2")).expect("read nested"),
+            "...@../shared\n"
+        );
+
+        fs::remove_dir_all(workspace).expect("remove temp workspace");
+    }
+
+    #[test]
+    fn rename_d2_file_returns_unsaved_open_import_updates_without_writing_them() {
+        let workspace = temp_workspace("rename-open-imports");
+        let source = workspace.join("components.d2");
+        let main = workspace.join("main.d2");
+        fs::write(&source, "service\n").expect("write source file");
+        fs::write(&main, "...@components\non disk\n").expect("write main file");
+
+        let result = rename_d2_file(
+            path_to_string(source),
+            "shared".to_string(),
+            Some(path_to_string(workspace.clone())),
+            Some(vec![OpenD2FileForRename {
+                path: path_to_string(main.clone()),
+                source: "...@components\nunsaved\n".to_string(),
+                has_user_changes: true,
+            }]),
+        )
+        .expect("rename file");
+
+        assert_eq!(result.updated_references.len(), 1);
+        assert_eq!(
+            result.updated_references[0].path,
+            path_to_string(main.clone())
+        );
+        assert_eq!(
+            result.updated_references[0].contents,
+            "...@shared\nunsaved\n"
+        );
+        assert!(!result.updated_references[0].saved);
+        assert_eq!(
+            fs::read_to_string(main).expect("read main"),
+            "...@components\non disk\n"
+        );
+
+        fs::remove_dir_all(workspace).expect("remove temp workspace");
     }
 
     fn temp_workspace(name: &str) -> PathBuf {
