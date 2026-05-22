@@ -73,6 +73,7 @@ import type {
   D2Tab,
   ExportResult,
   OpenedD2File,
+  PerfDebugOptions,
   RenamedD2File,
   SavedD2File,
   StoredWorkspaces,
@@ -167,6 +168,14 @@ type InternalSuggestController = {
 const nodeRenamePattern = /^[A-Za-z0-9_-]+$/;
 const tabPersistenceDelayMs = 400;
 const previewCompileDelayMs = 600;
+const defaultPerfDebugOptions: PerfDebugOptions = {
+  wordWrap: true,
+  autoSuggest: true,
+  suggestPreview: true,
+  cursorFocusSync: true,
+  previewCompile: true,
+  previewRender: true,
+};
 
 function lastD2IdSegment(id: string) {
   const parts = id.split(".");
@@ -281,6 +290,8 @@ function MainApp() {
   const [previewZoomMode, setPreviewZoomMode] = useState<PreviewZoomMode>("auto");
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const [previewDetached, setPreviewDetached] = useState(false);
+  const [perfDebugOptions, setPerfDebugOptions] =
+    useState<PerfDebugOptions>(defaultPerfDebugOptions);
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decorationIds = useRef<string[]>([]);
@@ -323,6 +334,7 @@ function MainApp() {
   const hoverIdRef = useRef(hoverId);
   const compileResultRef = useRef(compileResult);
   const detachedPreviewStateRef = useRef<DetachedPreviewState>(emptyDetachedPreviewState);
+  const perfDebugOptionsRef = useRef(perfDebugOptions);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0],
@@ -407,6 +419,12 @@ function MainApp() {
   function invalidateCursorLookup() {
     activeCursorLookupRequestId.current += 1;
   }
+
+  const setPerfDebugOption = useCallback((key: keyof PerfDebugOptions, enabled: boolean) => {
+    setPerfDebugOptions((current) =>
+      current[key] === enabled ? current : { ...current, [key]: enabled },
+    );
+  }, []);
 
   useEffect(() => {
     activeIdRef.current = activeId;
@@ -750,6 +768,19 @@ function MainApp() {
     setSuggestPreviewResult(null);
   }, []);
 
+  useEffect(() => {
+    perfDebugOptionsRef.current = perfDebugOptions;
+    if (!perfDebugOptions.suggestPreview) {
+      clearSuggestPreview();
+    }
+    if (!perfDebugOptions.cursorFocusSync) {
+      invalidateCursorLookup();
+    }
+    if (!perfDebugOptions.previewCompile) {
+      activeCompileRequestId.current += 1;
+    }
+  }, [clearSuggestPreview, perfDebugOptions]);
+
   function sidecarSourceParams(nextSource: string) {
     const workspaceId = activeWorkspaceIdRef.current;
     const workspace = workspaceId
@@ -773,6 +804,11 @@ function MainApp() {
 
   const scheduleSuggestPreview = useCallback(
     (previewSource: string, modelVersionId: number, delayMs = 100) => {
+      if (!perfDebugOptionsRef.current.suggestPreview) {
+        clearSuggestPreview();
+        return;
+      }
+
       const latestInputs = latestCompileInputsRef.current;
       if (previewSource === latestInputs.source) {
         clearSuggestPreview();
@@ -924,6 +960,10 @@ function MainApp() {
     if (!isEditingIconValueCompletion()) {
       clearSuggestPreview();
     }
+    if (!perfDebugOptions.previewCompile) {
+      activeCompileRequestId.current += 1;
+      return;
+    }
     const requestId = activeCompileRequestId.current + 1;
     activeCompileRequestId.current = requestId;
     const shouldCompileImmediately = previousCompileTabIdRef.current !== activeTabId;
@@ -938,7 +978,14 @@ function MainApp() {
       void compile(source, activeTabId, requestId);
     }, previewCompileDelayMs);
     return () => window.clearTimeout(timeout);
-  }, [activeTabId, clearSuggestPreview, compile, isEditingIconValueCompletion, source]);
+  }, [
+    activeTabId,
+    clearSuggestPreview,
+    compile,
+    isEditingIconValueCompletion,
+    perfDebugOptions.previewCompile,
+    source,
+  ]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -1742,9 +1789,14 @@ function MainApp() {
   }, [sendDetachedPreviewState]);
 
   useEffect(() => {
-    if (!previewDetached) return;
+    if (!previewDetached || !perfDebugOptions.previewRender) return;
     sendDetachedPreviewState();
-  }, [detachedPreviewState, previewDetached, sendDetachedPreviewState]);
+  }, [
+    detachedPreviewState,
+    perfDebugOptions.previewRender,
+    previewDetached,
+    sendDetachedPreviewState,
+  ]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1916,6 +1968,11 @@ function MainApp() {
     const suggestWidget = suggestController?.widget?.value;
     const suggestPreviewDisposables: Monaco.IDisposable[] = [];
     const previewFocusedSuggestItem = (item?: InternalSuggestCompletionItem) => {
+      if (!perfDebugOptionsRef.current.suggestPreview) {
+        clearSuggestPreview();
+        return;
+      }
+
       const model = editor.getModel();
       const completion = item?.completion;
       if (!model || !completion) {
@@ -1942,6 +1999,11 @@ function MainApp() {
       }
     };
     const previewCurrentIconValueSuggestion = (preferredLabel?: string) => {
+      if (!perfDebugOptionsRef.current.suggestPreview) {
+        clearSuggestPreview();
+        return;
+      }
+
       const model = editor.getModel();
       const position = editor.getPosition();
       if (!model || !position) return;
@@ -2027,6 +2089,10 @@ function MainApp() {
     }
     suggestPreviewDisposables.push(
       editor.onDidChangeModelContent(() => {
+        if (!perfDebugOptionsRef.current.suggestPreview) {
+          clearSuggestPreview();
+          return;
+        }
         if (suggestWidget?.getFocusedItem) {
           queuePreviewCurrentFocusedSuggestItem();
         }
@@ -2082,6 +2148,8 @@ function MainApp() {
       const currentPosition = editor.getPosition();
       if (!currentPosition) return;
 
+      if (!perfDebugOptionsRef.current.autoSuggest) return;
+
       const lineContent = model.getLineContent(currentPosition.lineNumber);
       if (isD2LineCommentPosition(lineContent, currentPosition.column)) return;
 
@@ -2106,6 +2174,7 @@ function MainApp() {
       }
     });
     editor.onDidChangeCursorPosition((event) => {
+      if (!perfDebugOptionsRef.current.cursorFocusSync) return;
       void updateFocusedObjectFromPosition(editor, event.position);
     });
   };
@@ -2114,6 +2183,8 @@ function MainApp() {
     editor: Monaco.editor.IStandaloneCodeEditor,
     position: Monaco.IPosition,
   ) {
+    if (!perfDebugOptionsRef.current.cursorFocusSync) return;
+
     const requestId = activeCursorLookupRequestId.current + 1;
     activeCursorLookupRequestId.current = requestId;
     const tabId = activeTabIdRef.current;
@@ -2128,6 +2199,7 @@ function MainApp() {
     if (requestId !== activeCursorLookupRequestId.current) {
       return;
     }
+    if (!perfDebugOptionsRef.current.cursorFocusSync) return;
     if (
       tabId !== activeTabIdRef.current ||
       model !== editor.getModel() ||
@@ -2642,7 +2714,7 @@ function MainApp() {
 
       <section
         className={
-          previewDetached
+          !perfDebugOptions.previewRender || previewDetached
             ? "workspace preview-detached"
             : previewFullscreen
               ? "workspace preview-fullscreen"
@@ -2656,6 +2728,7 @@ function MainApp() {
           zoom={editorZoom}
           editorFontSize={editorFontSize}
           editorLineHeight={editorLineHeight}
+          perfDebugOptions={perfDebugOptions}
           beforeMount={configureD2Language}
           onMount={handleMount}
           onChange={(value) => updateActiveTab({ source: value })}
@@ -2664,7 +2737,7 @@ function MainApp() {
           onZoomIn={zoomEditorIn}
         />
 
-        {previewDetached ? null : (
+        {previewDetached || !perfDebugOptions.previewRender ? null : (
           <PreviewPane
             objects={visibleCompileResult.objects}
             renderedSvg={renderedSvg}
@@ -2697,6 +2770,8 @@ function MainApp() {
         status={status}
         activeObject={activeObject}
         diagnostics={compileResult.diagnostics}
+        perfDebugOptions={perfDebugOptions}
+        onPerfDebugOptionChange={setPerfDebugOption}
       />
     </main>
   );

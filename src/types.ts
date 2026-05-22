@@ -42,6 +42,15 @@ export type CompileResult = {
   diagnostics: Diagnostic[];
 };
 
+export type PerfDebugOptions = {
+  wordWrap: boolean;
+  autoSuggest: boolean;
+  suggestPreview: boolean;
+  cursorFocusSync: boolean;
+  previewCompile: boolean;
+  previewRender: boolean;
+};
+
 export type ExportResult = {
   format: string;
   data: string;
