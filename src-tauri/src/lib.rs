@@ -357,6 +357,10 @@ pub fn run() {
                 MenuItemBuilder::with_id("open-command-palette", "Command Palette...")
                     .accelerator("Command+Shift+P")
                     .build(handle)?;
+            let toggle_preview_fullscreen =
+                MenuItemBuilder::with_id("toggle-preview-fullscreen", "Toggle Preview Fullscreen")
+                    .accelerator("Command+Alt+P")
+                    .build(handle)?;
             let save = MenuItemBuilder::with_id("save-file", "Save")
                 .accelerator("CmdOrCtrl+S")
                 .build(handle)?;
@@ -388,9 +392,13 @@ pub fn run() {
                 .item(&paste)
                 .item(&select_all)
                 .build()?;
+            let view_menu = SubmenuBuilder::new(handle, "View")
+                .item(&toggle_preview_fullscreen)
+                .build()?;
             MenuBuilder::new(handle)
                 .item(&file_menu)
                 .item(&edit_menu)
+                .item(&view_menu)
                 .build()
         })
         .plugin(tauri_plugin_opener::init())
@@ -404,6 +412,8 @@ pub fn run() {
                 let _ = app.emit_to("main", "d2-desk-open-symbols", ());
             } else if event.id() == "open-command-palette" {
                 let _ = app.emit_to("main", "d2-desk-open-command-palette", ());
+            } else if event.id() == "toggle-preview-fullscreen" {
+                let _ = app.emit_to("main", "d2-desk-toggle-preview-fullscreen", ());
             } else if event.id() == "save-file" {
                 let _ = app.emit_to("main", "d2-desk-save", ());
             } else if event.id() == "close-tab" {
