@@ -12,7 +12,6 @@ const perfDebugOptionLabels: Array<{ key: keyof PerfDebugOptions; label: string 
   { key: "wordWrap", label: "Word wrap" },
   { key: "autoSuggest", label: "Auto suggest" },
   { key: "suggestPreview", label: "Suggest preview" },
-  { key: "cursorFocusSync", label: "Cursor sync" },
   { key: "previewCompile", label: "Preview compile" },
   { key: "previewRender", label: "Preview render" },
 ];

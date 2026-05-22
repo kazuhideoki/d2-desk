@@ -23,7 +23,6 @@ import { loadInitialSession, type InitialSession } from "./app/initialSession";
 import { CommandPalette } from "./features/command-palette/CommandPalette";
 import { isCommandEnabled, type AppCommand } from "./shared/commands";
 import { EditorPane } from "./features/editor/EditorPane";
-import { objectIdAtPosition } from "./features/editor/sourceRanges";
 import { switchEdgeDirectionInSource } from "./features/editor/switchEdge";
 import {
   completionPreviewSource,
@@ -102,11 +101,6 @@ import {
 import { WorkspaceManager } from "./features/workspaces/WorkspaceManager";
 import "./App.css";
 
-type CursorObjectLookup = {
-  modelVersionId: number | null;
-  objects: CompileResult["objects"];
-};
-
 type FocusedPane = "editor" | "preview";
 
 type RenameNodeResult = {
@@ -172,7 +166,6 @@ const defaultPerfDebugOptions: PerfDebugOptions = {
   wordWrap: true,
   autoSuggest: true,
   suggestPreview: true,
-  cursorFocusSync: true,
   previewCompile: true,
   previewRender: true,
 };
@@ -323,11 +316,6 @@ function MainApp() {
   const activeTabIdRef = useRef(activeTabId);
   const editorTabIdRef = useRef(activeTabId);
   const focusedPaneRef = useRef<FocusedPane>("editor");
-  const objectLookupRef = useRef<CursorObjectLookup>({
-    modelVersionId: null,
-    objects: [],
-  });
-  const activeCursorLookupRequestId = useRef(0);
   const closeTabInFlightRef = useRef(false);
   const quitInFlightRef = useRef(false);
   const activeIdRef = useRef(activeId);
@@ -415,10 +403,6 @@ function MainApp() {
     window.addEventListener("focusin", handleFocusIn);
     return () => window.removeEventListener("focusin", handleFocusIn);
   }, []);
-
-  function invalidateCursorLookup() {
-    activeCursorLookupRequestId.current += 1;
-  }
 
   const setPerfDebugOption = useCallback((key: keyof PerfDebugOptions, enabled: boolean) => {
     setPerfDebugOptions((current) =>
@@ -604,7 +588,6 @@ function MainApp() {
   }, [persistTabs]);
 
   const activateTab = useCallback((tabId: string) => {
-    invalidateCursorLookup();
     activeTabIdRef.current = tabId;
     setActiveTabId(tabId);
     setActiveId(null);
@@ -647,9 +630,6 @@ function MainApp() {
   );
 
   const updateActiveTab = useCallback((updates: Partial<D2Tab>) => {
-    if ("source" in updates) {
-      invalidateCursorLookup();
-    }
     setTabs((currentTabs) => {
       const tabId = activeTabIdRef.current;
       const nextTabs = currentTabs.map((tab) => {
@@ -689,7 +669,6 @@ function MainApp() {
         }
 
         pendingEditorViewStateRestoreRef.current = null;
-        invalidateCursorLookup();
         if (snapshot.viewState) {
           editor.restoreViewState(snapshot.viewState);
         }
@@ -699,10 +678,6 @@ function MainApp() {
           editor.setPosition(snapshot.position, "restore-rename-cursor");
         }
         editor.focus();
-        const position = snapshot.position ?? editor.getPosition();
-        if (position) {
-          void updateFocusedObjectFromPosition(editor, position);
-        }
       };
 
       pendingEditorViewStateRestoreRef.current = window.requestAnimationFrame(restore);
@@ -715,7 +690,6 @@ function MainApp() {
     const nextTabs = [...tabsRef.current, nextTab];
     tabsRef.current = nextTabs;
     activeTabIdRef.current = nextTab.id;
-    invalidateCursorLookup();
     setTabs(nextTabs);
     setActiveTabId(nextTab.id);
     persistTabs(nextTabs, nextTab.id);
@@ -730,7 +704,6 @@ function MainApp() {
       const existingTab = currentTabs.find((tab) => tab.filePath === file.path);
       if (existingTab) {
         activeTabIdRef.current = existingTab.id;
-        invalidateCursorLookup();
         setActiveTabId(existingTab.id);
         setActiveId(null);
         setHoverId(null);
@@ -748,7 +721,6 @@ function MainApp() {
       tabsRef.current = nextTabs;
       activeTabIdRef.current = nextTab.id;
       editorTabIdRef.current = nextTab.id;
-      invalidateCursorLookup();
       setTabs(nextTabs);
       setActiveTabId(nextTab.id);
       persistTabs(nextTabs, nextTab.id);
@@ -772,9 +744,6 @@ function MainApp() {
     perfDebugOptionsRef.current = perfDebugOptions;
     if (!perfDebugOptions.suggestPreview) {
       clearSuggestPreview();
-    }
-    if (!perfDebugOptions.cursorFocusSync) {
-      invalidateCursorLookup();
     }
     if (!perfDebugOptions.previewCompile) {
       activeCompileRequestId.current += 1;
@@ -897,10 +866,6 @@ function MainApp() {
           setStatus("Diagnostics updated; preview kept from last valid compile");
           return;
         }
-        objectLookupRef.current = {
-          modelVersionId: editorRef.current?.getModel()?.getVersionId() ?? null,
-          objects: result.objects,
-        };
         setCompileResult(result);
         setStatus("Compiled");
       } catch (error) {
@@ -1502,7 +1467,6 @@ function MainApp() {
       if (tabId === activeTabIdRef.current) {
         const nextActiveTab = nextTabs[Math.min(targetIndex, nextTabs.length - 1)] ?? nextTabs[0];
         activeTabIdRef.current = nextActiveTab.id;
-        invalidateCursorLookup();
         setActiveTabId(nextActiveTab.id);
         setActiveId(null);
         setHoverId(null);
@@ -1574,7 +1538,6 @@ function MainApp() {
       tabsRef.current = nextTabs;
       activeTabIdRef.current = nextActiveTabId;
       editorTabIdRef.current = nextActiveTabId;
-      invalidateCursorLookup();
       setWorkspaceState(nextWorkspaceState);
       setTabs(nextTabs);
       setActiveTabId(nextActiveTabId);
@@ -1914,10 +1877,6 @@ function MainApp() {
       window.requestAnimationFrame(() => {
         try {
           editor.restoreViewState(savedViewState);
-          const position = editor.getPosition();
-          if (position) {
-            void updateFocusedObjectFromPosition(editor, position);
-          }
         } catch {
           updateActiveTab({ editorViewState: null });
         }
@@ -2173,48 +2132,7 @@ function MainApp() {
         }, 0);
       }
     });
-    editor.onDidChangeCursorPosition((event) => {
-      if (!perfDebugOptionsRef.current.cursorFocusSync) return;
-      void updateFocusedObjectFromPosition(editor, event.position);
-    });
   };
-
-  async function updateFocusedObjectFromPosition(
-    editor: Monaco.editor.IStandaloneCodeEditor,
-    position: Monaco.IPosition,
-  ) {
-    if (!perfDebugOptionsRef.current.cursorFocusSync) return;
-
-    const requestId = activeCursorLookupRequestId.current + 1;
-    activeCursorLookupRequestId.current = requestId;
-    const tabId = activeTabIdRef.current;
-    const model = editor.getModel();
-    const modelVersionId = model?.getVersionId() ?? null;
-    const lookup = objectLookupRef.current;
-
-    const nextActiveId =
-      modelVersionId !== null && modelVersionId === lookup.modelVersionId
-        ? objectIdAtPosition(lookup.objects, position.lineNumber, position.column)
-        : await objectIdAtCurrentPosition(editor.getValue(), position);
-    if (requestId !== activeCursorLookupRequestId.current) {
-      return;
-    }
-    if (!perfDebugOptionsRef.current.cursorFocusSync) return;
-    if (
-      tabId !== activeTabIdRef.current ||
-      model !== editor.getModel() ||
-      modelVersionId !== (editor.getModel()?.getVersionId() ?? null)
-    ) {
-      return;
-    }
-    if (hoverIdRef.current !== null) {
-      hoverIdRef.current = null;
-      setHoverId(null);
-    }
-    setActiveId((currentActiveId) =>
-      currentActiveId === nextActiveId ? currentActiveId : nextActiveId,
-    );
-  }
 
   async function objectIdAtCurrentPosition(source: string, position: Monaco.IPosition) {
     try {
@@ -2751,7 +2669,6 @@ function MainApp() {
               setHoverId(id);
             }}
             onSelect={(id) => {
-              invalidateCursorLookup();
               hoverIdRef.current = null;
               setHoverId(null);
               setActiveId(id);
