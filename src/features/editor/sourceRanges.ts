@@ -34,3 +34,26 @@ export function objectIdAtPosition(
   }
   return bestMatch?.id ?? null;
 }
+
+export function connectionIdAtPosition(
+  objects: CompileResult["objects"],
+  lineNumber: number,
+  column: number,
+) {
+  let bestMatch: { id: string; size: number } | null = null;
+  for (const object of objects) {
+    if (object.kind !== "connection") continue;
+    for (const range of object.sourceRanges ?? []) {
+      if (sourceRangeContains(range, lineNumber, column)) {
+        const size =
+          range.startLine === range.endLine
+            ? range.endColumn - range.startColumn
+            : (range.endLine - range.startLine) * 10000 + range.endColumn - range.startColumn;
+        if (!bestMatch || size < bestMatch.size) {
+          bestMatch = { id: object.id, size };
+        }
+      }
+    }
+  }
+  return bestMatch?.id ?? null;
+}

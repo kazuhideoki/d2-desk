@@ -42,6 +42,26 @@ describe("switchEdgeDirectionInSource", () => {
     });
   });
 
+  it("can switch the same edge back when called with refreshed ranges", () => {
+    const first = switchEdgeDirectionInSource("api -> db\n", edge(5, 10));
+    expect(first).toEqual({
+      ok: true,
+      source: "db <- api\n",
+      cursorPosition: { lineNumber: 1, column: 4 },
+    });
+    if (!first.ok) throw new Error(first.reason);
+
+    const second = switchEdgeDirectionInSource(first.source, {
+      ...edge(4, 10),
+      sourceRanges: [range(4, 6), range(1, 10)],
+    });
+    expect(second).toEqual({
+      ok: true,
+      source: "api -> db\n",
+      cursorPosition: { lineNumber: 1, column: 5 },
+    });
+  });
+
   it("keeps labels, indentation, trailing comments, and mirrored operator spacing", () => {
     const result = switchEdgeDirectionInSource("  api   ->    db: calls # comment\n", {
       ...edge(9, 27),
