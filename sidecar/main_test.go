@@ -1014,7 +1014,7 @@ func TestCompleteReturnsNestedConfigKeysForInlineParentMaps(t *testing.T) {
 	}
 }
 
-func TestCompleteReturnsD2ConfigKeyInRootVars(t *testing.T) {
+func TestCompleteReturnsRootVarsKeyCompletions(t *testing.T) {
 	source := "vars: {\n  d2-\n}"
 	items, err := complete(completeParams{Source: source, Line: 1, Column: len("  d2-")})
 	if err != nil {
@@ -1022,6 +1022,9 @@ func TestCompleteReturnsD2ConfigKeyInRootVars(t *testing.T) {
 	}
 	if !hasCompletionInsertText(items, "d2-config", "d2-config: ") {
 		t.Fatalf("expected d2-config key completion in root vars, got %#v", items)
+	}
+	if !hasCompletionInsertText(items, "d2-legend", "d2-legend: ") {
+		t.Fatalf("expected d2-legend key completion in root vars, got %#v", items)
 	}
 }
 
@@ -1033,6 +1036,9 @@ func TestCompleteDoesNotReturnD2ConfigKeyInNestedVars(t *testing.T) {
 	}
 	if hasCompletion(items, "d2-config") {
 		t.Fatalf("expected no d2-config key completion in nested vars, got %#v", items)
+	}
+	if hasCompletion(items, "d2-legend") {
+		t.Fatalf("expected no d2-legend key completion in nested vars, got %#v", items)
 	}
 }
 
