@@ -148,6 +148,8 @@ type InternalSuggestModel = {
 
 type DetachedPreviewState = {
   objects: CompileResult["objects"];
+  boards: NonNullable<CompileResult["boards"]>;
+  selectedBoardPath: string[];
   renderedSvg: string;
   overlayViewBox: string;
   activeId: string | null;
@@ -177,8 +179,23 @@ function lastD2IdSegment(id: string) {
   return parts[parts.length - 1] ?? id;
 }
 
+function boardPathKey(path: string[]) {
+  return JSON.stringify(path);
+}
+
+function hasBoardPath(boards: CompileResult["boards"] | undefined, path: string[]) {
+  const key = boardPathKey(path);
+  return (boards ?? []).some((board) => boardPathKey(board.path) === key);
+}
+
+function compileResultKey(source: string, boardPath: string[]) {
+  return `${boardPathKey(boardPath)}\n${source}`;
+}
+
 const emptyDetachedPreviewState: DetachedPreviewState = {
   objects: [],
+  boards: [],
+  selectedBoardPath: [],
   renderedSvg: "",
   overlayViewBox: "0 0 800 600",
   activeId: null,
@@ -236,6 +253,8 @@ function PreviewWindowApp() {
     <main className="app-shell detached-preview-shell">
       <PreviewPane
         objects={previewState.objects}
+        boards={previewState.boards}
+        selectedBoardPath={previewState.selectedBoardPath}
         renderedSvg={previewState.renderedSvg}
         overlayViewBox={previewState.overlayViewBox}
         zoom={previewZoom}
@@ -269,6 +288,7 @@ function MainApp() {
   const [compileResult, setCompileResult] = useState<CompileResult>({
     svg: "",
     objects: [],
+    boards: [],
     diagnostics: [],
   });
   const [suggestPreviewResult, setSuggestPreviewResult] = useState<CompileResult | null>(null);
@@ -285,12 +305,14 @@ function MainApp() {
   const [previewZoomMode, setPreviewZoomMode] = useState<PreviewZoomMode>("auto");
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const [previewDetached, setPreviewDetached] = useState(false);
+  const [selectedBoardPath, setSelectedBoardPath] = useState<string[]>([]);
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decorationIds = useRef<string[]>([]);
   const activeCompileRequestId = useRef(0);
   const activeSuggestPreviewRequestId = useRef(0);
   const previousCompileTabIdRef = useRef(activeTabId);
+  const previousCompileBoardPathKeyRef = useRef(boardPathKey(selectedBoardPath));
   const suggestPreviewTimeoutRef = useRef<number | null>(null);
   const suggestPreviewCacheRef = useRef(new Map<string, CompileResult>());
   const renameInputRef = useRef<HTMLInputElement | null>(null);
@@ -328,6 +350,7 @@ function MainApp() {
   const hoverIdRef = useRef(hoverId);
   const compileResultRef = useRef(compileResult);
   const compileResultSourceRef = useRef<string | null>(null);
+  const selectedBoardPathRef = useRef(selectedBoardPath);
   const detachedPreviewStateRef = useRef<DetachedPreviewState>(emptyDetachedPreviewState);
 
   const activeTab = useMemo(
@@ -337,6 +360,7 @@ function MainApp() {
   const source = activeTab?.source ?? "";
   const fileName = activeTab?.fileName ?? "untitled.d2";
   const currentFilePath = activeTab?.filePath ?? null;
+  const selectedBoardPathKey = useMemo(() => boardPathKey(selectedBoardPath), [selectedBoardPath]);
   const latestCompileInputsRef = useRef({ tabId: activeTabId, source });
   latestCompileInputsRef.current = { tabId: activeTabId, source };
   const visibleCompileResult = suggestPreviewResult ?? compileResult;
@@ -369,13 +393,24 @@ function MainApp() {
   const detachedPreviewState = useMemo<DetachedPreviewState>(
     () => ({
       objects: visibleCompileResult.objects,
+      boards: visibleCompileResult.boards ?? [],
+      selectedBoardPath,
       renderedSvg,
       overlayViewBox,
       activeId,
       hoverId,
       fileName,
     }),
-    [activeId, fileName, hoverId, overlayViewBox, renderedSvg, visibleCompileResult.objects],
+    [
+      activeId,
+      fileName,
+      hoverId,
+      overlayViewBox,
+      renderedSvg,
+      selectedBoardPath,
+      visibleCompileResult.boards,
+      visibleCompileResult.objects,
+    ],
   );
 
   useEffect(() => {
@@ -425,6 +460,19 @@ function MainApp() {
   useEffect(() => {
     compileResultRef.current = compileResult;
   }, [compileResult]);
+
+  useEffect(() => {
+    selectedBoardPathRef.current = selectedBoardPath;
+  }, [selectedBoardPath]);
+
+  useEffect(() => {
+    if (selectedBoardPath.length === 0) return;
+    if (compileResult.boards && hasBoardPath(compileResult.boards, selectedBoardPath)) return;
+    setSelectedBoardPath([]);
+    invalidateCursorLookup();
+    setActiveId(null);
+    setHoverId(null);
+  }, [compileResult.boards, selectedBoardPath]);
 
   useEffect(() => {
     setD2ImportCompletionContextProvider(() => {
@@ -763,6 +811,19 @@ function MainApp() {
     setSuggestPreviewResult(null);
   }, []);
 
+  const selectPreviewBoard = useCallback(
+    (boardPath: string[]) => {
+      clearSuggestPreview();
+      invalidateCursorLookup();
+      setActiveId(null);
+      setHoverId(null);
+      setSelectedBoardPath(boardPath);
+      setPreviewZoomMode("auto");
+      setStatus(boardPath.length === 0 ? "Previewing root board" : `Previewing ${boardPath.join(".")}`);
+    },
+    [clearSuggestPreview],
+  );
+
   function sidecarSourceParams(nextSource: string) {
     const workspaceId = activeWorkspaceIdRef.current;
     const workspace = workspaceId
@@ -775,6 +836,7 @@ function MainApp() {
       source: nextSource,
       workspaceRootPath: workspace?.rootPath ?? "",
       currentFilePath: activeTabForCompile?.filePath ?? "",
+      boardPath: selectedBoardPathRef.current,
       openFiles: tabsRef.current
         .filter((tab) => tab.filePath)
         .map((tab) => ({
@@ -839,7 +901,8 @@ function MainApp() {
   );
 
   async function compileCurrentSourceForLookup(currentSource: string) {
-    if (compileResultSourceRef.current === currentSource) {
+    const currentCompileResultKey = compileResultKey(currentSource, selectedBoardPathRef.current);
+    if (compileResultSourceRef.current === currentCompileResultKey) {
       return compileResultRef.current;
     }
 
@@ -852,7 +915,7 @@ function MainApp() {
     }
 
     compileResultRef.current = result;
-    compileResultSourceRef.current = currentSource;
+    compileResultSourceRef.current = currentCompileResultKey;
     objectLookupRef.current = {
       modelVersionId: editorRef.current?.getModel()?.getVersionId() ?? null,
       objects: result.objects,
@@ -901,7 +964,7 @@ function MainApp() {
           modelVersionId: editorRef.current?.getModel()?.getVersionId() ?? null,
           objects: result.objects,
         };
-        compileResultSourceRef.current = nextSource;
+        compileResultSourceRef.current = compileResultKey(nextSource, selectedBoardPathRef.current);
         setCompileResult(result);
         setStatus("Compiled");
       } catch (error) {
@@ -963,8 +1026,11 @@ function MainApp() {
     }
     const requestId = activeCompileRequestId.current + 1;
     activeCompileRequestId.current = requestId;
-    const shouldCompileImmediately = previousCompileTabIdRef.current !== activeTabId;
+    const shouldCompileImmediately =
+      previousCompileTabIdRef.current !== activeTabId ||
+      previousCompileBoardPathKeyRef.current !== selectedBoardPathKey;
     previousCompileTabIdRef.current = activeTabId;
+    previousCompileBoardPathKeyRef.current = selectedBoardPathKey;
     if (shouldCompileImmediately) {
       setStatus("Compiling");
       void compile(source, activeTabId, requestId);
@@ -975,7 +1041,14 @@ function MainApp() {
       void compile(source, activeTabId, requestId);
     }, previewCompileDelayMs);
     return () => window.clearTimeout(timeout);
-  }, [activeTabId, clearSuggestPreview, compile, isEditingIconValueCompletion, source]);
+  }, [
+    activeTabId,
+    clearSuggestPreview,
+    compile,
+    isEditingIconValueCompletion,
+    selectedBoardPathKey,
+    source,
+  ]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -2756,6 +2829,8 @@ function MainApp() {
         {previewDetached ? null : (
           <PreviewPane
             objects={visibleCompileResult.objects}
+            boards={compileResult.boards ?? []}
+            selectedBoardPath={selectedBoardPath}
             renderedSvg={renderedSvg}
             overlayViewBox={overlayViewBox}
             zoom={previewZoom}
@@ -2778,6 +2853,7 @@ function MainApp() {
             onZoomIn={zoomPreviewIn}
             onZoomModeChange={setPreviewZoomMode}
             onAutoZoomChange={setAutoPreviewZoom}
+            onBoardPathChange={selectPreviewBoard}
           />
         )}
       </section>
