@@ -37,12 +37,12 @@ var d2LabelKeyCompletionItems = completionItemsForLabels([]string{
 	"near",
 }, "label property", "keyword")
 
-var d2VarsKeyCompletionItems = completionItemsForLabels([]string{
+var d2VarsKeyCompletionItems = completionKeyItemsForLabels([]string{
 	"d2-config",
 	"d2-legend",
 }, "vars property", "keyword")
 
-var d2ConfigKeyCompletionItems = completionItemsForLabels([]string{
+var d2ConfigKeyCompletionItems = completionKeyItemsForLabels([]string{
 	"sketch",
 	"theme-id",
 	"dark-theme-id",
@@ -131,7 +131,7 @@ func buildD2KeyCompletionItems() []completionItem {
 	appendMapKeys(&labels, seen, d2ast.CompositeReservedKeywords)
 	appendMapKeys(&labels, seen, d2ast.BoardKeywords)
 	sort.Strings(labels)
-	return completionItemsForLabels(labels, "property", "keyword")
+	return completionKeyItemsForLabels(labels, "property", "keyword")
 }
 
 func buildD2StyleKeyCompletionItems() []completionItem {
@@ -163,6 +163,38 @@ func completionItemsForLabels(labels []string, detail, kind string) []completion
 		})
 	}
 	return items
+}
+
+func completionKeyItemsForLabels(labels []string, detail, kind string) []completionItem {
+	items := make([]completionItem, 0, len(labels))
+	for _, label := range labels {
+		items = append(items, completionItem{
+			Label:      label,
+			Kind:       kind,
+			Detail:     detail,
+			InsertText: d2KeyCompletionInsertText(label),
+		})
+	}
+	return items
+}
+
+func d2KeyCompletionInsertText(label string) string {
+	if isD2DotContinuableKey(label) {
+		return label
+	}
+	return label + ": "
+}
+
+func isD2DotContinuableKey(label string) bool {
+	if _, ok := d2ast.CompositeReservedKeywords[label]; ok {
+		return true
+	}
+	switch label {
+	case "vars", "d2-config", "d2-legend", "theme-overrides", "dark-theme-overrides":
+		return true
+	default:
+		return false
+	}
 }
 
 func d2KeyCompletions(params completeParams) []completionItem {
@@ -1276,7 +1308,12 @@ func isD2ReservedNodePath(path []string) bool {
 	if len(path) == 0 {
 		return true
 	}
-	return isD2ReservedNodeKey(path[0])
+	for _, key := range path {
+		if isD2ReservedNodeKey(key) {
+			return true
+		}
+	}
+	return false
 }
 
 func isD2ReservedNodeKey(key string) bool {

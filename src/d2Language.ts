@@ -929,5 +929,5 @@ function isReservedD2NodePath(path: string[]) {
     "dark-theme-overrides",
     "d2-config",
   ]);
-  return path.length === 0 || reserved.has(path[0]);
+  return path.length === 0 || path.some((part) => reserved.has(part));
 }
