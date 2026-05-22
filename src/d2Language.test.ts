@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { getD2CompletionContext, isD2LineCommentPosition } from "./d2Language";
+import { encodeD2SemanticTokens, getD2CompletionContext, isD2LineCommentPosition } from "./d2Language";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -78,5 +78,23 @@ describe("d2Language", () => {
     expect(getD2CompletionContext("email@example", "email@example".length + 1)).toBeNull();
     expect(getD2CompletionContext("shape rec", "shape rec".length + 1)).toBeNull();
     expect(getD2CompletionContext("", 1)).toBeNull();
+  });
+
+  it("encodes D2 semantic tokens using Monaco delta positions", () => {
+    const encoded = encodeD2SemanticTokens([
+      {
+        tokenType: "boolean",
+        sourceRange: { file: "main.d2", startLine: 3, startColumn: 5, endLine: 3, endColumn: 10 },
+      },
+      {
+        tokenType: "boolean",
+        sourceRange: { file: "main.d2", startLine: 1, startColumn: 8, endLine: 1, endColumn: 12 },
+      },
+    ]);
+
+    expect([...encoded]).toEqual([
+      0, 7, 4, 0, 0,
+      2, 4, 5, 0, 0,
+    ]);
   });
 });

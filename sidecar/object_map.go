@@ -10,7 +10,7 @@ import (
 	"oss.terrastruct.com/d2/lib/geo"
 )
 
-func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
+func buildObjectMap(source string, diagram *d2target.Diagram, boardPath []string) []objectMap {
 	sourceRanges := scanSourceRanges(source)
 	nodeScopeRanges := scanNodeScopeRanges(source)
 	connectionRanges := scanConnectionSourceRanges(source)
@@ -26,7 +26,7 @@ func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
 		objects = append(objects, objectMap{
 			ID:           shape.ID,
 			Kind:         "shape",
-			BoardPath:    []string{},
+			BoardPath:    nonNilBoardPath(boardPath),
 			Label:        shape.Label,
 			SourceRanges: nonNilRanges(rangesForShape(shape.ID, sourceRanges, nodeScopeRanges)),
 			Preview:      previewBox{X: &x, Y: &y, Width: &w, Height: &h},
@@ -50,7 +50,7 @@ func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
 		objects = append(objects, objectMap{
 			ID:           conn.ID,
 			Kind:         "connection",
-			BoardPath:    []string{},
+			BoardPath:    nonNilBoardPath(boardPath),
 			Label:        conn.Label,
 			Src:          conn.Src,
 			Dst:          conn.Dst,
@@ -67,10 +67,17 @@ func buildObjectMap(source string, diagram *d2target.Diagram) []objectMap {
 	return objects
 }
 
+func nonNilBoardPath(boardPath []string) []string {
+	if boardPath == nil {
+		return []string{}
+	}
+	return append([]string{}, boardPath...)
+}
+
 func nodeAt(params nodeAtParams) map[string]string {
 	var bestID string
 	var bestRange *sourceRange
-	for _, obj := range buildObjectMap(params.Source, nilFallbackDiagram(params.Source)) {
+	for _, obj := range buildObjectMap(params.Source, nilFallbackDiagram(params.Source), nil) {
 		for _, r := range obj.SourceRanges {
 			if contains(r, params.Line, params.Column) {
 				if bestRange == nil || sourceRangeSize(r) < sourceRangeSize(*bestRange) {

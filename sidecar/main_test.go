@@ -102,6 +102,22 @@ func TestHandleDispatchesMethods(t *testing.T) {
 			},
 		},
 		{
+			name: "semanticTokens",
+			request: request{
+				Method: "semanticTokens",
+				Params: mustParams(t, semanticTokenParams{Source: "api: { style.shadow: true }"}),
+			},
+			validate: func(t *testing.T, result any) {
+				tokens, ok := result.([]semanticToken)
+				if !ok {
+					t.Fatalf("expected semantic tokens, got %T", result)
+				}
+				if !hasSemanticToken(tokens, "boolean", 1, 22, 1, 26) {
+					t.Fatalf("expected boolean semantic token, got %#v", tokens)
+				}
+			},
+		},
+		{
 			name: "export",
 			request: request{
 				Method: "export",
@@ -174,6 +190,46 @@ func TestCompileProducesSVGAndObjects(t *testing.T) {
 	}
 	if len(result.Objects) == 0 {
 		t.Fatal("expected object map entries")
+	}
+}
+
+func TestCompileCanRenderCompositionBoard(t *testing.T) {
+	source := `baseA -> baseB
+
+layers: {
+  infra: {
+    layerX -> layerY
+  }
+}`
+	result, err := compile(compileParams{
+		Source:    source,
+		BoardPath: []string{"layers", "infra"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("expected no diagnostics, got %#v", result.Diagnostics)
+	}
+	if !strings.Contains(result.SVG, "layerX") {
+		t.Fatalf("expected selected layer SVG, got %q", result.SVG)
+	}
+	if strings.Contains(result.SVG, "baseA") {
+		t.Fatalf("expected selected layer to hide root board, got %q", result.SVG)
+	}
+	if len(result.Boards) != 2 {
+		t.Fatalf("expected root and layer board summaries, got %#v", result.Boards)
+	}
+	layer := result.Boards[1]
+	if layer.Kind != "layers" || layer.Name != "infra" || strings.Join(layer.Path, ".") != "layers.infra" {
+		t.Fatalf("unexpected layer board summary: %#v", layer)
+	}
+	layerX := findObject(result.Objects, "layerX")
+	if layerX == nil {
+		t.Fatalf("expected layerX object in %#v", result.Objects)
+	}
+	if strings.Join(layerX.BoardPath, ".") != "layers.infra" {
+		t.Fatalf("expected layerX board path, got %#v", layerX.BoardPath)
 	}
 }
 
@@ -694,6 +750,48 @@ container: {
 	}
 }
 
+func TestRenameNodeRenamesConnectionEndpointWithBlock(t *testing.T) {
+	source := `api -> db: {
+  style.stroke: red
+}
+`
+	result, err := renameNode(renameNodeParams{Source: source, ID: "db", NewName: "database"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := `api -> database: {
+  style.stroke: red
+}
+`
+	if result.Source != expected {
+		t.Fatalf("unexpected renamed source:\n%s", result.Source)
+	}
+}
+
+func TestRenameNodeRenamesEdgeReferenceDefinitionEndpoints(t *testing.T) {
+	source := `api -> db: query
+(api -> db)[0].style.stroke: red
+(api -> db)[0]: {
+  style.stroke-width: 4
+}
+`
+	result, err := renameNode(renameNodeParams{Source: source, ID: "db", NewName: "database"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := `api -> database: query
+(api -> database)[0].style.stroke: red
+(api -> database)[0]: {
+  style.stroke-width: 4
+}
+`
+	if result.Source != expected {
+		t.Fatalf("unexpected renamed source:\n%s", result.Source)
+	}
+}
+
 func TestRenameNodeRejectsInvalidName(t *testing.T) {
 	_, err := renameNode(renameNodeParams{Source: "api -> db", ID: "api", NewName: "new.name"})
 	if err == nil {
@@ -708,6 +806,27 @@ func TestNodeAtFindsConnectionOperator(t *testing.T) {
 	result := nodeAt(nodeAtParams{Source: "api -> db", Line: 1, Column: 6})
 	if result["id"] != "(api -> db)[0]" {
 		t.Fatalf("expected connection at arrow operator, got %#v", result)
+	}
+}
+
+func TestNodeAtFindsLeftArrowConnectionOperator(t *testing.T) {
+	source := "db <- api: query"
+	compiled, err := compile(compileParams{Source: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	connection := findConnection(compiled.Objects, "query")
+	if connection == nil {
+		t.Fatalf("expected left arrow connection in %#v", compiled.Objects)
+	}
+	if !hasRange(connection.SourceRanges, 1, 4, 6) {
+		t.Fatalf("expected left arrow connection to include arrow operator range, got %#v", connection.SourceRanges)
+	}
+
+	result := nodeAt(nodeAtParams{Source: source, Line: 1, Column: 5})
+	if result["id"] != connection.ID {
+		t.Fatalf("expected connection at left arrow operator, got %#v; connection %#v", result, connection)
 	}
 }
 
@@ -1014,7 +1133,7 @@ func TestCompleteReturnsNestedConfigKeysForInlineParentMaps(t *testing.T) {
 	}
 }
 
-func TestCompleteReturnsD2ConfigKeyInRootVars(t *testing.T) {
+func TestCompleteReturnsRootVarsKeyCompletions(t *testing.T) {
 	source := "vars: {\n  d2-\n}"
 	items, err := complete(completeParams{Source: source, Line: 1, Column: len("  d2-")})
 	if err != nil {
@@ -1022,6 +1141,9 @@ func TestCompleteReturnsD2ConfigKeyInRootVars(t *testing.T) {
 	}
 	if !hasCompletionInsertText(items, "d2-config", "d2-config: ") {
 		t.Fatalf("expected d2-config key completion in root vars, got %#v", items)
+	}
+	if !hasCompletionInsertText(items, "d2-legend", "d2-legend: ") {
+		t.Fatalf("expected d2-legend key completion in root vars, got %#v", items)
 	}
 }
 
@@ -1033,6 +1155,9 @@ func TestCompleteDoesNotReturnD2ConfigKeyInNestedVars(t *testing.T) {
 	}
 	if hasCompletion(items, "d2-config") {
 		t.Fatalf("expected no d2-config key completion in nested vars, got %#v", items)
+	}
+	if hasCompletion(items, "d2-legend") {
+		t.Fatalf("expected no d2-legend key completion in nested vars, got %#v", items)
 	}
 }
 
@@ -1367,6 +1492,24 @@ func TestCompleteReturnsAdditionalValueCompletions(t *testing.T) {
 	}
 }
 
+func TestSemanticTokensReturnsOnlyBooleanTypedValues(t *testing.T) {
+	source := "true: label\napi: true\nhoge: { hoge: true }\napi: { style.shadow: true; label: \"false\" }\nvars: { d2-config: { sketch: false } }"
+	tokens, err := semanticTokens(semanticTokenParams{Source: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(tokens) != 2 {
+		t.Fatalf("expected 2 boolean tokens, got %#v", tokens)
+	}
+	if !hasSemanticToken(tokens, "boolean", 4, 22, 4, 26) {
+		t.Fatalf("expected style.shadow true token, got %#v", tokens)
+	}
+	if !hasSemanticToken(tokens, "boolean", 5, 30, 5, 35) {
+		t.Fatalf("expected sketch false token, got %#v", tokens)
+	}
+}
+
 func TestCompleteReturnsThemeMetadata(t *testing.T) {
 	source := "vars: {\n  d2-config: {\n    theme-id: \n  }\n}"
 	items, err := complete(completeParams{Source: source, Line: 2, Column: len("    theme-id: ")})
@@ -1640,6 +1783,19 @@ func hasCompletionKind(items []completionItem, label, kind string) bool {
 func hasCompletionInsertText(items []completionItem, label, insertText string) bool {
 	for _, item := range items {
 		if item.Label == label && item.InsertText == insertText {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSemanticToken(tokens []semanticToken, tokenType string, line, startColumn, endLine, endColumn int) bool {
+	for _, token := range tokens {
+		if token.TokenType == tokenType &&
+			token.SourceRange.StartLine == line &&
+			token.SourceRange.StartColumn == startColumn &&
+			token.SourceRange.EndLine == endLine &&
+			token.SourceRange.EndColumn == endColumn {
 			return true
 		}
 	}

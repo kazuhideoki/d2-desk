@@ -58,6 +58,12 @@ func handle(req request) (any, error) {
 			return nil, err
 		}
 		return complete(params)
+	case "semanticTokens":
+		var params semanticTokenParams
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return nil, err
+		}
+		return semanticTokens(params)
 	case "export":
 		var params exportParams
 		if err := json.Unmarshal(req.Params, &params); err != nil {

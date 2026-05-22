@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emitTo, listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import {
   Download,
@@ -10,6 +11,7 @@ import {
   FileInput,
   Focus,
   FolderPlus,
+  Maximize2,
   Save,
   Settings,
   SquareArrowOutUpRight,
@@ -21,7 +23,8 @@ import { loadInitialSession, type InitialSession } from "./app/initialSession";
 import { CommandPalette } from "./features/command-palette/CommandPalette";
 import { isCommandEnabled, type AppCommand } from "./shared/commands";
 import { EditorPane } from "./features/editor/EditorPane";
-import { objectIdAtPosition } from "./features/editor/sourceRanges";
+import { connectionIdAtPosition } from "./features/editor/sourceRanges";
+import { findSwitchableEdge, switchEdgeDirectionInSource } from "./features/editor/switchEdge";
 import {
   completionPreviewSource,
   isD2IconValueCompletionPosition,
@@ -38,6 +41,11 @@ import {
   type WorkspaceFilePaletteState,
 } from "./features/file-palette/WorkspaceFilePalette";
 import { PreviewPane, type PreviewZoomMode } from "./features/preview/PreviewPane";
+import {
+  nextPreviewViewMode,
+  previewViewModeStatus,
+  type PreviewViewMode,
+} from "./features/preview/viewMode";
 import { RenameNodeDialog, type RenameDialogState } from "./features/rename-node/RenameNodeDialog";
 import { BottomPanel } from "./features/status/BottomPanel";
 import { SymbolPalette, type SymbolPaletteState } from "./features/symbol-palette/SymbolPalette";
@@ -59,6 +67,9 @@ import {
   hasTabPendingUserChanges,
   loadActiveTabId,
   loadTabs,
+  reorderTabs,
+  tabAbsolutePath,
+  type TabDropPosition,
   writeStoredTabs,
 } from "./features/tabs/tabs";
 import { Toolbar, type ToolbarCommand } from "./features/toolbar/Toolbar";
@@ -68,6 +79,8 @@ import type {
   D2Tab,
   ExportResult,
   OpenedD2File,
+  PerfDebugOptions,
+  RenamedD2File,
   SavedD2File,
   StoredWorkspaces,
   WorkspaceFileEntry,
@@ -94,11 +107,6 @@ import {
 } from "./features/workspaces/workspaces";
 import { WorkspaceManager } from "./features/workspaces/WorkspaceManager";
 import "./App.css";
-
-type CursorObjectLookup = {
-  modelVersionId: number | null;
-  objects: CompileResult["objects"];
-};
 
 type FocusedPane = "editor" | "preview";
 
@@ -136,6 +144,19 @@ type InternalSuggestModel = {
   onDidSuggest?: (listener: (event: InternalSuggestModelEvent) => void) => Monaco.IDisposable;
 };
 
+type DetachedPreviewState = {
+  objects: CompileResult["objects"];
+  boards: NonNullable<CompileResult["boards"]>;
+  selectedBoardPath: string[];
+  renderedSvg: string;
+  overlayViewBox: string;
+  activeId: string | null;
+  hoverId: string | null;
+  fileName: string;
+};
+
+type SelectPreviewBoardEvent = string[];
+
 type InternalSuggestWidget = {
   getFocusedItem?: () => InternalSuggestFocusEvent | undefined;
   onDidFocus?: (listener: (event: InternalSuggestFocusEvent) => void) => Monaco.IDisposable;
@@ -151,13 +172,141 @@ type InternalSuggestController = {
 
 const nodeRenamePattern = /^[A-Za-z0-9_-]+$/;
 const tabPersistenceDelayMs = 400;
+const previewCompileDelayMs = 600;
+const defaultPerfDebugOptions: PerfDebugOptions = {
+  wordWrap: true,
+  autoSuggest: true,
+  suggestPreview: true,
+  previewCompile: true,
+  previewRender: true,
+};
+
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.setAttribute("readonly", "");
+  textArea.style.position = "fixed";
+  textArea.style.left = "-9999px";
+  document.body.appendChild(textArea);
+  textArea.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textArea);
+  if (!copied) {
+    throw new Error("Clipboard copy failed");
+  }
+}
 
 function lastD2IdSegment(id: string) {
   const parts = id.split(".");
   return parts[parts.length - 1] ?? id;
 }
 
-function App() {
+function boardPathKey(path: string[]) {
+  return JSON.stringify(path);
+}
+
+function hasBoardPath(boards: CompileResult["boards"] | undefined, path: string[]) {
+  const key = boardPathKey(path);
+  return (boards ?? []).some((board) => boardPathKey(board.path) === key);
+}
+
+function compileResultKey(source: string, boardPath: string[]) {
+  return `${boardPathKey(boardPath)}\n${source}`;
+}
+
+const emptyDetachedPreviewState: DetachedPreviewState = {
+  objects: [],
+  boards: [],
+  selectedBoardPath: [],
+  renderedSvg: "",
+  overlayViewBox: "0 0 800 600",
+  activeId: null,
+  hoverId: null,
+  fileName: "Preview",
+};
+
+function PreviewWindowApp() {
+  const [previewState, setPreviewState] =
+    useState<DetachedPreviewState>(emptyDetachedPreviewState);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [hoverId, setHoverId] = useState<string | null>(null);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewZoomMode, setPreviewZoomMode] = useState<PreviewZoomMode>("auto");
+
+  useEffect(() => {
+    let isMounted = true;
+    let removeStateListener: (() => void) | null = null;
+    void listen<DetachedPreviewState>("d2-desk-preview-state", (event) => {
+      if (!isMounted) return;
+      setPreviewState(event.payload);
+      setActiveId(event.payload.activeId);
+      setHoverId(event.payload.hoverId);
+    }).then((unlisten) => {
+      if (isMounted) {
+        removeStateListener = unlisten;
+        void emitTo("main", "d2-desk-preview-window-ready");
+      } else {
+        unlisten();
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      removeStateListener?.();
+    };
+  }, []);
+
+  function zoomPreviewIn() {
+    setPreviewZoomMode("manual");
+    setPreviewZoom(increaseZoom);
+  }
+
+  function resetPreviewZoom() {
+    setPreviewZoomMode("auto");
+    setPreviewZoom(1);
+  }
+
+  function zoomPreviewOut() {
+    setPreviewZoomMode("manual");
+    setPreviewZoom(decreaseZoom);
+  }
+
+  const selectDetachedPreviewBoard = useCallback((boardPath: string[]) => {
+    setPreviewZoomMode("auto");
+    void emitTo("main", "d2-desk-select-preview-board", boardPath);
+  }, []);
+
+  return (
+    <main className="app-shell detached-preview-shell">
+      <PreviewPane
+        objects={previewState.objects}
+        boards={previewState.boards}
+        selectedBoardPath={previewState.selectedBoardPath}
+        renderedSvg={previewState.renderedSvg}
+        overlayViewBox={previewState.overlayViewBox}
+        zoom={previewZoom}
+        zoomMode={previewZoomMode}
+        activeId={activeId}
+        hoverId={hoverId}
+        onHover={setHoverId}
+        onSelect={setActiveId}
+        onZoomOut={zoomPreviewOut}
+        onResetZoom={resetPreviewZoom}
+        onZoomIn={zoomPreviewIn}
+        onZoomModeChange={setPreviewZoomMode}
+        onAutoZoomChange={setPreviewZoom}
+        onBoardPathChange={selectDetachedPreviewBoard}
+      />
+    </main>
+  );
+}
+
+function MainApp() {
   const initialSessionRef = useRef<InitialSession | null>(null);
   if (!initialSessionRef.current) {
     initialSessionRef.current = loadInitialSession();
@@ -172,6 +321,7 @@ function App() {
   const [compileResult, setCompileResult] = useState<CompileResult>({
     svg: "",
     objects: [],
+    boards: [],
     diagnostics: [],
   });
   const [suggestPreviewResult, setSuggestPreviewResult] = useState<CompileResult | null>(null);
@@ -179,20 +329,30 @@ function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
+  const [renameFileDialog, setRenameFileDialog] = useState<RenameDialogState | null>(null);
   const [filePalette, setFilePalette] = useState<WorkspaceFilePaletteState | null>(null);
   const [symbolPalette, setSymbolPalette] = useState<SymbolPaletteState | null>(null);
   const [commandPalette, setCommandPalette] = useState<CommandPaletteState | null>(null);
   const [editorZoom, setEditorZoom] = useState(1);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewZoomMode, setPreviewZoomMode] = useState<PreviewZoomMode>("auto");
+  const [previewViewMode, setPreviewViewMode] = useState<PreviewViewMode>("split");
+  const [previewDetached, setPreviewDetached] = useState(false);
+  const [bottomPanelVisible, setBottomPanelVisible] = useState(true);
+  const [perfDebugOptions, setPerfDebugOptions] =
+    useState<PerfDebugOptions>(defaultPerfDebugOptions);
+  const [selectedBoardPath, setSelectedBoardPath] = useState<string[]>([]);
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decorationIds = useRef<string[]>([]);
   const activeCompileRequestId = useRef(0);
   const activeSuggestPreviewRequestId = useRef(0);
+  const previousCompileTabIdRef = useRef(activeTabId);
+  const previousCompileBoardPathKeyRef = useRef(boardPathKey(selectedBoardPath));
   const suggestPreviewTimeoutRef = useRef<number | null>(null);
   const suggestPreviewCacheRef = useRef(new Map<string, CompileResult>());
   const renameInputRef = useRef<HTMLInputElement | null>(null);
+  const renameFileInputRef = useRef<HTMLInputElement | null>(null);
   const filePaletteInputRef = useRef<HTMLInputElement | null>(null);
   const symbolPaletteInputRef = useRef<HTMLInputElement | null>(null);
   const openSourceFileRef = useRef<() => void>(() => undefined);
@@ -201,6 +361,9 @@ function App() {
   const openCommandPaletteRef = useRef<() => void>(() => undefined);
   const saveSourceRef = useRef<() => void>(() => undefined);
   const formatDocumentRef = useRef<() => void>(() => undefined);
+  const togglePreviewViewModeRef = useRef<() => void>(() => undefined);
+  const detachPreviewRef = useRef<() => void>(() => undefined);
+  const toggleBottomPanelRef = useRef<() => void>(() => undefined);
   const closeActiveTabRef = useRef<() => void>(() => undefined);
   const quitApplicationRef = useRef<() => void>(() => undefined);
   const pendingEditorViewStateRestoreRef = useRef<number | null>(null);
@@ -212,16 +375,16 @@ function App() {
   const activeTabIdRef = useRef(activeTabId);
   const editorTabIdRef = useRef(activeTabId);
   const focusedPaneRef = useRef<FocusedPane>("editor");
-  const objectLookupRef = useRef<CursorObjectLookup>({
-    modelVersionId: null,
-    objects: [],
-  });
-  const activeCursorLookupRequestId = useRef(0);
   const closeTabInFlightRef = useRef(false);
   const quitInFlightRef = useRef(false);
+  const suppressPreviewWindowClosedRef = useRef(false);
   const activeIdRef = useRef(activeId);
   const hoverIdRef = useRef(hoverId);
   const compileResultRef = useRef(compileResult);
+  const compileResultSourceRef = useRef<string | null>(null);
+  const selectedBoardPathRef = useRef(selectedBoardPath);
+  const detachedPreviewStateRef = useRef<DetachedPreviewState>(emptyDetachedPreviewState);
+  const perfDebugOptionsRef = useRef(perfDebugOptions);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0],
@@ -229,7 +392,8 @@ function App() {
   );
   const source = activeTab?.source ?? "";
   const fileName = activeTab?.fileName ?? "untitled.d2";
-  const currentFilePath = activeTab?.filePath ?? null;
+  const currentFilePath = tabAbsolutePath(activeTab);
+  const selectedBoardPathKey = useMemo(() => boardPathKey(selectedBoardPath), [selectedBoardPath]);
   const latestCompileInputsRef = useRef({ tabId: activeTabId, source });
   latestCompileInputsRef.current = { tabId: activeTabId, source };
   const visibleCompileResult = suggestPreviewResult ?? compileResult;
@@ -259,6 +423,32 @@ function App() {
   const exportRenderedSvg = useMemo(() => normalizeSvgSize(compileResult.svg), [compileResult.svg]);
 
   const overlayViewBox = useMemo(() => getDiagramViewBox(renderedSvg), [renderedSvg]);
+  const detachedPreviewState = useMemo<DetachedPreviewState>(
+    () => ({
+      objects: visibleCompileResult.objects,
+      boards: visibleCompileResult.boards ?? [],
+      selectedBoardPath,
+      renderedSvg,
+      overlayViewBox,
+      activeId,
+      hoverId,
+      fileName,
+    }),
+    [
+      activeId,
+      fileName,
+      hoverId,
+      overlayViewBox,
+      renderedSvg,
+      selectedBoardPath,
+      visibleCompileResult.boards,
+      visibleCompileResult.objects,
+    ],
+  );
+
+  useEffect(() => {
+    detachedPreviewStateRef.current = detachedPreviewState;
+  }, [detachedPreviewState]);
 
   const editorFontSize = Math.round(baseEditorFontSize * editorZoom);
   const editorLineHeight = Math.round(baseEditorLineHeight * editorZoom);
@@ -288,9 +478,11 @@ function App() {
     return () => window.removeEventListener("focusin", handleFocusIn);
   }, []);
 
-  function invalidateCursorLookup() {
-    activeCursorLookupRequestId.current += 1;
-  }
+  const setPerfDebugOption = useCallback((key: keyof PerfDebugOptions, enabled: boolean) => {
+    setPerfDebugOptions((current) =>
+      current[key] === enabled ? current : { ...current, [key]: enabled },
+    );
+  }, []);
 
   useEffect(() => {
     activeIdRef.current = activeId;
@@ -303,6 +495,23 @@ function App() {
   useEffect(() => {
     compileResultRef.current = compileResult;
   }, [compileResult]);
+
+  useEffect(() => {
+    selectedBoardPathRef.current = selectedBoardPath;
+  }, [selectedBoardPath]);
+
+  function invalidateCursorLookup() {
+    compileResultSourceRef.current = null;
+  }
+
+  useEffect(() => {
+    if (selectedBoardPath.length === 0) return;
+    if (compileResult.boards && hasBoardPath(compileResult.boards, selectedBoardPath)) return;
+    setSelectedBoardPath([]);
+    invalidateCursorLookup();
+    setActiveId(null);
+    setHoverId(null);
+  }, [compileResult.boards, selectedBoardPath]);
 
   useEffect(() => {
     setD2ImportCompletionContextProvider(() => {
@@ -335,6 +544,14 @@ function App() {
       renameInputRef.current?.select();
     });
   }, [renameDialog?.id]);
+
+  useEffect(() => {
+    if (!renameFileDialog) return;
+    window.requestAnimationFrame(() => {
+      renameFileInputRef.current?.focus();
+      renameFileInputRef.current?.select();
+    });
+  }, [renameFileDialog?.id]);
 
   useEffect(() => {
     if (!filePalette) return;
@@ -461,13 +678,27 @@ function App() {
     return nextTabs;
   }, [persistTabs]);
 
-  const activateTab = useCallback((tabId: string) => {
-    invalidateCursorLookup();
-    activeTabIdRef.current = tabId;
-    setActiveTabId(tabId);
-    setActiveId(null);
-    setHoverId(null);
+  const focusEditorAfterTabActivation = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      editorRef.current?.focus();
+      window.setTimeout(() => editorRef.current?.focus(), 0);
+    });
   }, []);
+
+  const activateTab = useCallback(
+    (tabId: string) => {
+      const currentTabs = persistActiveEditorViewState();
+      if (!currentTabs.some((tab) => tab.id === tabId)) return;
+
+      activeTabIdRef.current = tabId;
+      setActiveTabId(tabId);
+      setActiveId(null);
+      setHoverId(null);
+      persistTabs(currentTabs, tabId);
+      focusEditorAfterTabActivation();
+    },
+    [focusEditorAfterTabActivation, persistActiveEditorViewState, persistTabs],
+  );
 
   const focusAdjacentTab = useCallback(
     (direction: -1 | 1) => {
@@ -480,16 +711,30 @@ function App() {
       const nextIndex = (activeIndex + direction + currentTabs.length) % currentTabs.length;
       const nextTab = currentTabs[nextIndex];
       activateTab(nextTab.id);
-      persistTabs(currentTabs, nextTab.id);
       setStatus(`Focused ${nextTab.fileName}`);
     },
-    [activateTab, persistActiveEditorViewState, persistTabs],
+    [activateTab, persistActiveEditorViewState],
+  );
+
+  const moveTab = useCallback(
+    (draggedTabId: string, targetTabId: string, position: TabDropPosition) => {
+      const currentTabs = persistActiveEditorViewState();
+      const nextTabs = reorderTabs(currentTabs, draggedTabId, targetTabId, position);
+      if (nextTabs === currentTabs) return;
+
+      tabsRef.current = nextTabs;
+      setTabs(nextTabs);
+      persistTabs(nextTabs, activeTabIdRef.current);
+
+      const movedTab = nextTabs.find((tab) => tab.id === draggedTabId);
+      if (movedTab) {
+        setStatus(`Moved ${movedTab.fileName}`);
+      }
+    },
+    [persistActiveEditorViewState, persistTabs],
   );
 
   const updateActiveTab = useCallback((updates: Partial<D2Tab>) => {
-    if ("source" in updates) {
-      invalidateCursorLookup();
-    }
     setTabs((currentTabs) => {
       const tabId = activeTabIdRef.current;
       const nextTabs = currentTabs.map((tab) => {
@@ -529,7 +774,6 @@ function App() {
         }
 
         pendingEditorViewStateRestoreRef.current = null;
-        invalidateCursorLookup();
         if (snapshot.viewState) {
           editor.restoreViewState(snapshot.viewState);
         }
@@ -539,10 +783,6 @@ function App() {
           editor.setPosition(snapshot.position, "restore-rename-cursor");
         }
         editor.focus();
-        const position = snapshot.position ?? editor.getPosition();
-        if (position) {
-          void updateFocusedObjectFromPosition(editor, position);
-        }
       };
 
       pendingEditorViewStateRestoreRef.current = window.requestAnimationFrame(restore);
@@ -555,7 +795,6 @@ function App() {
     const nextTabs = [...tabsRef.current, nextTab];
     tabsRef.current = nextTabs;
     activeTabIdRef.current = nextTab.id;
-    invalidateCursorLookup();
     setTabs(nextTabs);
     setActiveTabId(nextTab.id);
     persistTabs(nextTabs, nextTab.id);
@@ -570,7 +809,6 @@ function App() {
       const existingTab = currentTabs.find((tab) => tab.filePath === file.path);
       if (existingTab) {
         activeTabIdRef.current = existingTab.id;
-        invalidateCursorLookup();
         setActiveTabId(existingTab.id);
         setActiveId(null);
         setHoverId(null);
@@ -588,7 +826,6 @@ function App() {
       tabsRef.current = nextTabs;
       activeTabIdRef.current = nextTab.id;
       editorTabIdRef.current = nextTab.id;
-      invalidateCursorLookup();
       setTabs(nextTabs);
       setActiveTabId(nextTab.id);
       persistTabs(nextTabs, nextTab.id);
@@ -608,6 +845,29 @@ function App() {
     setSuggestPreviewResult(null);
   }, []);
 
+  useEffect(() => {
+    perfDebugOptionsRef.current = perfDebugOptions;
+    if (!perfDebugOptions.suggestPreview) {
+      clearSuggestPreview();
+    }
+    if (!perfDebugOptions.previewCompile) {
+      activeCompileRequestId.current += 1;
+    }
+  }, [clearSuggestPreview, perfDebugOptions]);
+
+  const selectPreviewBoard = useCallback(
+    (boardPath: string[]) => {
+      clearSuggestPreview();
+      invalidateCursorLookup();
+      setActiveId(null);
+      setHoverId(null);
+      setSelectedBoardPath(boardPath);
+      setPreviewZoomMode("auto");
+      setStatus(boardPath.length === 0 ? "Previewing root board" : `Previewing ${boardPath.join(".")}`);
+    },
+    [clearSuggestPreview],
+  );
+
   function sidecarSourceParams(nextSource: string) {
     const workspaceId = activeWorkspaceIdRef.current;
     const workspace = workspaceId
@@ -620,6 +880,7 @@ function App() {
       source: nextSource,
       workspaceRootPath: workspace?.rootPath ?? "",
       currentFilePath: activeTabForCompile?.filePath ?? "",
+      boardPath: selectedBoardPathRef.current,
       openFiles: tabsRef.current
         .filter((tab) => tab.filePath)
         .map((tab) => ({
@@ -631,6 +892,11 @@ function App() {
 
   const scheduleSuggestPreview = useCallback(
     (previewSource: string, modelVersionId: number, delayMs = 100) => {
+      if (!perfDebugOptionsRef.current.suggestPreview) {
+        clearSuggestPreview();
+        return;
+      }
+
       const latestInputs = latestCompileInputsRef.current;
       if (previewSource === latestInputs.source) {
         clearSuggestPreview();
@@ -683,6 +949,26 @@ function App() {
     [clearSuggestPreview],
   );
 
+  async function compileCurrentSourceForLookup(currentSource: string) {
+    const currentCompileResultKey = compileResultKey(currentSource, selectedBoardPathRef.current);
+    if (compileResultSourceRef.current === currentCompileResultKey) {
+      return compileResultRef.current;
+    }
+
+    const result = await invoke<CompileResult>("sidecar_call", {
+      method: "compile",
+      params: sidecarSourceParams(currentSource),
+    });
+    if (result.diagnostics.length > 0) {
+      return null;
+    }
+
+    compileResultRef.current = result;
+    compileResultSourceRef.current = currentCompileResultKey;
+    setCompileResult(result);
+    return result;
+  }
+
   const isEditingIconValueCompletion = useCallback(() => {
     const editor = editorRef.current;
     const model = editor?.getModel();
@@ -719,10 +1005,7 @@ function App() {
           setStatus("Diagnostics updated; preview kept from last valid compile");
           return;
         }
-        objectLookupRef.current = {
-          modelVersionId: editorRef.current?.getModel()?.getVersionId() ?? null,
-          objects: result.objects,
-        };
+        compileResultSourceRef.current = compileResultKey(nextSource, selectedBoardPathRef.current);
         setCompileResult(result);
         setStatus("Compiled");
       } catch (error) {
@@ -782,14 +1065,36 @@ function App() {
     if (!isEditingIconValueCompletion()) {
       clearSuggestPreview();
     }
+    if (!perfDebugOptions.previewCompile) {
+      activeCompileRequestId.current += 1;
+      return;
+    }
     const requestId = activeCompileRequestId.current + 1;
     activeCompileRequestId.current = requestId;
-    setStatus("Compiling");
-    const timeout = window.setTimeout(() => {
+    const shouldCompileImmediately =
+      previousCompileTabIdRef.current !== activeTabId ||
+      previousCompileBoardPathKeyRef.current !== selectedBoardPathKey;
+    previousCompileTabIdRef.current = activeTabId;
+    previousCompileBoardPathKeyRef.current = selectedBoardPathKey;
+    if (shouldCompileImmediately) {
+      setStatus("Compiling");
       void compile(source, activeTabId, requestId);
-    }, 220);
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      setStatus("Compiling");
+      void compile(source, activeTabId, requestId);
+    }, previewCompileDelayMs);
     return () => window.clearTimeout(timeout);
-  }, [activeTabId, clearSuggestPreview, compile, isEditingIconValueCompletion, source]);
+  }, [
+    activeTabId,
+    clearSuggestPreview,
+    compile,
+    isEditingIconValueCompletion,
+    perfDebugOptions.previewCompile,
+    selectedBoardPathKey,
+    source,
+  ]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -951,6 +1256,71 @@ function App() {
     window.requestAnimationFrame(() => editorRef.current?.focus());
   }, []);
 
+  const toggleBottomPanel = useCallback(() => {
+    setBottomPanelVisible((visible) => {
+      setStatus(visible ? "Bottom panel hidden" : "Bottom panel shown");
+      return !visible;
+    });
+  }, []);
+
+  const focusPreviewViewMode = useCallback((mode: PreviewViewMode) => {
+    window.requestAnimationFrame(() => {
+      if (mode === "preview-only") {
+        document.querySelector<HTMLElement>(".preview-viewport")?.focus();
+      } else {
+        editorRef.current?.focus();
+      }
+    });
+  }, []);
+
+  const togglePreviewViewMode = useCallback(async () => {
+    const next = nextPreviewViewMode(previewViewMode);
+    try {
+      if (previewDetached && next !== "editor-only") {
+        suppressPreviewWindowClosedRef.current = true;
+        await invoke("close_preview_window");
+        setPreviewDetached(false);
+      }
+      setPreviewViewMode(next);
+      setStatus(previewViewModeStatus(next));
+      focusPreviewViewMode(next);
+    } catch (error) {
+      suppressPreviewWindowClosedRef.current = false;
+      setStatus(String(error));
+    }
+  }, [focusPreviewViewMode, previewDetached, previewViewMode]);
+
+  const sendDetachedPreviewState = useCallback(() => {
+    void emitTo("preview", "d2-desk-preview-state", detachedPreviewStateRef.current);
+  }, []);
+
+  const toggleDetachedPreview = useCallback(async () => {
+    try {
+      if (previewDetached) {
+        suppressPreviewWindowClosedRef.current = true;
+        await invoke("close_preview_window");
+        setPreviewDetached(false);
+        setPreviewViewMode("split");
+        setStatus("Preview attached to main window");
+        window.requestAnimationFrame(() => editorRef.current?.focus());
+        return;
+      }
+
+      setPreviewViewMode("editor-only");
+      setPreviewDetached(true);
+      suppressPreviewWindowClosedRef.current = false;
+      await invoke("open_preview_window");
+      sendDetachedPreviewState();
+      setStatus("Preview detached to separate window");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+    } catch (error) {
+      suppressPreviewWindowClosedRef.current = false;
+      setPreviewDetached(false);
+      setPreviewViewMode("split");
+      setStatus(String(error));
+    }
+  }, [previewDetached, sendDetachedPreviewState]);
+
   const goToSymbol = useCallback((symbolId: string) => {
     setSymbolPalette(null);
     setActiveId(symbolId);
@@ -1017,6 +1387,101 @@ function App() {
     }
   }, [currentFilePath, fileName, source, updateActiveTab]);
 
+  const renameFocusedFile = useCallback(() => {
+    if (!currentFilePath) {
+      setStatus("Save the file before renaming");
+      return;
+    }
+
+    setCommandPalette(null);
+    setFilePalette(null);
+    setSymbolPalette(null);
+    setRenameDialog(null);
+    setRenameFileDialog({ id: currentFilePath, value: fileName, error: null });
+    setStatus(`Renaming ${fileName}`);
+  }, [currentFilePath, fileName]);
+
+  const copyFocusedTabAbsolutePath = useCallback(async () => {
+    if (!currentFilePath) {
+      setStatus("Save the file before copying path");
+      return;
+    }
+
+    try {
+      await copyTextToClipboard(currentFilePath);
+      setStatus(`Copied absolute path: ${currentFilePath}`);
+    } catch (error) {
+      setStatus(String(error));
+    }
+  }, [currentFilePath]);
+
+  const commitRenameFile = useCallback(async () => {
+    if (!renameFileDialog || !currentFilePath) return;
+
+    const nextFileName = renameFileDialog.value.trim();
+    if (nextFileName === fileName) {
+      setStatus("Rename unchanged");
+      setRenameFileDialog(null);
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+
+    try {
+      const workspaceId = activeWorkspaceIdRef.current;
+      const workspace = workspaceId
+        ? workspaceStateRef.current.workspaces.find((item) => item.id === workspaceId)
+        : null;
+      const result = await invoke<RenamedD2File>("rename_d2_file", {
+        path: currentFilePath,
+        fileName: nextFileName,
+        workspaceRootPath: workspace?.rootPath ?? null,
+        openFiles: tabsRef.current
+          .filter((tab) => tab.filePath)
+          .map((tab) => ({
+            path: tab.filePath!,
+            source: tab.source,
+            hasUserChanges: tab.hasUserChanges,
+          })),
+      });
+      const updatedReferencesByPath = new Map(
+        result.updatedReferences.map((update) => [update.path, update]),
+      );
+      setTabs((currentTabs) => {
+        const nextTabs = currentTabs.map((tab) => {
+          const nextPath = tab.filePath === currentFilePath ? result.path : tab.filePath;
+          const referenceUpdate = nextPath ? updatedReferencesByPath.get(nextPath) : undefined;
+          const nextTab = {
+            ...tab,
+            filePath: nextPath,
+            fileName: nextPath === result.path ? fileNameFromPath(result.path) : tab.fileName,
+          };
+          if (referenceUpdate) {
+            nextTab.source = referenceUpdate.contents;
+            if (referenceUpdate.saved) {
+              nextTab.savedSource = referenceUpdate.contents;
+            }
+            nextTab.hasUserChanges = nextTab.source !== nextTab.savedSource;
+          }
+          return nextTab;
+        });
+        tabsRef.current = nextTabs;
+        return nextTabs;
+      });
+      setRenameFileDialog(null);
+      const updatedCount = result.updatedReferences.length;
+      setStatus(
+        updatedCount === 0
+          ? `Renamed ${fileName} to ${fileNameFromPath(result.path)}`
+          : `Renamed ${fileName} to ${fileNameFromPath(result.path)}; updated ${updatedCount} import reference file${updatedCount === 1 ? "" : "s"}`,
+      );
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+    } catch (error) {
+      setRenameFileDialog((current) =>
+        current ? { ...current, error: String(error).replace(/^Error: /, "") } : current,
+      );
+    }
+  }, [currentFilePath, fileName, renameFileDialog]);
+
   const formatDocument = useCallback(async () => {
     try {
       const formatted = await invoke<string>("sidecar_call", {
@@ -1075,6 +1540,74 @@ function App() {
     setRenameDialog({ id: targetId, value: currentName, error: null });
     setStatus(`Renaming ${targetId}`);
   }, []);
+
+  const switchFocusedEdgeDirection = useCallback(async () => {
+    const editor = editorRef.current;
+    const currentSource = editor?.getValue() ?? latestCompileInputsRef.current.source;
+    const currentCompileResult = await compileCurrentSourceForLookup(currentSource);
+    if (!currentCompileResult) {
+      setStatus("Switch Edge requires a valid diagram");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+    const editorPosition = editor?.getPosition() ?? null;
+    const shouldPreferEditorCursor = editor?.hasTextFocus() ?? false;
+    const hoveredOrActiveId = hoverIdRef.current ?? activeIdRef.current;
+    const hoveredOrActiveObject =
+      currentCompileResult.objects.find((object) => object.id === hoveredOrActiveId) ?? null;
+    let targetId =
+      !shouldPreferEditorCursor && hoveredOrActiveObject?.kind === "connection"
+        ? hoveredOrActiveObject.id
+        : null;
+
+    const cursorId = editorPosition
+      ? (connectionIdAtPosition(
+          currentCompileResult.objects,
+          editorPosition.lineNumber,
+          editorPosition.column,
+        ) ?? (await connectionIdAtCurrentPosition(currentSource, editorPosition)))
+      : null;
+    if (!targetId) {
+      targetId = cursorId;
+    }
+
+    const selectedObject = findSwitchableEdge(currentCompileResult.objects, targetId, cursorId);
+    if (!selectedObject) {
+      setStatus("Select an edge to switch");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+
+    const editorCursorSnapshot = editor
+      ? {
+          viewState: editor.saveViewState(),
+          selections: editor.getSelections(),
+          position: editor.getPosition(),
+        }
+      : null;
+    const result = switchEdgeDirectionInSource(currentSource, selectedObject);
+    if (!result.ok) {
+      setStatus(result.reason);
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+
+    const nextActiveId = await objectIdAtCurrentPosition(result.source, result.cursorPosition);
+    const nextEditorCursorSnapshot = editorCursorSnapshot
+      ? {
+          ...editorCursorSnapshot,
+          selections: null,
+          position: result.cursorPosition,
+        }
+      : null;
+    updateActiveTab({ source: result.source, editorViewState: nextEditorCursorSnapshot?.viewState });
+    activeIdRef.current = nextActiveId ?? selectedObject.id;
+    setActiveId(activeIdRef.current);
+    setHoverId(null);
+    hoverIdRef.current = null;
+    setStatus(`Switched ${activeIdRef.current}`);
+    restoreEditorViewStateAfterSourceUpdate(nextEditorCursorSnapshot, result.source);
+  }, [restoreEditorViewStateAfterSourceUpdate, updateActiveTab]);
 
   const commitRenameNode = useCallback(async () => {
     if (!renameDialog) return;
@@ -1176,7 +1709,6 @@ function App() {
       if (tabId === activeTabIdRef.current) {
         const nextActiveTab = nextTabs[Math.min(targetIndex, nextTabs.length - 1)] ?? nextTabs[0];
         activeTabIdRef.current = nextActiveTab.id;
-        invalidateCursorLookup();
         setActiveTabId(nextActiveTab.id);
         setActiveId(null);
         setHoverId(null);
@@ -1248,7 +1780,6 @@ function App() {
       tabsRef.current = nextTabs;
       activeTabIdRef.current = nextActiveTabId;
       editorTabIdRef.current = nextActiveTabId;
-      invalidateCursorLookup();
       setWorkspaceState(nextWorkspaceState);
       setTabs(nextTabs);
       setActiveTabId(nextActiveTabId);
@@ -1384,6 +1915,13 @@ function App() {
     formatDocumentRef.current = () => {
       void formatDocument();
     };
+    togglePreviewViewModeRef.current = () => {
+      void togglePreviewViewMode();
+    };
+    detachPreviewRef.current = () => {
+      void toggleDetachedPreview();
+    };
+    toggleBottomPanelRef.current = toggleBottomPanel;
     closeActiveTabRef.current = closeActiveTab;
     quitApplicationRef.current = () => {
       void quitApplication();
@@ -1397,6 +1935,9 @@ function App() {
     openWorkspaceFilePalette,
     quitApplication,
     saveSource,
+    toggleBottomPanel,
+    toggleDetachedPreview,
+    togglePreviewViewMode,
   ]);
 
   useEffect(() => {
@@ -1417,6 +1958,43 @@ function App() {
         unlisteners.push(unlisten);
       },
     );
+    void listen("d2-desk-toggle-preview-fullscreen", () =>
+      togglePreviewViewModeRef.current(),
+    ).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen("d2-desk-toggle-detached-preview", () => detachPreviewRef.current()).then(
+      (unlisten) => {
+        unlisteners.push(unlisten);
+      },
+    );
+    void listen("d2-desk-toggle-bottom-panel", () => toggleBottomPanelRef.current()).then(
+      (unlisten) => {
+        unlisteners.push(unlisten);
+      },
+    );
+    void listen("d2-desk-preview-window-ready", () => sendDetachedPreviewState()).then(
+      (unlisten) => {
+        unlisteners.push(unlisten);
+      },
+    );
+    void listen("d2-desk-preview-window-closed", () => {
+      if (suppressPreviewWindowClosedRef.current) {
+        suppressPreviewWindowClosedRef.current = false;
+        return;
+      }
+      setPreviewDetached(false);
+      setPreviewViewMode("editor-only");
+      setStatus("Editor only shown");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen<SelectPreviewBoardEvent>("d2-desk-select-preview-board", (event) => {
+      selectPreviewBoard(event.payload);
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
     void listen("d2-desk-save", () => saveSourceRef.current()).then((unlisten) => {
       unlisteners.push(unlisten);
     });
@@ -1432,7 +2010,17 @@ function App() {
         unlisten();
       }
     };
-  }, []);
+  }, [selectPreviewBoard, sendDetachedPreviewState]);
+
+  useEffect(() => {
+    if (!previewDetached || !perfDebugOptions.previewRender) return;
+    sendDetachedPreviewState();
+  }, [
+    detachedPreviewState,
+    perfDebugOptions.previewRender,
+    previewDetached,
+    sendDetachedPreviewState,
+  ]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1442,8 +2030,25 @@ function App() {
         return;
       }
 
+      if ((event.metaKey || event.ctrlKey) && event.altKey && event.shiftKey) {
+        if (event.key.toLowerCase() === "p" || event.code === "KeyP") {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          void toggleDetachedPreview();
+        }
+        return;
+      }
+
       if ((event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) {
-        if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        if (
+          event.metaKey &&
+          !event.ctrlKey &&
+          (event.key.toLowerCase() === "p" || event.code === "KeyP")
+        ) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          void togglePreviewViewMode();
+        } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
           event.preventDefault();
           event.stopImmediatePropagation();
           focusAdjacentTab(event.key === "ArrowRight" ? 1 : -1);
@@ -1472,6 +2077,10 @@ function App() {
       } else if (key === "s") {
         event.preventDefault();
         void saveSource();
+      } else if (!event.shiftKey && key === "j") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        toggleBottomPanel();
       } else if (event.shiftKey && key === "i") {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -1514,6 +2123,9 @@ function App() {
     renameFocusedNode,
     resetFocusedView,
     saveSource,
+    toggleBottomPanel,
+    toggleDetachedPreview,
+    togglePreviewViewMode,
     zoomFocusedPaneIn,
     zoomFocusedPaneOut,
   ]);
@@ -1531,10 +2143,6 @@ function App() {
       window.requestAnimationFrame(() => {
         try {
           editor.restoreViewState(savedViewState);
-          const position = editor.getPosition();
-          if (position) {
-            void updateFocusedObjectFromPosition(editor, position);
-          }
         } catch {
           updateActiveTab({ editorViewState: null });
         }
@@ -1561,6 +2169,9 @@ function App() {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       saveSourceRef.current();
     });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ, () => {
+      toggleBottomPanelRef.current();
+    });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyI, () => {
       formatDocumentRef.current();
     });
@@ -1569,6 +2180,9 @@ function App() {
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.RightArrow, () => {
       focusAdjacentTab(1);
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyP, () => {
+      togglePreviewViewModeRef.current();
     });
     editor.addCommand(monaco.KeyCode.F2, () => {
       void renameFocusedNode();
@@ -1585,6 +2199,11 @@ function App() {
     const suggestWidget = suggestController?.widget?.value;
     const suggestPreviewDisposables: Monaco.IDisposable[] = [];
     const previewFocusedSuggestItem = (item?: InternalSuggestCompletionItem) => {
+      if (!perfDebugOptionsRef.current.suggestPreview) {
+        clearSuggestPreview();
+        return;
+      }
+
       const model = editor.getModel();
       const completion = item?.completion;
       if (!model || !completion) {
@@ -1611,6 +2230,11 @@ function App() {
       }
     };
     const previewCurrentIconValueSuggestion = (preferredLabel?: string) => {
+      if (!perfDebugOptionsRef.current.suggestPreview) {
+        clearSuggestPreview();
+        return;
+      }
+
       const model = editor.getModel();
       const position = editor.getPosition();
       if (!model || !position) return;
@@ -1696,6 +2320,10 @@ function App() {
     }
     suggestPreviewDisposables.push(
       editor.onDidChangeModelContent(() => {
+        if (!perfDebugOptionsRef.current.suggestPreview) {
+          clearSuggestPreview();
+          return;
+        }
         if (suggestWidget?.getFocusedItem) {
           queuePreviewCurrentFocusedSuggestItem();
         }
@@ -1751,6 +2379,8 @@ function App() {
       const currentPosition = editor.getPosition();
       if (!currentPosition) return;
 
+      if (!perfDebugOptionsRef.current.autoSuggest) return;
+
       const lineContent = model.getLineContent(currentPosition.lineNumber);
       if (isD2LineCommentPosition(lineContent, currentPosition.column)) return;
 
@@ -1774,44 +2404,7 @@ function App() {
         }, 0);
       }
     });
-    editor.onDidChangeCursorPosition((event) => {
-      void updateFocusedObjectFromPosition(editor, event.position);
-    });
   };
-
-  async function updateFocusedObjectFromPosition(
-    editor: Monaco.editor.IStandaloneCodeEditor,
-    position: Monaco.IPosition,
-  ) {
-    const requestId = activeCursorLookupRequestId.current + 1;
-    activeCursorLookupRequestId.current = requestId;
-    const tabId = activeTabIdRef.current;
-    const model = editor.getModel();
-    const modelVersionId = model?.getVersionId() ?? null;
-    const lookup = objectLookupRef.current;
-
-    const nextActiveId =
-      modelVersionId !== null && modelVersionId === lookup.modelVersionId
-        ? objectIdAtPosition(lookup.objects, position.lineNumber, position.column)
-        : await objectIdAtCurrentPosition(editor.getValue(), position);
-    if (requestId !== activeCursorLookupRequestId.current) {
-      return;
-    }
-    if (
-      tabId !== activeTabIdRef.current ||
-      model !== editor.getModel() ||
-      modelVersionId !== (editor.getModel()?.getVersionId() ?? null)
-    ) {
-      return;
-    }
-    if (hoverIdRef.current !== null) {
-      hoverIdRef.current = null;
-      setHoverId(null);
-    }
-    setActiveId((currentActiveId) =>
-      currentActiveId === nextActiveId ? currentActiveId : nextActiveId,
-    );
-  }
 
   async function objectIdAtCurrentPosition(source: string, position: Monaco.IPosition) {
     try {
@@ -1829,10 +2422,17 @@ function App() {
     }
   }
 
+  async function connectionIdAtCurrentPosition(source: string, position: Monaco.IPosition) {
+    const targetId = await objectIdAtCurrentPosition(source, position);
+    const targetObject =
+      compileResultRef.current.objects.find((object) => object.id === targetId) ?? null;
+    return targetObject?.kind === "connection" ? targetObject.id : null;
+  }
+
   function highlightObject(id: string | null, reveal: boolean, focusEditor = true) {
     const editor = editorRef.current;
     const monaco = monacoRef.current;
-    if (!editor || !monaco) return;
+    if (!editor || !monaco) return false;
     const object = compileResult.objects.find((item) => item.id === id);
     const sourceRanges = object?.sourceRanges ?? [];
     const decorations =
@@ -1861,7 +2461,9 @@ function App() {
       if (focusEditor) {
         editor.focus();
       }
+      return true;
     }
+    return false;
   }
 
   async function exportSVG() {
@@ -2029,6 +2631,26 @@ function App() {
         run: formatDocument,
       },
       {
+        id: "view.togglePreviewViewMode",
+        title: "Toggle Preview View",
+        category: "View",
+        keywords: ["layout", "fullscreen", "focus", "hide editor", "preview only", "editor only"],
+        shortcut: "Command + Option + P",
+        icon: Maximize2,
+        toolbarGroup: 2,
+        run: togglePreviewViewMode,
+      },
+      {
+        id: "view.toggleDetachedPreview",
+        title: previewDetached ? "Attach Preview to Main Window" : "Detach Preview to Window",
+        category: "View",
+        keywords: ["preview", "detach", "separate", "window", "attach"],
+        shortcut: "Command + Option + Shift + P",
+        icon: SquareArrowOutUpRight,
+        toolbarGroup: 2,
+        run: toggleDetachedPreview,
+      },
+      {
         id: "view.zoomOut",
         title: "Zoom Out",
         category: "View",
@@ -2088,8 +2710,11 @@ function App() {
       openSourceFile,
       openWithEditor,
       openWorkspaceFolder,
+      previewDetached,
       saveSource,
       source,
+      toggleDetachedPreview,
+      togglePreviewViewMode,
     ],
   );
   const workspaceCommands = useMemo(
@@ -2100,7 +2725,55 @@ function App() {
     () => topbarCommands.filter((command) => command.toolbarGroup > 0),
     [topbarCommands],
   );
-  const paletteCommands = topbarCommands;
+  const paletteCommands = useMemo<AppCommand[]>(
+    () => [
+      ...topbarCommands,
+      {
+        id: "view.toggleBottomPanel",
+        title: bottomPanelVisible ? "Hide Bottom Panel" : "Show Bottom Panel",
+        category: "View",
+        keywords: ["bottom", "panel", "status", "diagnostics", "debug"],
+        shortcut: "Command/Ctrl + J",
+        run: toggleBottomPanel,
+      },
+      {
+        id: "editor.switchEdgeDirection",
+        title: "Switch Edge Notation",
+        category: "Edit",
+        keywords: ["edge", "notation", "direction", "flip", "reverse", "connection"],
+        run: () => {
+          void switchFocusedEdgeDirection();
+        },
+      },
+      {
+        id: "file.renameFocused",
+        title: "Rename Focused File",
+        category: "File",
+        keywords: ["current", "active", "tab", "filename"],
+        enabled: Boolean(currentFilePath),
+        run: renameFocusedFile,
+      },
+      {
+        id: "file.copyFocusedAbsolutePath",
+        title: "Copy Absolute Path",
+        category: "File",
+        keywords: ["current", "active", "tab", "filepath", "path", "clipboard"],
+        enabled: Boolean(currentFilePath),
+        run: () => {
+          void copyFocusedTabAbsolutePath();
+        },
+      },
+    ],
+    [
+      copyFocusedTabAbsolutePath,
+      bottomPanelVisible,
+      currentFilePath,
+      renameFocusedFile,
+      switchFocusedEdgeDirection,
+      toggleBottomPanel,
+      topbarCommands,
+    ],
+  );
   const runAppCommand = useCallback((command: AppCommand) => {
     if (!isCommandEnabled(command)) return;
     setCommandPalette(null);
@@ -2111,8 +2784,16 @@ function App() {
     setPreviewZoom((currentZoom) => (currentZoom === zoom ? currentZoom : zoom));
   }, []);
 
+  const mainPreviewVisible =
+    perfDebugOptions.previewRender && !previewDetached && previewViewMode !== "editor-only";
+  const workspaceClassName = !mainPreviewVisible
+    ? "workspace preview-detached"
+    : previewViewMode === "preview-only"
+      ? "workspace preview-fullscreen"
+      : "workspace";
+
   return (
-    <main className="app-shell">
+    <main className={bottomPanelVisible ? "app-shell" : "app-shell bottom-panel-hidden"}>
       <Toolbar
         workspaces={workspaceState.workspaces}
         activeWorkspaceId={workspaceState.activeWorkspaceId}
@@ -2166,6 +2847,28 @@ function App() {
           }}
           onValueChange={(value) =>
             setRenameDialog((current) =>
+              current ? { ...current, value, error: null } : current,
+            )
+          }
+        />
+      ) : null}
+
+      {renameFileDialog ? (
+        <RenameNodeDialog
+          state={renameFileDialog}
+          inputRef={renameFileInputRef}
+          title="Rename file"
+          inputLabel="File name"
+          onSubmit={() => {
+            void commitRenameFile();
+          }}
+          onCancel={() => {
+            setRenameFileDialog(null);
+            setStatus("Rename file canceled");
+            window.requestAnimationFrame(() => editorRef.current?.focus());
+          }}
+          onValueChange={(value) =>
+            setRenameFileDialog((current) =>
               current ? { ...current, value, error: null } : current,
             )
           }
@@ -2239,9 +2942,10 @@ function App() {
           void closeTab(tabId);
         }}
         onCreateTab={createNewTab}
+        onReorderTabs={moveTab}
       />
 
-      <section className="workspace">
+      <section className={workspaceClassName}>
         <EditorPane
           activeTabId={activeTabId}
           fileName={fileName}
@@ -2249,6 +2953,7 @@ function App() {
           zoom={editorZoom}
           editorFontSize={editorFontSize}
           editorLineHeight={editorLineHeight}
+          perfDebugOptions={perfDebugOptions}
           beforeMount={configureD2Language}
           onMount={handleMount}
           onChange={(value) => updateActiveTab({ source: value })}
@@ -2257,40 +2962,53 @@ function App() {
           onZoomIn={zoomEditorIn}
         />
 
-        <PreviewPane
-          objects={visibleCompileResult.objects}
-          renderedSvg={renderedSvg}
-          overlayViewBox={overlayViewBox}
-          zoom={previewZoom}
-          zoomMode={previewZoomMode}
-          activeId={activeId}
-          hoverId={hoverId}
-          onHover={(id) => {
-            hoverIdRef.current = id;
-            setHoverId(id);
-          }}
-          onSelect={(id) => {
-            invalidateCursorLookup();
-            hoverIdRef.current = null;
-            setHoverId(null);
-            setActiveId(id);
-            highlightObject(id, true);
-          }}
-          onZoomOut={zoomPreviewOut}
-          onResetZoom={resetPreviewZoom}
-          onZoomIn={zoomPreviewIn}
-          onZoomModeChange={setPreviewZoomMode}
-          onAutoZoomChange={setAutoPreviewZoom}
-        />
+        {mainPreviewVisible ? (
+          <PreviewPane
+            objects={visibleCompileResult.objects}
+            boards={compileResult.boards ?? []}
+            selectedBoardPath={selectedBoardPath}
+            renderedSvg={renderedSvg}
+            overlayViewBox={overlayViewBox}
+            zoom={previewZoom}
+            zoomMode={previewZoomMode}
+            activeId={activeId}
+            hoverId={hoverId}
+            onHover={(id) => {
+              hoverIdRef.current = id;
+              setHoverId(id);
+            }}
+            onSelect={(id) => {
+              hoverIdRef.current = null;
+              setHoverId(null);
+              setActiveId(id);
+              highlightObject(id, true);
+            }}
+            onZoomOut={zoomPreviewOut}
+            onResetZoom={resetPreviewZoom}
+            onZoomIn={zoomPreviewIn}
+            onZoomModeChange={setPreviewZoomMode}
+            onAutoZoomChange={setAutoPreviewZoom}
+            onBoardPathChange={selectPreviewBoard}
+          />
+        ) : null}
       </section>
 
-      <BottomPanel
-        status={status}
-        activeObject={activeObject}
-        diagnostics={compileResult.diagnostics}
-      />
+      {bottomPanelVisible ? (
+        <BottomPanel
+          status={status}
+          activeObject={activeObject}
+          diagnostics={compileResult.diagnostics}
+          perfDebugOptions={perfDebugOptions}
+          onPerfDebugOptionChange={setPerfDebugOption}
+        />
+      ) : null}
     </main>
   );
+}
+
+function App() {
+  const [windowLabel] = useState(() => getCurrentWindow().label);
+  return windowLabel === "preview" ? <PreviewWindowApp /> : <MainApp />;
 }
 
 export default App;

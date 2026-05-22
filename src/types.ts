@@ -16,6 +16,7 @@ export type D2Point = {
 export type D2Object = {
   id: string;
   kind: "shape" | "connection";
+  boardPath?: string[];
   label?: string;
   src?: string;
   dst?: string;
@@ -30,6 +31,14 @@ export type D2Object = {
   };
 };
 
+export type D2Board = {
+  path: string[];
+  kind: "root" | "layers" | "scenarios" | "steps";
+  name: string;
+  label: string;
+  depth: number;
+};
+
 export type Diagnostic = {
   message: string;
   severity: "error" | "warning" | "info";
@@ -39,7 +48,16 @@ export type Diagnostic = {
 export type CompileResult = {
   svg: string;
   objects: D2Object[];
+  boards?: D2Board[];
   diagnostics: Diagnostic[];
+};
+
+export type PerfDebugOptions = {
+  wordWrap: boolean;
+  autoSuggest: boolean;
+  suggestPreview: boolean;
+  previewCompile: boolean;
+  previewRender: boolean;
 };
 
 export type ExportResult = {
@@ -56,6 +74,11 @@ export type D2CompletionItem = {
   insertText: string;
   filterText?: string;
   colorSwatches?: string[];
+};
+
+export type D2SemanticToken = {
+  tokenType: "boolean";
+  sourceRange: SourceRange;
 };
 
 export type D2Tab = {
@@ -95,6 +118,17 @@ export type OpenedD2File = {
 
 export type SavedD2File = {
   path: string;
+};
+
+export type RenamedD2File = {
+  path: string;
+  updatedReferences: RenamedD2FileReferenceUpdate[];
+};
+
+export type RenamedD2FileReferenceUpdate = {
+  path: string;
+  contents: string;
+  saved: boolean;
 };
 
 export type WorkspaceFileEntry = {

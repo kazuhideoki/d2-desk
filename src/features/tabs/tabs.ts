@@ -9,6 +9,33 @@ export function hasTabPendingUserChanges(tab: D2Tab) {
   return tab.hasUserChanges && isTabUnsaved(tab);
 }
 
+export function tabAbsolutePath(tab: Pick<D2Tab, "filePath"> | null | undefined) {
+  return tab?.filePath && tab.filePath.length > 0 ? tab.filePath : null;
+}
+
+export type TabDropPosition = "before" | "after";
+
+export function reorderTabs(
+  tabs: D2Tab[],
+  draggedTabId: string,
+  targetTabId: string,
+  position: TabDropPosition,
+) {
+  if (draggedTabId === targetTabId) return tabs;
+
+  const draggedIndex = tabs.findIndex((tab) => tab.id === draggedTabId);
+  const targetIndex = tabs.findIndex((tab) => tab.id === targetTabId);
+  if (draggedIndex === -1 || targetIndex === -1) return tabs;
+
+  const nextTabs = [...tabs];
+  const [draggedTab] = nextTabs.splice(draggedIndex, 1);
+  const targetIndexAfterRemoval = nextTabs.findIndex((tab) => tab.id === targetTabId);
+  const insertIndex = position === "before" ? targetIndexAfterRemoval : targetIndexAfterRemoval + 1;
+  nextTabs.splice(insertIndex, 0, draggedTab);
+  if (nextTabs.every((tab, index) => tab.id === tabs[index]?.id)) return tabs;
+  return nextTabs;
+}
+
 export function loadTabs(): D2Tab[] {
   const fallbackSource = localStorage.getItem("d2-desk:last-source") ?? sampleSource;
   const fallbackTab = createTab("untitled.d2", fallbackSource, "");
