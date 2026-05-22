@@ -7,6 +7,8 @@ import { moveSelectionIndex } from "../../utils";
 
 type CommandPaletteProps = {
   commands: AppCommand[];
+  title?: string;
+  placeholder?: string;
   query: string;
   selectedIndex: number;
   onQueryChange: (query: string) => void;
@@ -17,6 +19,8 @@ type CommandPaletteProps = {
 
 export function CommandPalette({
   commands,
+  title = "Command Palette",
+  placeholder = "Search commands",
   query,
   selectedIndex,
   onQueryChange,
@@ -81,14 +85,14 @@ export function CommandPalette({
         }}
       >
         <header className="file-palette-header">
-          <h2 id="command-palette-title">Command Palette</h2>
+          <h2 id="command-palette-title">{title}</h2>
           <span>{filteredCommands.length} commands</span>
         </header>
         <input
           ref={inputRef}
           autoFocus
-          aria-label="Search commands"
-          placeholder="Search commands"
+          aria-label={placeholder}
+          placeholder={placeholder}
           value={query}
           onChange={(event) => {
             onQueryChange(event.target.value);

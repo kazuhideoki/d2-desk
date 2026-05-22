@@ -1,25 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { invoke } from "@tauri-apps/api/core";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
-import {
-  Download,
-  FileDown,
-  FileInput,
-  Focus,
-  Maximize2,
-  Save,
-  Settings,
-  SquareArrowOutUpRight,
-  Wand2,
-  ZoomIn,
-  ZoomOut,
-} from "lucide-react";
 import { loadInitialSession, type InitialSession } from "./app/initialSession";
 import { CommandPalette } from "./features/command-palette/CommandPalette";
+import { createWorkspaceSelectionCommands } from "./features/command-palette/commands";
 import { isCommandEnabled, type AppCommand } from "./shared/commands";
 import { EditorPane } from "./features/editor/EditorPane";
 import { connectionIdAtPosition } from "./features/editor/sourceRanges";
@@ -40,6 +28,12 @@ import {
   type WorkspaceFilePaletteState,
 } from "./features/file-palette/WorkspaceFilePalette";
 import { PreviewPane, type PreviewZoomMode } from "./features/preview/PreviewPane";
+import { getPreviewCompileDelayMs } from "./features/preview/compileSchedule";
+import {
+  adjacentBoardPath,
+  boardDisplayName,
+  boardPathKey,
+} from "./features/preview/boards";
 import {
   nextPreviewViewMode,
   previewViewModeStatus,
@@ -71,7 +65,7 @@ import {
   type TabDropPosition,
   writeStoredTabs,
 } from "./features/tabs/tabs";
-import { Toolbar, type ToolbarCommand } from "./features/toolbar/Toolbar";
+import { Toolbar } from "./features/toolbar/Toolbar";
 import type {
   CompileResult,
   D2CompletionItem,
@@ -122,6 +116,7 @@ type EditorCursorSnapshot = {
 };
 
 type CommandPaletteState = {
+  mode: "commands" | "workspaceSelection";
   query: string;
   selectedIndex: number;
 };
@@ -173,6 +168,7 @@ type InternalSuggestController = {
 const nodeRenamePattern = /^[A-Za-z0-9_-]+$/;
 const tabPersistenceDelayMs = 400;
 const previewCompileDelayMs = 600;
+const tabSwitchPreviewCompileDelayMs = 140;
 const defaultPerfDebugOptions: PerfDebugOptions = {
   wordWrap: true,
   autoSuggest: true,
@@ -204,10 +200,6 @@ async function copyTextToClipboard(text: string) {
 function lastD2IdSegment(id: string) {
   const parts = id.split(".");
   return parts[parts.length - 1] ?? id;
-}
-
-function boardPathKey(path: string[]) {
-  return JSON.stringify(path);
 }
 
 function hasBoardPath(boards: CompileResult["boards"] | undefined, path: string[]) {
@@ -659,24 +651,29 @@ function MainApp() {
     );
   }, []);
 
-  const persistActiveEditorViewState = useCallback(() => {
-    const editor = editorRef.current;
-    if (!editor) return tabsRef.current;
+  const persistActiveEditorViewState = useCallback(
+    (options?: { persistImmediately?: boolean }) => {
+      const editor = editorRef.current;
+      if (!editor) return tabsRef.current;
 
-    const tabId = activeTabIdRef.current;
-    if (editorTabIdRef.current !== tabId) return tabsRef.current;
+      const tabId = activeTabIdRef.current;
+      if (editorTabIdRef.current !== tabId) return tabsRef.current;
 
-    const viewState = editor.saveViewState();
-    if (!viewState) return tabsRef.current;
+      const viewState = editor.saveViewState();
+      if (!viewState) return tabsRef.current;
 
-    const nextTabs = tabsRef.current.map((tab) =>
-      tab.id === tabId ? { ...tab, editorViewState: viewState } : tab,
-    );
-    tabsRef.current = nextTabs;
-    setTabs(nextTabs);
-    persistTabs(nextTabs, tabId);
-    return nextTabs;
-  }, [persistTabs]);
+      const nextTabs = tabsRef.current.map((tab) =>
+        tab.id === tabId ? { ...tab, editorViewState: viewState } : tab,
+      );
+      tabsRef.current = nextTabs;
+      setTabs(nextTabs);
+      if (options?.persistImmediately !== false) {
+        persistTabs(nextTabs, tabId);
+      }
+      return nextTabs;
+    },
+    [persistTabs],
+  );
 
   const focusEditorAfterTabActivation = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -686,15 +683,24 @@ function MainApp() {
   }, []);
 
   const activateTab = useCallback(
-    (tabId: string) => {
-      const currentTabs = persistActiveEditorViewState();
+    (
+      tabId: string,
+      options?: { currentTabs?: D2Tab[]; persistImmediately?: boolean },
+    ) => {
+      const currentTabs =
+        options?.currentTabs ??
+        persistActiveEditorViewState({
+          persistImmediately: options?.persistImmediately,
+        });
       if (!currentTabs.some((tab) => tab.id === tabId)) return;
 
       activeTabIdRef.current = tabId;
       setActiveTabId(tabId);
       setActiveId(null);
       setHoverId(null);
-      persistTabs(currentTabs, tabId);
+      if (options?.persistImmediately !== false) {
+        persistTabs(currentTabs, tabId);
+      }
       focusEditorAfterTabActivation();
     },
     [focusEditorAfterTabActivation, persistActiveEditorViewState, persistTabs],
@@ -702,7 +708,7 @@ function MainApp() {
 
   const focusAdjacentTab = useCallback(
     (direction: -1 | 1) => {
-      const currentTabs = persistActiveEditorViewState();
+      const currentTabs = persistActiveEditorViewState({ persistImmediately: false });
       if (currentTabs.length <= 1) return;
 
       const activeIndex = currentTabs.findIndex((tab) => tab.id === activeTabIdRef.current);
@@ -710,7 +716,7 @@ function MainApp() {
 
       const nextIndex = (activeIndex + direction + currentTabs.length) % currentTabs.length;
       const nextTab = currentTabs[nextIndex];
-      activateTab(nextTab.id);
+      activateTab(nextTab.id, { currentTabs, persistImmediately: false });
       setStatus(`Focused ${nextTab.fileName}`);
     },
     [activateTab, persistActiveEditorViewState],
@@ -868,6 +874,24 @@ function MainApp() {
     [clearSuggestPreview],
   );
 
+  const switchPreviewBoard = useCallback(
+    (direction: -1 | 1) => {
+      const boards = compileResultRef.current.boards ?? [];
+      const nextPath = adjacentBoardPath(boards, selectedBoardPathRef.current, direction);
+      if (!nextPath) {
+        setStatus("No other compositions");
+        return;
+      }
+
+      selectPreviewBoard(nextPath);
+      const nextBoard = boards.find((board) => boardPathKey(board.path) === boardPathKey(nextPath));
+      if (nextBoard) {
+        setStatus(`Previewing ${boardDisplayName(nextBoard)}`);
+      }
+    },
+    [selectPreviewBoard],
+  );
+
   function sidecarSourceParams(nextSource: string) {
     const workspaceId = activeWorkspaceIdRef.current;
     const workspace = workspaceId
@@ -1005,8 +1029,14 @@ function MainApp() {
           setStatus("Diagnostics updated; preview kept from last valid compile");
           return;
         }
-        compileResultSourceRef.current = compileResultKey(nextSource, selectedBoardPathRef.current);
-        setCompileResult(result);
+        compileResultRef.current = result;
+        compileResultSourceRef.current = compileResultKey(
+          nextSource,
+          selectedBoardPathRef.current,
+        );
+        startTransition(() => {
+          setCompileResult(result);
+        });
         setStatus("Compiled");
       } catch (error) {
         const latestInputs = latestCompileInputsRef.current;
@@ -1071,12 +1101,17 @@ function MainApp() {
     }
     const requestId = activeCompileRequestId.current + 1;
     activeCompileRequestId.current = requestId;
-    const shouldCompileImmediately =
-      previousCompileTabIdRef.current !== activeTabId ||
-      previousCompileBoardPathKeyRef.current !== selectedBoardPathKey;
+    const tabChanged = previousCompileTabIdRef.current !== activeTabId;
+    const boardChanged = previousCompileBoardPathKeyRef.current !== selectedBoardPathKey;
     previousCompileTabIdRef.current = activeTabId;
     previousCompileBoardPathKeyRef.current = selectedBoardPathKey;
-    if (shouldCompileImmediately) {
+    const delayMs = getPreviewCompileDelayMs({
+      tabChanged,
+      boardChanged,
+      editDelayMs: previewCompileDelayMs,
+      tabSwitchDelayMs: tabSwitchPreviewCompileDelayMs,
+    });
+    if (delayMs === 0) {
       setStatus("Compiling");
       void compile(source, activeTabId, requestId);
       return;
@@ -1084,7 +1119,7 @@ function MainApp() {
     const timeout = window.setTimeout(() => {
       setStatus("Compiling");
       void compile(source, activeTabId, requestId);
-    }, previewCompileDelayMs);
+    }, delayMs);
     return () => window.clearTimeout(timeout);
   }, [
     activeTabId,
@@ -1245,6 +1280,7 @@ function MainApp() {
     setFilePalette(null);
     setSymbolPalette(null);
     setCommandPalette({
+      mode: "commands",
       query: "",
       selectedIndex: 0,
     });
@@ -1731,25 +1767,7 @@ function MainApp() {
     quitInFlightRef.current = true;
 
     try {
-      const currentTabs = persistActiveEditorViewState();
-      const unsavedTabs = currentTabs.filter(hasTabPendingUserChanges);
-      if (unsavedTabs.length > 0) {
-        const fileList = unsavedTabs.map((tab) => tab.fileName).join(", ");
-        const shouldQuit = await confirm(
-          `${fileList} ${unsavedTabs.length === 1 ? "has" : "have"} unsaved changes. Quit anyway?`,
-          {
-            title: "Unsaved changes",
-            kind: "warning",
-            okLabel: "Quit without saving",
-            cancelLabel: "Cancel",
-          },
-        );
-        if (!shouldQuit) {
-          setStatus("Quit canceled");
-          return;
-        }
-      }
-
+      persistActiveEditorViewState();
       setStatus("Quitting");
       try {
         await invoke("quit_application");
@@ -2067,6 +2085,10 @@ function MainApp() {
           event.preventDefault();
           event.stopImmediatePropagation();
           focusAdjacentTab(event.key === "ArrowRight" ? 1 : -1);
+        } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          switchPreviewBoard(event.key === "ArrowDown" ? 1 : -1);
         }
         return;
       }
@@ -2138,6 +2160,7 @@ function MainApp() {
     renameFocusedNode,
     resetFocusedView,
     saveSource,
+    switchPreviewBoard,
     toggleBottomPanel,
     toggleDetachedPreview,
     togglePreviewViewMode,
@@ -2584,153 +2607,17 @@ function MainApp() {
     setPreviewZoom(decreaseZoom);
   }
 
-  const topbarCommands = useMemo<ToolbarCommand[]>(
-    () => [
-      {
-        id: "workspace.manage",
-        title: "Manage Workspaces",
-        category: "Workspace",
-        keywords: ["settings", "folders", "projects"],
-        icon: Settings,
-        toolbarGroup: 0,
-        run: () => setWorkspaceManagerOpen(true),
-      },
-      {
-        id: "file.open",
-        title: "Open D2 File",
-        category: "File",
-        keywords: ["load"],
-        shortcut: "Command/Ctrl + O",
-        icon: FileInput,
-        toolbarGroup: 1,
-        run: openSourceFile,
-      },
-      {
-        id: "file.save",
-        title: "Save D2 Source",
-        category: "File",
-        keywords: ["write"],
-        shortcut: "Command/Ctrl + S",
-        icon: Save,
-        toolbarGroup: 1,
-        run: saveSource,
-      },
-      {
-        id: "file.openWithEditor",
-        title: "Open Current D2 File with $EDITOR",
-        category: "File",
-        keywords: ["external", "editor"],
-        icon: SquareArrowOutUpRight,
-        toolbarGroup: 1,
-        run: openWithEditor,
-      },
-      {
-        id: "editor.format",
-        title: "Format Document",
-        category: "Edit",
-        keywords: ["source"],
-        shortcut: "Command/Ctrl + Shift + I",
-        icon: Wand2,
-        toolbarGroup: 1,
-        run: formatDocument,
-      },
-      {
-        id: "view.togglePreviewViewMode",
-        title: "Toggle Preview View",
-        category: "View",
-        keywords: ["layout", "fullscreen", "focus", "hide editor", "preview only", "editor only"],
-        shortcut: "Command + Option + P",
-        icon: Maximize2,
-        toolbarGroup: 2,
-        run: togglePreviewViewMode,
-      },
-      {
-        id: "view.toggleDetachedPreview",
-        title: previewDetached ? "Attach Preview to Main Window" : "Detach Preview to Window",
-        category: "View",
-        keywords: ["preview", "detach", "separate", "window", "attach"],
-        shortcut: "Command + Option + Shift + P",
-        icon: SquareArrowOutUpRight,
-        toolbarGroup: 2,
-        run: toggleDetachedPreview,
-      },
-      {
-        id: "view.zoomOut",
-        title: "Zoom Out",
-        category: "View",
-        keywords: ["decrease", "scale"],
-        shortcut: "Command/Ctrl + -",
-        icon: ZoomOut,
-        toolbarGroup: 2,
-        run: zoomFocusedPaneOut,
-      },
-      {
-        id: "view.resetZoom",
-        title: "Reset Zoom",
-        category: "View",
-        keywords: ["scale", "fit"],
-        shortcut: "Command/Ctrl + 0",
-        icon: Focus,
-        toolbarGroup: 2,
-        run: resetFocusedView,
-      },
-      {
-        id: "view.zoomIn",
-        title: "Zoom In",
-        category: "View",
-        keywords: ["increase", "scale"],
-        shortcut: "Command/Ctrl + +",
-        icon: ZoomIn,
-        toolbarGroup: 2,
-        run: zoomFocusedPaneIn,
-      },
-      {
-        id: "export.svg",
-        title: "Export SVG",
-        category: "Export",
-        keywords: ["download", "diagram"],
-        icon: Download,
-        toolbarGroup: 3,
-        run: () => {
-          void exportSVG();
-        },
-      },
-      {
-        id: "export.png",
-        title: "Export PNG",
-        category: "Export",
-        keywords: ["download", "image", "diagram"],
-        icon: FileDown,
-        toolbarGroup: 3,
-        run: () => {
-          void exportPNG();
-        },
-      },
-    ],
-    [
-      exportRenderedSvg,
-      fileName,
-      formatDocument,
-      openSourceFile,
-      openWithEditor,
-      previewDetached,
-      saveSource,
-      source,
-      toggleDetachedPreview,
-      togglePreviewViewMode,
-    ],
-  );
-  const workspaceCommands = useMemo(
-    () => topbarCommands.filter((command) => command.toolbarGroup === 0),
-    [topbarCommands],
-  );
-  const toolbarCommands = useMemo(
-    () => topbarCommands.filter((command) => command.toolbarGroup > 0),
-    [topbarCommands],
-  );
   const paletteCommands = useMemo<AppCommand[]>(
     () => [
-      ...topbarCommands,
+      {
+        id: "workspace.openFolder",
+        title: "Open Workspace Folder",
+        category: "Workspace",
+        keywords: ["folder", "directory", "project"],
+        run: () => {
+          void openWorkspaceFolder();
+        },
+      },
       {
         id: "workspace.openActiveInFinder",
         title: "Open Current Workspace in Finder",
@@ -2742,30 +2629,67 @@ function MainApp() {
         },
       },
       {
-        id: "workspace.openFolder",
-        title: "Open Workspace Folder",
+        id: "workspace.manage",
+        title: "Manage Workspaces",
         category: "Workspace",
-        keywords: ["add", "register", "switch", "folder", "directory", "project"],
+        keywords: ["settings", "folders", "projects"],
+        run: () => setWorkspaceManagerOpen(true),
+      },
+      {
+        id: "workspace.select",
+        title: "Select Workspace",
+        category: "Workspace",
+        keywords: ["switch", "change", "project", "folder"],
+        enabled:
+          workspaceState.workspaces.length > 0 || workspaceState.activeWorkspaceId !== null,
         run: () => {
-          void openWorkspaceFolder();
+          setCommandPalette({
+            mode: "workspaceSelection",
+            query: "",
+            selectedIndex: 0,
+          });
         },
       },
       {
-        id: "view.toggleBottomPanel",
-        title: bottomPanelVisible ? "Hide Bottom Panel" : "Show Bottom Panel",
-        category: "View",
-        keywords: ["bottom", "panel", "status", "diagnostics", "debug"],
-        shortcut: "Command/Ctrl + J",
-        run: toggleBottomPanel,
+        id: "file.openWorkspaceFile",
+        title: "Open Workspace File",
+        category: "File",
+        keywords: ["workspace", "project", "quick open", "finder"],
+        shortcut: "Command + P",
+        run: () => {
+          void openWorkspaceFilePalette();
+        },
       },
       {
-        id: "editor.switchEdgeDirection",
-        title: "Switch Edge Notation",
-        category: "Edit",
-        keywords: ["edge", "notation", "direction", "flip", "reverse", "connection"],
-        run: () => {
-          void switchFocusedEdgeDirection();
-        },
+        id: "file.open",
+        title: "Open D2 File",
+        category: "File",
+        keywords: ["load"],
+        shortcut: "Command/Ctrl + O",
+        run: openSourceFile,
+      },
+      {
+        id: "file.newTab",
+        title: "New Tab",
+        category: "File",
+        keywords: ["create", "blank"],
+        shortcut: "Command/Ctrl + T",
+        run: createNewTab,
+      },
+      {
+        id: "file.save",
+        title: "Save D2 Source",
+        category: "File",
+        keywords: ["write"],
+        shortcut: "Command/Ctrl + S",
+        run: saveSource,
+      },
+      {
+        id: "file.openWithEditor",
+        title: "Open Current D2 File with $EDITOR",
+        category: "File",
+        keywords: ["external", "editor"],
+        run: openWithEditor,
       },
       {
         id: "file.renameFocused",
@@ -2785,20 +2709,204 @@ function MainApp() {
           void copyFocusedTabAbsolutePath();
         },
       },
+      {
+        id: "file.closeTab",
+        title: "Close Tab",
+        category: "File",
+        keywords: ["current", "active"],
+        shortcut: "Command/Ctrl + W",
+        run: closeActiveTab,
+      },
+      {
+        id: "file.quit",
+        title: "Quit D2 Desk",
+        category: "File",
+        keywords: ["exit", "close application"],
+        shortcut: "Command/Ctrl + Q",
+        run: () => {
+          void quitApplication();
+        },
+      },
+      {
+        id: "editor.format",
+        title: "Format Document",
+        category: "Edit",
+        keywords: ["source"],
+        shortcut: "Command/Ctrl + Shift + I",
+        run: formatDocument,
+      },
+      {
+        id: "editor.goToSymbol",
+        title: "Go to Symbol in File",
+        category: "Edit",
+        keywords: ["outline", "node", "jump", "navigate"],
+        shortcut: "Command/Ctrl + Shift + O",
+        run: openSymbolPalette,
+      },
+      {
+        id: "editor.renameFocusedNode",
+        title: "Rename Focused Node",
+        category: "Edit",
+        keywords: ["symbol", "node", "refactor"],
+        shortcut: "F2",
+        run: () => {
+          void renameFocusedNode();
+        },
+      },
+      {
+        id: "editor.switchEdgeDirection",
+        title: "Switch Edge Notation",
+        category: "Edit",
+        keywords: ["edge", "notation", "direction", "flip", "reverse", "connection"],
+        run: () => {
+          void switchFocusedEdgeDirection();
+        },
+      },
+      {
+        id: "view.openCommandPalette",
+        title: "Command Palette",
+        category: "View",
+        keywords: ["commands", "actions"],
+        shortcut: "Command/Ctrl + Shift + P",
+        run: openCommandPalette,
+      },
+      {
+        id: "view.togglePreviewViewMode",
+        title: "Toggle Preview View",
+        category: "View",
+        keywords: ["layout", "fullscreen", "focus", "hide editor", "preview only", "editor only"],
+        shortcut: "Command + Option + P",
+        run: togglePreviewViewMode,
+      },
+      {
+        id: "view.toggleDetachedPreview",
+        title: previewDetached ? "Attach Preview to Main Window" : "Detach Preview to Window",
+        category: "View",
+        keywords: ["preview", "detach", "separate", "window", "attach"],
+        shortcut: "Command + Option + Shift + P",
+        run: toggleDetachedPreview,
+      },
+      {
+        id: "view.toggleBottomPanel",
+        title: bottomPanelVisible ? "Hide Bottom Panel" : "Show Bottom Panel",
+        category: "View",
+        keywords: ["bottom", "panel", "status", "diagnostics", "debug"],
+        shortcut: "Command/Ctrl + J",
+        run: toggleBottomPanel,
+      },
+      {
+        id: "view.previousComposition",
+        title: "Previous Composition",
+        category: "View",
+        keywords: ["board", "composition", "layer", "scenario", "step", "preview"],
+        shortcut: "Command/Ctrl + Option + Up",
+        enabled: (compileResult.boards?.length ?? 0) > 1,
+        run: () => switchPreviewBoard(-1),
+      },
+      {
+        id: "view.nextComposition",
+        title: "Next Composition",
+        category: "View",
+        keywords: ["board", "composition", "layer", "scenario", "step", "preview"],
+        shortcut: "Command/Ctrl + Option + Down",
+        enabled: (compileResult.boards?.length ?? 0) > 1,
+        run: () => switchPreviewBoard(1),
+      },
+      {
+        id: "view.zoomOut",
+        title: "Zoom Out",
+        category: "View",
+        keywords: ["decrease", "scale"],
+        shortcut: "Command/Ctrl + -",
+        run: zoomFocusedPaneOut,
+      },
+      {
+        id: "view.resetZoom",
+        title: "Reset Zoom",
+        category: "View",
+        keywords: ["scale", "fit"],
+        shortcut: "Command/Ctrl + 0",
+        run: resetFocusedView,
+      },
+      {
+        id: "view.zoomIn",
+        title: "Zoom In",
+        category: "View",
+        keywords: ["increase", "scale"],
+        shortcut: "Command/Ctrl + +",
+        run: zoomFocusedPaneIn,
+      },
+      {
+        id: "export.svg",
+        title: "Export SVG",
+        category: "Export",
+        keywords: ["download", "diagram"],
+        run: () => {
+          void exportSVG();
+        },
+      },
+      {
+        id: "export.png",
+        title: "Export PNG",
+        category: "Export",
+        keywords: ["download", "image", "diagram"],
+        run: () => {
+          void exportPNG();
+        },
+      },
     ],
     [
-      copyFocusedTabAbsolutePath,
       bottomPanelVisible,
+      closeActiveTab,
+      compileResult.boards,
+      copyFocusedTabAbsolutePath,
+      createNewTab,
       currentFilePath,
       openActiveWorkspaceInFinder,
+      exportRenderedSvg,
+      fileName,
+      formatDocument,
+      openCommandPalette,
+      openSourceFile,
+      openSymbolPalette,
+      openWithEditor,
+      openWorkspaceFilePalette,
       openWorkspaceFolder,
+      previewDetached,
+      quitApplication,
+      renameFocusedNode,
       renameFocusedFile,
+      saveSource,
+      source,
       switchFocusedEdgeDirection,
+      switchPreviewBoard,
       toggleBottomPanel,
-      topbarCommands,
+      toggleDetachedPreview,
+      togglePreviewViewMode,
       workspaceState,
+      workspaceState.activeWorkspaceId,
+      workspaceState.workspaces,
     ],
   );
+  const workspaceSelectionCommands = useMemo<AppCommand[]>(
+    () =>
+      createWorkspaceSelectionCommands(
+        workspaceState.workspaces,
+        workspaceState.activeWorkspaceId,
+        (workspaceId) => {
+          void switchWorkspace(workspaceId);
+        },
+      ),
+    [switchWorkspace, workspaceState.activeWorkspaceId, workspaceState.workspaces],
+  );
+  const activePaletteCommands =
+    commandPalette?.mode === "workspaceSelection"
+      ? workspaceSelectionCommands
+      : paletteCommands;
+  const commandPaletteTitle =
+    commandPalette?.mode === "workspaceSelection" ? "Select Workspace" : "Command Palette";
+  const commandPalettePlaceholder =
+    commandPalette?.mode === "workspaceSelection" ? "Search workspaces" : "Search commands";
   const runAppCommand = useCallback((command: AppCommand) => {
     if (!isCommandEnabled(command)) return;
     setCommandPalette(null);
@@ -2825,14 +2933,13 @@ function MainApp() {
         onWorkspaceChange={(workspaceId) => {
           void switchWorkspace(workspaceId);
         }}
-        workspaceCommands={workspaceCommands}
-        toolbarCommands={toolbarCommands}
-        onRunCommand={runAppCommand}
       />
 
       {commandPalette ? (
         <CommandPalette
-          commands={paletteCommands}
+          commands={activePaletteCommands}
+          title={commandPaletteTitle}
+          placeholder={commandPalettePlaceholder}
           query={commandPalette.query}
           selectedIndex={commandPalette.selectedIndex}
           onQueryChange={(query) =>
