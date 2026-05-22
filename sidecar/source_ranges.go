@@ -69,7 +69,7 @@ func scanD2SourceTokenRanges(source string, finalSegmentOnly bool) map[string][]
 				}
 
 				statement := text[statementStart:index]
-				if hasConnectionOperator(statement) {
+				if isD2ConnectionStatement(statement) {
 					addD2NodeRangesFromStatement(out, context, statement, i+1, statementStart, finalSegmentOnly)
 					ignoredMapDepth = 1
 					statementStart = index + 1
@@ -260,7 +260,7 @@ func scanConnectionSourceRanges(source string) []connectionSourceRange {
 				}
 
 				statement := text[statementStart : index+1]
-				if hasConnectionOperator(statement) {
+				if isD2ConnectionStatement(statement) {
 					endLine, endColumn := blockScopeEnd(lines, i, index)
 					scopeRange := sourceRange{
 						File:        "main.d2",
@@ -383,6 +383,13 @@ func addConnectionRangesFromStatementWithScope(out *[]connectionSourceRange, con
 func hasConnectionOperator(statement string) bool {
 	_, _, ok := nextConnectionOperator(statement)
 	return ok
+}
+
+func isD2ConnectionStatement(statement string) bool {
+	if colonIndex := indexD2StatementColon(statement); colonIndex >= 0 {
+		statement = statement[:colonIndex]
+	}
+	return hasConnectionOperator(statement)
 }
 
 func blockScopeEnd(lines []string, startLine int, openBraceColumn int) (int, int) {

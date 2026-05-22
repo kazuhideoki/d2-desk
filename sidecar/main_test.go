@@ -694,6 +694,48 @@ container: {
 	}
 }
 
+func TestRenameNodeRenamesConnectionEndpointWithBlock(t *testing.T) {
+	source := `api -> db: {
+  style.stroke: red
+}
+`
+	result, err := renameNode(renameNodeParams{Source: source, ID: "db", NewName: "database"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := `api -> database: {
+  style.stroke: red
+}
+`
+	if result.Source != expected {
+		t.Fatalf("unexpected renamed source:\n%s", result.Source)
+	}
+}
+
+func TestRenameNodeRenamesEdgeReferenceDefinitionEndpoints(t *testing.T) {
+	source := `api -> db: query
+(api -> db)[0].style.stroke: red
+(api -> db)[0]: {
+  style.stroke-width: 4
+}
+`
+	result, err := renameNode(renameNodeParams{Source: source, ID: "db", NewName: "database"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := `api -> database: query
+(api -> database)[0].style.stroke: red
+(api -> database)[0]: {
+  style.stroke-width: 4
+}
+`
+	if result.Source != expected {
+		t.Fatalf("unexpected renamed source:\n%s", result.Source)
+	}
+}
+
 func TestRenameNodeRejectsInvalidName(t *testing.T) {
 	_, err := renameNode(renameNodeParams{Source: "api -> db", ID: "api", NewName: "new.name"})
 	if err == nil {
