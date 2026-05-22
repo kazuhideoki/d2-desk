@@ -9,6 +9,10 @@ import { loadInitialSession, type InitialSession } from "./app/initialSession";
 import { CommandPalette } from "./features/command-palette/CommandPalette";
 import { createWorkspaceSelectionCommands } from "./features/command-palette/commands";
 import { isCommandEnabled, type AppCommand } from "./shared/commands";
+import {
+  dispatchGlobalShortcut,
+  type ShortcutAction,
+} from "./features/shortcuts/shortcutDispatcher";
 import { EditorPane } from "./features/editor/EditorPane";
 import { connectionIdAtPosition } from "./features/editor/sourceRanges";
 import { findSwitchableEdge, switchEdgeDirectionInSource } from "./features/editor/switchEdge";
@@ -2055,118 +2059,112 @@ function MainApp() {
     sendDetachedPreviewState,
   ]);
 
+  const runGlobalShortcutAction = useCallback(
+    (action: ShortcutAction) => {
+      switch (action) {
+        case "editor.renameFocusedNode":
+          void renameFocusedNode();
+          return;
+        case "view.toggleDetachedPreview":
+          void toggleDetachedPreview();
+          return;
+        case "view.togglePreviewViewMode":
+          void togglePreviewViewMode();
+          return;
+        case "tabs.focusPrevious":
+          focusAdjacentTab(-1);
+          return;
+        case "tabs.focusNext":
+          focusAdjacentTab(1);
+          return;
+        case "view.previousComposition":
+          switchPreviewBoard(-1);
+          return;
+        case "view.nextComposition":
+          switchPreviewBoard(1);
+          return;
+        case "editor.goToSymbol":
+          openSymbolPalette();
+          return;
+        case "view.openCommandPalette":
+          openCommandPalette();
+          return;
+        case "file.open":
+          void openSourceFile();
+          return;
+        case "file.openWorkspaceFile":
+          void openWorkspaceFilePalette();
+          return;
+        case "file.save":
+          void saveSource();
+          return;
+        case "view.toggleBottomPanel":
+          toggleBottomPanel();
+          return;
+        case "editor.format":
+          void formatDocument();
+          return;
+        case "view.zoomIn":
+          zoomFocusedPaneIn();
+          return;
+        case "view.zoomOut":
+          zoomFocusedPaneOut();
+          return;
+        case "view.resetZoom":
+          resetFocusedView();
+          return;
+        case "file.newTab":
+          createNewTab();
+          return;
+        case "file.closeTab":
+          closeActiveTab();
+          return;
+        case "file.quit":
+          void quitApplication();
+          return;
+        default: {
+          const exhaustiveAction: never = action;
+          return exhaustiveAction;
+        }
+      }
+    },
+    [
+      closeActiveTab,
+      createNewTab,
+      focusAdjacentTab,
+      formatDocument,
+      openCommandPalette,
+      openSymbolPalette,
+      openSourceFile,
+      openWorkspaceFilePalette,
+      quitApplication,
+      renameFocusedNode,
+      resetFocusedView,
+      saveSource,
+      switchPreviewBoard,
+      toggleBottomPanel,
+      toggleDetachedPreview,
+      togglePreviewViewMode,
+      zoomFocusedPaneIn,
+      zoomFocusedPaneOut,
+    ],
+  );
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "F2" && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        void renameFocusedNode();
-        return;
-      }
+      const shortcut = dispatchGlobalShortcut(event);
+      if (!shortcut) return;
 
-      if ((event.metaKey || event.ctrlKey) && event.altKey && event.shiftKey) {
-        if (event.key.toLowerCase() === "p" || event.code === "KeyP") {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          void toggleDetachedPreview();
-        }
-        return;
+      event.preventDefault();
+      if (shortcut.stopImmediatePropagation) {
+        event.stopImmediatePropagation();
       }
-
-      if ((event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) {
-        if (
-          event.metaKey &&
-          !event.ctrlKey &&
-          (event.key.toLowerCase() === "p" || event.code === "KeyP")
-        ) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          void togglePreviewViewMode();
-        } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          focusAdjacentTab(event.key === "ArrowRight" ? 1 : -1);
-        } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          switchPreviewBoard(event.key === "ArrowDown" ? 1 : -1);
-        }
-        return;
-      }
-
-      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
-      const key = event.key.toLowerCase();
-
-      if (key === "o" && event.shiftKey) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        openSymbolPalette();
-      } else if (key === "p" && event.shiftKey) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        openCommandPalette();
-      } else if (key === "o") {
-        event.preventDefault();
-        void openSourceFile();
-      } else if (key === "p" && event.metaKey && !event.ctrlKey && !event.shiftKey) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        void openWorkspaceFilePalette();
-      } else if (key === "s") {
-        event.preventDefault();
-        void saveSource();
-      } else if (!event.shiftKey && key === "j") {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        toggleBottomPanel();
-      } else if (event.shiftKey && key === "i") {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        void formatDocument();
-      } else if (event.key === "+" || event.key === "=") {
-        event.preventDefault();
-        zoomFocusedPaneIn();
-      } else if (event.key === "-" || event.key === "_") {
-        event.preventDefault();
-        zoomFocusedPaneOut();
-      } else if (event.key === "0") {
-        event.preventDefault();
-        resetFocusedView();
-      } else if (event.key.toLowerCase() === "t") {
-        event.preventDefault();
-        createNewTab();
-      } else if (event.key.toLowerCase() === "w") {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        closeActiveTab();
-      } else if (event.key.toLowerCase() === "q") {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        void quitApplication();
-      }
+      runGlobalShortcutAction(shortcut.action);
     };
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [
-    closeActiveTab,
-    createNewTab,
-    focusAdjacentTab,
-    formatDocument,
-    openCommandPalette,
-    openSymbolPalette,
-    openSourceFile,
-    openWorkspaceFilePalette,
-    quitApplication,
-    renameFocusedNode,
-    resetFocusedView,
-    saveSource,
-    switchPreviewBoard,
-    toggleBottomPanel,
-    toggleDetachedPreview,
-    togglePreviewViewMode,
-    zoomFocusedPaneIn,
-    zoomFocusedPaneOut,
-  ]);
+  }, [runGlobalShortcutAction]);
 
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
