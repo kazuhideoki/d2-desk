@@ -195,6 +195,7 @@ function App() {
   const decorationIds = useRef<string[]>([]);
   const activeCompileRequestId = useRef(0);
   const activeSuggestPreviewRequestId = useRef(0);
+  const previousCompileTabIdRef = useRef(activeTabId);
   const suggestPreviewTimeoutRef = useRef<number | null>(null);
   const suggestPreviewCacheRef = useRef(new Map<string, CompileResult>());
   const renameInputRef = useRef<HTMLInputElement | null>(null);
@@ -808,6 +809,13 @@ function App() {
     }
     const requestId = activeCompileRequestId.current + 1;
     activeCompileRequestId.current = requestId;
+    const shouldCompileImmediately = previousCompileTabIdRef.current !== activeTabId;
+    previousCompileTabIdRef.current = activeTabId;
+    if (shouldCompileImmediately) {
+      setStatus("Compiling");
+      void compile(source, activeTabId, requestId);
+      return;
+    }
     const timeout = window.setTimeout(() => {
       setStatus("Compiling");
       void compile(source, activeTabId, requestId);
