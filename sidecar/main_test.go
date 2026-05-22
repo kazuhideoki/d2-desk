@@ -177,6 +177,46 @@ func TestCompileProducesSVGAndObjects(t *testing.T) {
 	}
 }
 
+func TestCompileCanRenderCompositionBoard(t *testing.T) {
+	source := `baseA -> baseB
+
+layers: {
+  infra: {
+    layerX -> layerY
+  }
+}`
+	result, err := compile(compileParams{
+		Source:    source,
+		BoardPath: []string{"layers", "infra"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("expected no diagnostics, got %#v", result.Diagnostics)
+	}
+	if !strings.Contains(result.SVG, "layerX") {
+		t.Fatalf("expected selected layer SVG, got %q", result.SVG)
+	}
+	if strings.Contains(result.SVG, "baseA") {
+		t.Fatalf("expected selected layer to hide root board, got %q", result.SVG)
+	}
+	if len(result.Boards) != 2 {
+		t.Fatalf("expected root and layer board summaries, got %#v", result.Boards)
+	}
+	layer := result.Boards[1]
+	if layer.Kind != "layers" || layer.Name != "infra" || strings.Join(layer.Path, ".") != "layers.infra" {
+		t.Fatalf("unexpected layer board summary: %#v", layer)
+	}
+	layerX := findObject(result.Objects, "layerX")
+	if layerX == nil {
+		t.Fatalf("expected layerX object in %#v", result.Objects)
+	}
+	if strings.Join(layerX.BoardPath, ".") != "layers.infra" {
+		t.Fatalf("expected layerX board path, got %#v", layerX.BoardPath)
+	}
+}
+
 func TestCompileAppliesVarsD2ConfigThemeID(t *testing.T) {
 	defaultResult, err := compile(compileParams{Source: "a -> b"})
 	if err != nil {

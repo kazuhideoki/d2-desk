@@ -686,6 +686,24 @@ select {
   gap: 8px;
 }
 
+.preview-board-select {
+  width: min(220px, 28vw);
+  min-width: 120px;
+  height: 24px;
+  border: 1px solid #cbd5d8;
+  border-radius: 6px;
+  padding: 0 26px 0 8px;
+  color: #334155;
+  background: #ffffff;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.preview-board-select:disabled {
+  color: #64748b;
+  opacity: 0.7;
+}
+
 .line-count {
   color: inherit;
   white-space: nowrap;
@@ -813,6 +831,7 @@ select {
 
 @media (max-width: 560px) {
   .line-count,
+  .preview-board-select,
   .pane-title-divider {
     display: none;
   }

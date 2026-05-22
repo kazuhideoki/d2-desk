@@ -16,6 +16,7 @@ export type D2Point = {
 export type D2Object = {
   id: string;
   kind: "shape" | "connection";
+  boardPath?: string[];
   label?: string;
   src?: string;
   dst?: string;
@@ -30,6 +31,14 @@ export type D2Object = {
   };
 };
 
+export type D2Board = {
+  path: string[];
+  kind: "root" | "layers" | "scenarios" | "steps";
+  name: string;
+  label: string;
+  depth: number;
+};
+
 export type Diagnostic = {
   message: string;
   severity: "error" | "warning" | "info";
@@ -39,6 +48,7 @@ export type Diagnostic = {
 export type CompileResult = {
   svg: string;
   objects: D2Object[];
+  boards?: D2Board[];
   diagnostics: Diagnostic[];
 };
 

@@ -17,6 +17,7 @@ type compileParams struct {
 	WorkspaceRootPath string        `json:"workspaceRootPath,omitempty"`
 	CurrentFilePath   string        `json:"currentFilePath,omitempty"`
 	OpenFiles         []compileFile `json:"openFiles,omitempty"`
+	BoardPath         []string      `json:"boardPath,omitempty"`
 }
 
 type compileFile struct {
@@ -95,10 +96,19 @@ type objectMap struct {
 	Preview      previewBox    `json:"preview"`
 }
 
+type boardSummary struct {
+	Path  []string `json:"path"`
+	Kind  string   `json:"kind"`
+	Name  string   `json:"name"`
+	Label string   `json:"label"`
+	Depth int      `json:"depth"`
+}
+
 type compileResult struct {
-	SVG         string       `json:"svg"`
-	Objects     []objectMap  `json:"objects"`
-	Diagnostics []diagnostic `json:"diagnostics"`
+	SVG         string         `json:"svg"`
+	Objects     []objectMap    `json:"objects"`
+	Boards      []boardSummary `json:"boards"`
+	Diagnostics []diagnostic   `json:"diagnostics"`
 }
 
 type exportResult struct {

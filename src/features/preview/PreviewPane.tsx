@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ZoomIn, ZoomOut } from "lucide-react";
-import type { D2Object } from "../../types";
+import type { D2Board, D2Object } from "../../types";
 import { connectionPath, fitBoundsZoom, settleAutoZoom } from "../../utils";
 import { RepeatButton } from "../../shared/components/RepeatButton";
 
@@ -8,6 +8,8 @@ export type PreviewZoomMode = "auto" | "manual";
 
 type PreviewPaneProps = {
   objects: D2Object[];
+  boards?: D2Board[];
+  selectedBoardPath?: string[];
   renderedSvg: string;
   overlayViewBox: string;
   zoom: number;
@@ -21,6 +23,7 @@ type PreviewPaneProps = {
   onZoomIn: () => void;
   onZoomModeChange: (zoomMode: PreviewZoomMode) => void;
   onAutoZoomChange: (zoom: number) => void;
+  onBoardPathChange?: (boardPath: string[]) => void;
 };
 
 type PreviewContentSize = {
@@ -86,8 +89,21 @@ function availableContentSize(viewport: HTMLElement): PreviewContentSize {
   };
 }
 
+function boardPathKey(path: string[]) {
+  return JSON.stringify(path);
+}
+
+function boardOptionLabel(board: D2Board) {
+  if (board.kind === "root") return "Root";
+  const kindLabel = board.kind[0]?.toUpperCase() + board.kind.slice(1);
+  const indent = board.depth > 1 ? `${"  ".repeat(board.depth - 1)}` : "";
+  return `${indent}${kindLabel} / ${board.label || board.name}`;
+}
+
 export function PreviewPane({
   objects,
+  boards = [],
+  selectedBoardPath = [],
   renderedSvg,
   overlayViewBox,
   zoom,
@@ -101,6 +117,7 @@ export function PreviewPane({
   onZoomIn,
   onZoomModeChange,
   onAutoZoomChange,
+  onBoardPathChange,
 }: PreviewPaneProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const svgOutputRef = useRef<HTMLDivElement | null>(null);
@@ -164,6 +181,24 @@ export function PreviewPane({
       <div className="pane-title">
         <span>Preview</span>
         <div className="pane-title-actions">
+          {boards.length > 1 ? (
+            <select
+              className="preview-board-select"
+              title="Preview board"
+              value={boardPathKey(selectedBoardPath)}
+              disabled={!onBoardPathChange}
+              onChange={(event) => {
+                const nextPath = JSON.parse(event.target.value) as string[];
+                onBoardPathChange?.(nextPath);
+              }}
+            >
+              {boards.map((board) => (
+                <option key={boardPathKey(board.path)} value={boardPathKey(board.path)}>
+                  {boardOptionLabel(board)}
+                </option>
+              ))}
+            </select>
+          ) : null}
           <div className="pane-zoom-controls" aria-label="Preview zoom controls">
             <RepeatButton className="pane-zoom-button" title="Zoom preview out" onPress={onZoomOut}>
               <ZoomOut size={13} />
