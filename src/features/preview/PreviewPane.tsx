@@ -149,7 +149,8 @@ export function PreviewPane({
   }, [fallbackSize, onAutoZoomChange, zoom, zoomMode]);
 
   useEffect(() => {
-    updateMeasurements();
+    const frameId = window.requestAnimationFrame(updateMeasurements);
+    return () => window.cancelAnimationFrame(frameId);
   }, [renderedSvg, updateMeasurements]);
 
   useEffect(() => {

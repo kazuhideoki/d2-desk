@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { invoke } from "@tauri-apps/api/core";
@@ -41,6 +41,7 @@ import {
   type WorkspaceFilePaletteState,
 } from "./features/file-palette/WorkspaceFilePalette";
 import { PreviewPane, type PreviewZoomMode } from "./features/preview/PreviewPane";
+import { getPreviewCompileDelayMs } from "./features/preview/compileSchedule";
 import {
   nextPreviewViewMode,
   previewViewModeStatus,
@@ -173,6 +174,7 @@ type InternalSuggestController = {
 const nodeRenamePattern = /^[A-Za-z0-9_-]+$/;
 const tabPersistenceDelayMs = 400;
 const previewCompileDelayMs = 600;
+const tabSwitchPreviewCompileDelayMs = 140;
 const defaultPerfDebugOptions: PerfDebugOptions = {
   wordWrap: true,
   autoSuggest: true,
@@ -659,24 +661,29 @@ function MainApp() {
     );
   }, []);
 
-  const persistActiveEditorViewState = useCallback(() => {
-    const editor = editorRef.current;
-    if (!editor) return tabsRef.current;
+  const persistActiveEditorViewState = useCallback(
+    (options?: { persistImmediately?: boolean }) => {
+      const editor = editorRef.current;
+      if (!editor) return tabsRef.current;
 
-    const tabId = activeTabIdRef.current;
-    if (editorTabIdRef.current !== tabId) return tabsRef.current;
+      const tabId = activeTabIdRef.current;
+      if (editorTabIdRef.current !== tabId) return tabsRef.current;
 
-    const viewState = editor.saveViewState();
-    if (!viewState) return tabsRef.current;
+      const viewState = editor.saveViewState();
+      if (!viewState) return tabsRef.current;
 
-    const nextTabs = tabsRef.current.map((tab) =>
-      tab.id === tabId ? { ...tab, editorViewState: viewState } : tab,
-    );
-    tabsRef.current = nextTabs;
-    setTabs(nextTabs);
-    persistTabs(nextTabs, tabId);
-    return nextTabs;
-  }, [persistTabs]);
+      const nextTabs = tabsRef.current.map((tab) =>
+        tab.id === tabId ? { ...tab, editorViewState: viewState } : tab,
+      );
+      tabsRef.current = nextTabs;
+      setTabs(nextTabs);
+      if (options?.persistImmediately !== false) {
+        persistTabs(nextTabs, tabId);
+      }
+      return nextTabs;
+    },
+    [persistTabs],
+  );
 
   const focusEditorAfterTabActivation = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -686,15 +693,24 @@ function MainApp() {
   }, []);
 
   const activateTab = useCallback(
-    (tabId: string) => {
-      const currentTabs = persistActiveEditorViewState();
+    (
+      tabId: string,
+      options?: { currentTabs?: D2Tab[]; persistImmediately?: boolean },
+    ) => {
+      const currentTabs =
+        options?.currentTabs ??
+        persistActiveEditorViewState({
+          persistImmediately: options?.persistImmediately,
+        });
       if (!currentTabs.some((tab) => tab.id === tabId)) return;
 
       activeTabIdRef.current = tabId;
       setActiveTabId(tabId);
       setActiveId(null);
       setHoverId(null);
-      persistTabs(currentTabs, tabId);
+      if (options?.persistImmediately !== false) {
+        persistTabs(currentTabs, tabId);
+      }
       focusEditorAfterTabActivation();
     },
     [focusEditorAfterTabActivation, persistActiveEditorViewState, persistTabs],
@@ -702,7 +718,7 @@ function MainApp() {
 
   const focusAdjacentTab = useCallback(
     (direction: -1 | 1) => {
-      const currentTabs = persistActiveEditorViewState();
+      const currentTabs = persistActiveEditorViewState({ persistImmediately: false });
       if (currentTabs.length <= 1) return;
 
       const activeIndex = currentTabs.findIndex((tab) => tab.id === activeTabIdRef.current);
@@ -710,7 +726,7 @@ function MainApp() {
 
       const nextIndex = (activeIndex + direction + currentTabs.length) % currentTabs.length;
       const nextTab = currentTabs[nextIndex];
-      activateTab(nextTab.id);
+      activateTab(nextTab.id, { currentTabs, persistImmediately: false });
       setStatus(`Focused ${nextTab.fileName}`);
     },
     [activateTab, persistActiveEditorViewState],
@@ -1005,8 +1021,14 @@ function MainApp() {
           setStatus("Diagnostics updated; preview kept from last valid compile");
           return;
         }
-        compileResultSourceRef.current = compileResultKey(nextSource, selectedBoardPathRef.current);
-        setCompileResult(result);
+        compileResultRef.current = result;
+        compileResultSourceRef.current = compileResultKey(
+          nextSource,
+          selectedBoardPathRef.current,
+        );
+        startTransition(() => {
+          setCompileResult(result);
+        });
         setStatus("Compiled");
       } catch (error) {
         const latestInputs = latestCompileInputsRef.current;
@@ -1071,12 +1093,17 @@ function MainApp() {
     }
     const requestId = activeCompileRequestId.current + 1;
     activeCompileRequestId.current = requestId;
-    const shouldCompileImmediately =
-      previousCompileTabIdRef.current !== activeTabId ||
-      previousCompileBoardPathKeyRef.current !== selectedBoardPathKey;
+    const tabChanged = previousCompileTabIdRef.current !== activeTabId;
+    const boardChanged = previousCompileBoardPathKeyRef.current !== selectedBoardPathKey;
     previousCompileTabIdRef.current = activeTabId;
     previousCompileBoardPathKeyRef.current = selectedBoardPathKey;
-    if (shouldCompileImmediately) {
+    const delayMs = getPreviewCompileDelayMs({
+      tabChanged,
+      boardChanged,
+      editDelayMs: previewCompileDelayMs,
+      tabSwitchDelayMs: tabSwitchPreviewCompileDelayMs,
+    });
+    if (delayMs === 0) {
       setStatus("Compiling");
       void compile(source, activeTabId, requestId);
       return;
@@ -1084,7 +1111,7 @@ function MainApp() {
     const timeout = window.setTimeout(() => {
       setStatus("Compiling");
       void compile(source, activeTabId, requestId);
-    }, previewCompileDelayMs);
+    }, delayMs);
     return () => window.clearTimeout(timeout);
   }, [
     activeTabId,
