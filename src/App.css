@@ -612,6 +612,14 @@ select {
   overflow: hidden;
 }
 
+.workspace.preview-fullscreen {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace.preview-fullscreen .editor-pane {
+  display: none;
+}
+
 .editor-pane,
 .preview-pane {
   position: relative;

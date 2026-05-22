@@ -10,6 +10,7 @@ import {
   FileInput,
   Focus,
   FolderPlus,
+  Maximize2,
   Save,
   Settings,
   SquareArrowOutUpRight,
@@ -188,6 +189,7 @@ function App() {
   const [editorZoom, setEditorZoom] = useState(1);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewZoomMode, setPreviewZoomMode] = useState<PreviewZoomMode>("auto");
+  const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decorationIds = useRef<string[]>([]);
@@ -204,6 +206,7 @@ function App() {
   const openCommandPaletteRef = useRef<() => void>(() => undefined);
   const saveSourceRef = useRef<() => void>(() => undefined);
   const formatDocumentRef = useRef<() => void>(() => undefined);
+  const togglePreviewFullscreenRef = useRef<() => void>(() => undefined);
   const closeActiveTabRef = useRef<() => void>(() => undefined);
   const quitApplicationRef = useRef<() => void>(() => undefined);
   const pendingEditorViewStateRestoreRef = useRef<number | null>(null);
@@ -972,6 +975,21 @@ function App() {
     window.requestAnimationFrame(() => editorRef.current?.focus());
   }, []);
 
+  const togglePreviewFullscreen = useCallback(() => {
+    setPreviewFullscreen((current) => {
+      const next = !current;
+      setStatus(next ? "Preview fullscreen enabled" : "Preview fullscreen disabled");
+      window.requestAnimationFrame(() => {
+        if (next) {
+          document.querySelector<HTMLElement>(".preview-viewport")?.focus();
+        } else {
+          editorRef.current?.focus();
+        }
+      });
+      return next;
+    });
+  }, []);
+
   const goToSymbol = useCallback((symbolId: string) => {
     setSymbolPalette(null);
     setActiveId(symbolId);
@@ -1405,6 +1423,7 @@ function App() {
     formatDocumentRef.current = () => {
       void formatDocument();
     };
+    togglePreviewFullscreenRef.current = togglePreviewFullscreen;
     closeActiveTabRef.current = closeActiveTab;
     quitApplicationRef.current = () => {
       void quitApplication();
@@ -1418,6 +1437,7 @@ function App() {
     openWorkspaceFilePalette,
     quitApplication,
     saveSource,
+    togglePreviewFullscreen,
   ]);
 
   useEffect(() => {
@@ -1438,6 +1458,11 @@ function App() {
         unlisteners.push(unlisten);
       },
     );
+    void listen("d2-desk-toggle-preview-fullscreen", () =>
+      togglePreviewFullscreenRef.current(),
+    ).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
     void listen("d2-desk-save", () => saveSourceRef.current()).then((unlisten) => {
       unlisteners.push(unlisten);
     });
@@ -1464,7 +1489,15 @@ function App() {
       }
 
       if ((event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) {
-        if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        if (
+          event.metaKey &&
+          !event.ctrlKey &&
+          (event.key.toLowerCase() === "p" || event.code === "KeyP")
+        ) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          togglePreviewFullscreen();
+        } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
           event.preventDefault();
           event.stopImmediatePropagation();
           focusAdjacentTab(event.key === "ArrowRight" ? 1 : -1);
@@ -1535,6 +1568,7 @@ function App() {
     renameFocusedNode,
     resetFocusedView,
     saveSource,
+    togglePreviewFullscreen,
     zoomFocusedPaneIn,
     zoomFocusedPaneOut,
   ]);
@@ -2050,6 +2084,16 @@ function App() {
         run: formatDocument,
       },
       {
+        id: "view.togglePreviewFullscreen",
+        title: "Toggle Preview Fullscreen",
+        category: "View",
+        keywords: ["fullscreen", "focus", "hide editor", "preview only"],
+        shortcut: "Command + Option + P",
+        icon: Maximize2,
+        toolbarGroup: 2,
+        run: togglePreviewFullscreen,
+      },
+      {
         id: "view.zoomOut",
         title: "Zoom Out",
         category: "View",
@@ -2111,6 +2155,7 @@ function App() {
       openWorkspaceFolder,
       saveSource,
       source,
+      togglePreviewFullscreen,
     ],
   );
   const workspaceCommands = useMemo(
@@ -2263,7 +2308,7 @@ function App() {
         onReorderTabs={moveTab}
       />
 
-      <section className="workspace">
+      <section className={previewFullscreen ? "workspace preview-fullscreen" : "workspace"}>
         <EditorPane
           activeTabId={activeTabId}
           fileName={fileName}
