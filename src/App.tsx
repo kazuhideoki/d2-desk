@@ -150,6 +150,8 @@ type DetachedPreviewState = {
   fileName: string;
 };
 
+type SelectPreviewBoardEvent = string[];
+
 type InternalSuggestWidget = {
   getFocusedItem?: () => InternalSuggestFocusEvent | undefined;
   onDidFocus?: (listener: (event: InternalSuggestFocusEvent) => void) => Monaco.IDisposable;
@@ -269,6 +271,11 @@ function PreviewWindowApp() {
     setPreviewZoom(decreaseZoom);
   }
 
+  const selectDetachedPreviewBoard = useCallback((boardPath: string[]) => {
+    setPreviewZoomMode("auto");
+    void emitTo("main", "d2-desk-select-preview-board", boardPath);
+  }, []);
+
   return (
     <main className="app-shell detached-preview-shell">
       <PreviewPane
@@ -288,6 +295,7 @@ function PreviewWindowApp() {
         onZoomIn={zoomPreviewIn}
         onZoomModeChange={setPreviewZoomMode}
         onAutoZoomChange={setPreviewZoom}
+        onBoardPathChange={selectDetachedPreviewBoard}
       />
     </main>
   );
@@ -1951,6 +1959,11 @@ function MainApp() {
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
+    void listen<SelectPreviewBoardEvent>("d2-desk-select-preview-board", (event) => {
+      selectPreviewBoard(event.payload);
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
     void listen("d2-desk-save", () => saveSourceRef.current()).then((unlisten) => {
       unlisteners.push(unlisten);
     });
@@ -1966,7 +1979,7 @@ function MainApp() {
         unlisten();
       }
     };
-  }, [sendDetachedPreviewState]);
+  }, [selectPreviewBoard, sendDetachedPreviewState]);
 
   useEffect(() => {
     if (!previewDetached || !perfDebugOptions.previewRender) return;
