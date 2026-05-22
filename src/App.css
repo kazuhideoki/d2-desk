@@ -835,8 +835,14 @@ select {
 .preview-canvas {
   position: relative;
   display: inline-block;
-  transform-origin: top left;
+  overflow: hidden;
   background: #f4f7f7;
+}
+
+.preview-content {
+  position: relative;
+  display: inline-block;
+  transform-origin: top left;
 }
 
 .svg-output {

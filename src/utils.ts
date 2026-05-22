@@ -1,4 +1,4 @@
-import { maxZoom, minZoom, zoomStep, zoomStepAbove200 } from "./constants";
+import { maxZoom, minAutoZoom, minZoom, zoomStep, zoomStepAbove200 } from "./constants";
 import type { D2Object, D2Point } from "./types";
 
 export function routePath(route: D2Point[]) {
@@ -36,17 +36,31 @@ export function decreaseZoom(value: number) {
   return clampZoom(value - zoomStep);
 }
 
-export function fitWidthZoom(availableWidth: number, contentWidth: number) {
-  if (!Number.isFinite(availableWidth) || !Number.isFinite(contentWidth) || contentWidth <= 0) {
+export function fitBoundsZoom(
+  availableWidth: number,
+  availableHeight: number,
+  contentWidth: number,
+  contentHeight: number,
+) {
+  if (
+    !Number.isFinite(availableWidth) ||
+    !Number.isFinite(availableHeight) ||
+    !Number.isFinite(contentWidth) ||
+    !Number.isFinite(contentHeight) ||
+    contentWidth <= 0 ||
+    contentHeight <= 0
+  ) {
     return 1;
   }
 
-  return clampZoom(availableWidth / contentWidth);
+  const boundsFitZoom = Math.min(availableWidth / contentWidth, availableHeight / contentHeight);
+  return Number(Math.min(maxZoom, Math.max(minAutoZoom, boundsFitZoom)).toFixed(2));
 }
 
 export function settleAutoZoom(currentZoom: number, nextZoom: number) {
   if (!Number.isFinite(currentZoom) || currentZoom <= 0) return nextZoom;
-  return Math.abs(nextZoom - currentZoom) <= 0.02 + Number.EPSILON ? currentZoom : nextZoom;
+  const threshold = nextZoom < minZoom ? 0.005 : 0.02;
+  return Math.abs(nextZoom - currentZoom) <= threshold + Number.EPSILON ? currentZoom : nextZoom;
 }
 
 export function moveSelectionIndex(currentIndex: number, delta: number, itemCount: number) {
