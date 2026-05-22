@@ -1066,7 +1066,7 @@ func TestCompleteReturnsExpandedKeyCompletions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasCompletionInsertText(items, "source-arrowhead", "source-arrowhead: ") {
+	if !hasCompletionInsertText(items, "source-arrowhead", "source-arrowhead") {
 		t.Fatalf("expected source-arrowhead key completion, got %#v", items)
 	}
 
@@ -1077,6 +1077,15 @@ func TestCompleteReturnsExpandedKeyCompletions(t *testing.T) {
 	}
 	if !hasCompletionInsertText(items, "grid-columns", "grid-columns: ") {
 		t.Fatalf("expected nested grid-columns key completion, got %#v", items)
+	}
+
+	source = "api -> db: { source-arrowhead.la"
+	items, err = complete(completeParams{Source: source, Line: 0, Column: len(source)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "label", "label: ") {
+		t.Fatalf("expected arrowhead label key completion with colon, got %#v", items)
 	}
 }
 
@@ -1139,11 +1148,41 @@ func TestCompleteReturnsRootVarsKeyCompletions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasCompletionInsertText(items, "d2-config", "d2-config: ") {
+	if !hasCompletionInsertText(items, "d2-config", "d2-config") {
 		t.Fatalf("expected d2-config key completion in root vars, got %#v", items)
 	}
-	if !hasCompletionInsertText(items, "d2-legend", "d2-legend: ") {
+	if !hasCompletionInsertText(items, "d2-legend", "d2-legend") {
 		t.Fatalf("expected d2-legend key completion in root vars, got %#v", items)
+	}
+}
+
+func TestCompleteOmitsColonForDotContinuableKeys(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		label  string
+	}{
+		{name: "style holder", source: "api: {\n  sty", label: "style"},
+		{name: "label composite", source: "api: {\n  lab", label: "label"},
+		{name: "root vars", source: "var", label: "vars"},
+		{name: "theme overrides", source: "vars: {\n  d2-config: {\n    theme-o", label: "theme-overrides"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			line := strings.Count(tt.source, "\n")
+			column := len(tt.source) - strings.LastIndex(tt.source, "\n") - 1
+			items, err := complete(completeParams{Source: tt.source, Line: line, Column: column})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !hasCompletionInsertText(items, tt.label, tt.label) {
+				t.Fatalf("expected %s key completion without colon, got %#v", tt.label, items)
+			}
+			if hasCompletionInsertText(items, tt.label, tt.label+": ") {
+				t.Fatalf("expected %s key completion not to insert colon, got %#v", tt.label, items)
+			}
+		})
 	}
 }
 
@@ -1180,6 +1219,24 @@ func TestCompleteReturnsKeyCompletionsForDotSyntaxWithoutTypedPrefix(t *testing.
 	}
 	if !hasCompletionInsertText(items, "opacity", "opacity: ") {
 		t.Fatalf("expected style key completion after dot, got %#v", items)
+	}
+}
+
+func TestCompleteDoesNotCollectStylePropertiesAsChildNodes(t *testing.T) {
+	source := "direction: down\napi\napi.style.animated: true\napi.style."
+	items, err := complete(completeParams{Source: source, Line: 3, Column: len("api.style.")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "font", "font: ") {
+		t.Fatalf("expected style key completions after existing dotted style property, got %#v", items)
+	}
+	item := completionByLabel(items, "animated")
+	if item == nil {
+		t.Fatalf("expected animated style completion, got %#v", items)
+	}
+	if item.Detail != "style property" || item.InsertText != "animated: " {
+		t.Fatalf("expected animated to remain a style key completion, got %#v", item)
 	}
 }
 
