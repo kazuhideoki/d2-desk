@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emitTo, listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import {
   Download,
@@ -139,6 +140,15 @@ type InternalSuggestModel = {
   onDidSuggest?: (listener: (event: InternalSuggestModelEvent) => void) => Monaco.IDisposable;
 };
 
+type DetachedPreviewState = {
+  objects: CompileResult["objects"];
+  renderedSvg: string;
+  overlayViewBox: string;
+  activeId: string | null;
+  hoverId: string | null;
+  fileName: string;
+};
+
 type InternalSuggestWidget = {
   getFocusedItem?: () => InternalSuggestFocusEvent | undefined;
   onDidFocus?: (listener: (event: InternalSuggestFocusEvent) => void) => Monaco.IDisposable;
@@ -161,7 +171,84 @@ function lastD2IdSegment(id: string) {
   return parts[parts.length - 1] ?? id;
 }
 
-function App() {
+const emptyDetachedPreviewState: DetachedPreviewState = {
+  objects: [],
+  renderedSvg: "",
+  overlayViewBox: "0 0 800 600",
+  activeId: null,
+  hoverId: null,
+  fileName: "Preview",
+};
+
+function PreviewWindowApp() {
+  const [previewState, setPreviewState] =
+    useState<DetachedPreviewState>(emptyDetachedPreviewState);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [hoverId, setHoverId] = useState<string | null>(null);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewZoomMode, setPreviewZoomMode] = useState<PreviewZoomMode>("auto");
+
+  useEffect(() => {
+    let isMounted = true;
+    let removeStateListener: (() => void) | null = null;
+    void listen<DetachedPreviewState>("d2-desk-preview-state", (event) => {
+      if (!isMounted) return;
+      setPreviewState(event.payload);
+      setActiveId(event.payload.activeId);
+      setHoverId(event.payload.hoverId);
+    }).then((unlisten) => {
+      if (isMounted) {
+        removeStateListener = unlisten;
+        void emitTo("main", "d2-desk-preview-window-ready");
+      } else {
+        unlisten();
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      removeStateListener?.();
+    };
+  }, []);
+
+  function zoomPreviewIn() {
+    setPreviewZoomMode("manual");
+    setPreviewZoom(increaseZoom);
+  }
+
+  function resetPreviewZoom() {
+    setPreviewZoomMode("auto");
+    setPreviewZoom(1);
+  }
+
+  function zoomPreviewOut() {
+    setPreviewZoomMode("manual");
+    setPreviewZoom(decreaseZoom);
+  }
+
+  return (
+    <main className="app-shell detached-preview-shell">
+      <PreviewPane
+        objects={previewState.objects}
+        renderedSvg={previewState.renderedSvg}
+        overlayViewBox={previewState.overlayViewBox}
+        zoom={previewZoom}
+        zoomMode={previewZoomMode}
+        activeId={activeId}
+        hoverId={hoverId}
+        onHover={setHoverId}
+        onSelect={setActiveId}
+        onZoomOut={zoomPreviewOut}
+        onResetZoom={resetPreviewZoom}
+        onZoomIn={zoomPreviewIn}
+        onZoomModeChange={setPreviewZoomMode}
+        onAutoZoomChange={setPreviewZoom}
+      />
+    </main>
+  );
+}
+
+function MainApp() {
   const initialSessionRef = useRef<InitialSession | null>(null);
   if (!initialSessionRef.current) {
     initialSessionRef.current = loadInitialSession();
@@ -190,6 +277,7 @@ function App() {
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewZoomMode, setPreviewZoomMode] = useState<PreviewZoomMode>("auto");
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
+  const [previewDetached, setPreviewDetached] = useState(false);
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decorationIds = useRef<string[]>([]);
@@ -207,6 +295,7 @@ function App() {
   const saveSourceRef = useRef<() => void>(() => undefined);
   const formatDocumentRef = useRef<() => void>(() => undefined);
   const togglePreviewFullscreenRef = useRef<() => void>(() => undefined);
+  const detachPreviewRef = useRef<() => void>(() => undefined);
   const closeActiveTabRef = useRef<() => void>(() => undefined);
   const quitApplicationRef = useRef<() => void>(() => undefined);
   const pendingEditorViewStateRestoreRef = useRef<number | null>(null);
@@ -228,6 +317,7 @@ function App() {
   const activeIdRef = useRef(activeId);
   const hoverIdRef = useRef(hoverId);
   const compileResultRef = useRef(compileResult);
+  const detachedPreviewStateRef = useRef<DetachedPreviewState>(emptyDetachedPreviewState);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0],
@@ -265,6 +355,21 @@ function App() {
   const exportRenderedSvg = useMemo(() => normalizeSvgSize(compileResult.svg), [compileResult.svg]);
 
   const overlayViewBox = useMemo(() => getDiagramViewBox(renderedSvg), [renderedSvg]);
+  const detachedPreviewState = useMemo<DetachedPreviewState>(
+    () => ({
+      objects: visibleCompileResult.objects,
+      renderedSvg,
+      overlayViewBox,
+      activeId,
+      hoverId,
+      fileName,
+    }),
+    [activeId, fileName, hoverId, overlayViewBox, renderedSvg, visibleCompileResult.objects],
+  );
+
+  useEffect(() => {
+    detachedPreviewStateRef.current = detachedPreviewState;
+  }, [detachedPreviewState]);
 
   const editorFontSize = Math.round(baseEditorFontSize * editorZoom);
   const editorLineHeight = Math.round(baseEditorLineHeight * editorZoom);
@@ -976,6 +1081,11 @@ function App() {
   }, []);
 
   const togglePreviewFullscreen = useCallback(() => {
+    if (previewDetached) {
+      setStatus("Preview is already detached");
+      return;
+    }
+
     setPreviewFullscreen((current) => {
       const next = !current;
       setStatus(next ? "Preview fullscreen enabled" : "Preview fullscreen disabled");
@@ -988,7 +1098,33 @@ function App() {
       });
       return next;
     });
+  }, [previewDetached]);
+
+  const sendDetachedPreviewState = useCallback(() => {
+    void emitTo("preview", "d2-desk-preview-state", detachedPreviewStateRef.current);
   }, []);
+
+  const toggleDetachedPreview = useCallback(async () => {
+    try {
+      if (previewDetached) {
+        await invoke("close_preview_window");
+        setPreviewDetached(false);
+        setStatus("Preview attached to main window");
+        window.requestAnimationFrame(() => editorRef.current?.focus());
+        return;
+      }
+
+      setPreviewFullscreen(false);
+      setPreviewDetached(true);
+      await invoke("open_preview_window");
+      sendDetachedPreviewState();
+      setStatus("Preview detached to separate window");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+    } catch (error) {
+      setPreviewDetached(false);
+      setStatus(String(error));
+    }
+  }, [previewDetached, sendDetachedPreviewState]);
 
   const goToSymbol = useCallback((symbolId: string) => {
     setSymbolPalette(null);
@@ -1424,6 +1560,9 @@ function App() {
       void formatDocument();
     };
     togglePreviewFullscreenRef.current = togglePreviewFullscreen;
+    detachPreviewRef.current = () => {
+      void toggleDetachedPreview();
+    };
     closeActiveTabRef.current = closeActiveTab;
     quitApplicationRef.current = () => {
       void quitApplication();
@@ -1437,6 +1576,7 @@ function App() {
     openWorkspaceFilePalette,
     quitApplication,
     saveSource,
+    toggleDetachedPreview,
     togglePreviewFullscreen,
   ]);
 
@@ -1463,6 +1603,23 @@ function App() {
     ).then((unlisten) => {
       unlisteners.push(unlisten);
     });
+    void listen("d2-desk-toggle-detached-preview", () => detachPreviewRef.current()).then(
+      (unlisten) => {
+        unlisteners.push(unlisten);
+      },
+    );
+    void listen("d2-desk-preview-window-ready", () => sendDetachedPreviewState()).then(
+      (unlisten) => {
+        unlisteners.push(unlisten);
+      },
+    );
+    void listen("d2-desk-preview-window-closed", () => {
+      setPreviewDetached(false);
+      setStatus("Preview attached to main window");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
     void listen("d2-desk-save", () => saveSourceRef.current()).then((unlisten) => {
       unlisteners.push(unlisten);
     });
@@ -1478,13 +1635,27 @@ function App() {
         unlisten();
       }
     };
-  }, []);
+  }, [sendDetachedPreviewState]);
+
+  useEffect(() => {
+    if (!previewDetached) return;
+    sendDetachedPreviewState();
+  }, [detachedPreviewState, previewDetached, sendDetachedPreviewState]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "F2" && !event.metaKey && !event.ctrlKey && !event.altKey) {
         event.preventDefault();
         void renameFocusedNode();
+        return;
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.altKey && event.shiftKey) {
+        if (event.key.toLowerCase() === "p" || event.code === "KeyP") {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          void toggleDetachedPreview();
+        }
         return;
       }
 
@@ -1568,6 +1739,7 @@ function App() {
     renameFocusedNode,
     resetFocusedView,
     saveSource,
+    toggleDetachedPreview,
     togglePreviewFullscreen,
     zoomFocusedPaneIn,
     zoomFocusedPaneOut,
@@ -2094,6 +2266,16 @@ function App() {
         run: togglePreviewFullscreen,
       },
       {
+        id: "view.toggleDetachedPreview",
+        title: previewDetached ? "Attach Preview to Main Window" : "Detach Preview to Window",
+        category: "View",
+        keywords: ["preview", "detach", "separate", "window", "attach"],
+        shortcut: "Command + Option + Shift + P",
+        icon: SquareArrowOutUpRight,
+        toolbarGroup: 2,
+        run: toggleDetachedPreview,
+      },
+      {
         id: "view.zoomOut",
         title: "Zoom Out",
         category: "View",
@@ -2153,8 +2335,10 @@ function App() {
       openSourceFile,
       openWithEditor,
       openWorkspaceFolder,
+      previewDetached,
       saveSource,
       source,
+      toggleDetachedPreview,
       togglePreviewFullscreen,
     ],
   );
@@ -2308,7 +2492,15 @@ function App() {
         onReorderTabs={moveTab}
       />
 
-      <section className={previewFullscreen ? "workspace preview-fullscreen" : "workspace"}>
+      <section
+        className={
+          previewDetached
+            ? "workspace preview-detached"
+            : previewFullscreen
+              ? "workspace preview-fullscreen"
+              : "workspace"
+        }
+      >
         <EditorPane
           activeTabId={activeTabId}
           fileName={fileName}
@@ -2324,31 +2516,33 @@ function App() {
           onZoomIn={zoomEditorIn}
         />
 
-        <PreviewPane
-          objects={visibleCompileResult.objects}
-          renderedSvg={renderedSvg}
-          overlayViewBox={overlayViewBox}
-          zoom={previewZoom}
-          zoomMode={previewZoomMode}
-          activeId={activeId}
-          hoverId={hoverId}
-          onHover={(id) => {
-            hoverIdRef.current = id;
-            setHoverId(id);
-          }}
-          onSelect={(id) => {
-            invalidateCursorLookup();
-            hoverIdRef.current = null;
-            setHoverId(null);
-            setActiveId(id);
-            highlightObject(id, true);
-          }}
-          onZoomOut={zoomPreviewOut}
-          onResetZoom={resetPreviewZoom}
-          onZoomIn={zoomPreviewIn}
-          onZoomModeChange={setPreviewZoomMode}
-          onAutoZoomChange={setAutoPreviewZoom}
-        />
+        {previewDetached ? null : (
+          <PreviewPane
+            objects={visibleCompileResult.objects}
+            renderedSvg={renderedSvg}
+            overlayViewBox={overlayViewBox}
+            zoom={previewZoom}
+            zoomMode={previewZoomMode}
+            activeId={activeId}
+            hoverId={hoverId}
+            onHover={(id) => {
+              hoverIdRef.current = id;
+              setHoverId(id);
+            }}
+            onSelect={(id) => {
+              invalidateCursorLookup();
+              hoverIdRef.current = null;
+              setHoverId(null);
+              setActiveId(id);
+              highlightObject(id, true);
+            }}
+            onZoomOut={zoomPreviewOut}
+            onResetZoom={resetPreviewZoom}
+            onZoomIn={zoomPreviewIn}
+            onZoomModeChange={setPreviewZoomMode}
+            onAutoZoomChange={setAutoPreviewZoom}
+          />
+        )}
       </section>
 
       <BottomPanel
@@ -2358,6 +2552,11 @@ function App() {
       />
     </main>
   );
+}
+
+function App() {
+  const [windowLabel] = useState(() => getCurrentWindow().label);
+  return windowLabel === "preview" ? <PreviewWindowApp /> : <MainApp />;
 }
 
 export default App;

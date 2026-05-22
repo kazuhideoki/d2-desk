@@ -620,6 +620,18 @@ select {
   display: none;
 }
 
+.workspace.preview-detached {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace.preview-detached .editor-pane {
+  border-right: 0;
+}
+
+.detached-preview-shell {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .editor-pane,
 .preview-pane {
   position: relative;

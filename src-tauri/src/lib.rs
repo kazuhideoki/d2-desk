@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
-use tauri::{Emitter, Manager, State};
+use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 struct ExitState {
     allow_exit: Mutex<bool>,
@@ -190,6 +190,31 @@ fn close_current_window(window: tauri::Window, exit_state: State<ExitState>) -> 
 }
 
 #[tauri::command]
+fn open_preview_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("preview") {
+        window.set_focus().map_err(|err| err.to_string())?;
+        return Ok(());
+    }
+
+    WebviewWindowBuilder::new(&app, "preview", WebviewUrl::App("index.html".into()))
+        .title("D2 Desk Preview")
+        .inner_size(960.0, 720.0)
+        .min_inner_size(480.0, 360.0)
+        .build()
+        .map_err(|err| err.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn close_preview_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("preview") {
+        window.close().map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn quit_application(app: tauri::AppHandle, exit_state: State<ExitState>) -> Result<(), String> {
     *exit_state
         .allow_exit
@@ -361,6 +386,10 @@ pub fn run() {
                 MenuItemBuilder::with_id("toggle-preview-fullscreen", "Toggle Preview Fullscreen")
                     .accelerator("Command+Alt+P")
                     .build(handle)?;
+            let toggle_detached_preview =
+                MenuItemBuilder::with_id("toggle-detached-preview", "Detach Preview to Window")
+                    .accelerator("Command+Alt+Shift+P")
+                    .build(handle)?;
             let save = MenuItemBuilder::with_id("save-file", "Save")
                 .accelerator("CmdOrCtrl+S")
                 .build(handle)?;
@@ -394,6 +423,7 @@ pub fn run() {
                 .build()?;
             let view_menu = SubmenuBuilder::new(handle, "View")
                 .item(&toggle_preview_fullscreen)
+                .item(&toggle_detached_preview)
                 .build()?;
             MenuBuilder::new(handle)
                 .item(&file_menu)
@@ -414,6 +444,8 @@ pub fn run() {
                 let _ = app.emit_to("main", "d2-desk-open-command-palette", ());
             } else if event.id() == "toggle-preview-fullscreen" {
                 let _ = app.emit_to("main", "d2-desk-toggle-preview-fullscreen", ());
+            } else if event.id() == "toggle-detached-preview" {
+                let _ = app.emit_to("main", "d2-desk-toggle-detached-preview", ());
             } else if event.id() == "save-file" {
                 let _ = app.emit_to("main", "d2-desk-save", ());
             } else if event.id() == "close-tab" {
@@ -422,6 +454,12 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "preview" {
+                    let app = window.app_handle();
+                    let _ = app.emit_to("main", "d2-desk-preview-window-closed", ());
+                    return;
+                }
+
                 let app = window.app_handle();
                 let exit_state = app.state::<ExitState>();
                 let allow_exit = exit_state
@@ -442,6 +480,8 @@ pub fn run() {
             list_workspace_files,
             open_file_with_editor,
             close_current_window,
+            open_preview_window,
+            close_preview_window,
             quit_application
         ])
         .build(tauri::generate_context!())
