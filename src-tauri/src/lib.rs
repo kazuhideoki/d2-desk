@@ -252,6 +252,17 @@ fn close_preview_window(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn close_focused_preview_window(app: &tauri::AppHandle) -> bool {
+    let Some(window) = app.get_webview_window("preview") else {
+        return false;
+    };
+    if window.is_focused().unwrap_or(false) {
+        let _ = window.close();
+        return true;
+    }
+    false
+}
+
 #[tauri::command]
 fn quit_application(app: tauri::AppHandle, exit_state: State<ExitState>) -> Result<(), String> {
     *exit_state
@@ -508,7 +519,9 @@ pub fn run() {
             } else if event.id() == "save-file" {
                 let _ = app.emit_to("main", "d2-desk-save", ());
             } else if event.id() == "close-tab" {
-                let _ = app.emit_to("main", "d2-desk-close-tab", ());
+                if !close_focused_preview_window(app) {
+                    let _ = app.emit_to("main", "d2-desk-close-tab", ());
+                }
             }
         })
         .on_window_event(|window, event| {
