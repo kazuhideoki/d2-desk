@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { useScrollSelectedOptionIntoView } from "../../shared/hooks/useScrollSelectedOptionIntoView";
 import type { WorkspaceFileEntry } from "../../types";
 import { moveSelectionIndex } from "../../utils";
 
@@ -29,6 +30,10 @@ export function WorkspaceFilePalette({
   onSelectedIndexChange,
   onOpenFile,
 }: WorkspaceFilePaletteProps) {
+  const selectedOptionRef = useScrollSelectedOptionIntoView<HTMLButtonElement>(
+    Math.min(state.selectedIndex, filteredFiles.length - 1),
+  );
+
   return (
     <div className="modal-backdrop palette-backdrop" role="presentation">
       <section
@@ -100,6 +105,7 @@ export function WorkspaceFilePalette({
               const isSelected = index === Math.min(state.selectedIndex, filteredFiles.length - 1);
               return (
                 <button
+                  ref={isSelected ? selectedOptionRef : null}
                   className={`file-palette-row${isSelected ? " selected" : ""}`}
                   key={file.path}
                   type="button"

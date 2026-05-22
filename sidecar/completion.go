@@ -39,6 +39,7 @@ var d2LabelKeyCompletionItems = completionItemsForLabels([]string{
 
 var d2VarsKeyCompletionItems = completionItemsForLabels([]string{
 	"d2-config",
+	"d2-legend",
 }, "vars property", "keyword")
 
 var d2ConfigKeyCompletionItems = completionItemsForLabels([]string{

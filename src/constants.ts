@@ -24,6 +24,7 @@ queue -> db: persist`;
 export const baseEditorFontSize = 14;
 export const baseEditorLineHeight = 20;
 export const minZoom = 0.1;
+export const minAutoZoom = 0.01;
 export const maxZoom = 10;
 export const zoomStep = 0.1;
 export const zoomStepAbove200 = 0.2;

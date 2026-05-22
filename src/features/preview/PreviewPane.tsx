@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ZoomIn, ZoomOut } from "lucide-react";
-import type { D2Object } from "../../types";
-import { connectionPath, fitWidthZoom } from "../../utils";
+import type { D2Board, D2Object } from "../../types";
+import { connectionPath, fitBoundsZoom, settleAutoZoom } from "../../utils";
 import { RepeatButton } from "../../shared/components/RepeatButton";
 
 export type PreviewZoomMode = "auto" | "manual";
 
 type PreviewPaneProps = {
   objects: D2Object[];
+  boards?: D2Board[];
+  selectedBoardPath?: string[];
   renderedSvg: string;
   overlayViewBox: string;
   zoom: number;
@@ -21,6 +23,7 @@ type PreviewPaneProps = {
   onZoomIn: () => void;
   onZoomModeChange: (zoomMode: PreviewZoomMode) => void;
   onAutoZoomChange: (zoom: number) => void;
+  onBoardPathChange?: (boardPath: string[]) => void;
 };
 
 type PreviewContentSize = {
@@ -50,10 +53,6 @@ function measureSvgSize(
 ) {
   if (!svg) return fallback;
 
-  const rect = svg.getBoundingClientRect();
-  const zoomScale = Number.isFinite(currentZoom) && currentZoom > 0 ? currentZoom : 1;
-  const layoutWidth = rect.width > 0 ? rect.width / zoomScale : null;
-  const layoutHeight = rect.height > 0 ? rect.height / zoomScale : null;
   const viewBox = svg.getAttribute("viewBox")?.split(/\s+/).map(Number) ?? [];
   const viewBoxWidth =
     viewBox.length === 4 && Number.isFinite(viewBox[2]) && viewBox[2] > 0 ? viewBox[2] : null;
@@ -61,22 +60,50 @@ function measureSvgSize(
     viewBox.length === 4 && Number.isFinite(viewBox[3]) && viewBox[3] > 0 ? viewBox[3] : null;
   const attrWidth = parsePositiveNumber(svg.getAttribute("width"));
   const attrHeight = parsePositiveNumber(svg.getAttribute("height"));
+  const rect = svg.getBoundingClientRect();
+  const zoomScale = Number.isFinite(currentZoom) && currentZoom > 0 ? currentZoom : 1;
+  const layoutWidth = rect.width > 0 ? rect.width / zoomScale : null;
+  const layoutHeight = rect.height > 0 ? rect.height / zoomScale : null;
+  const widthCandidates = [attrWidth, viewBoxWidth, layoutWidth].filter((value) => value !== null);
+  const heightCandidates = [attrHeight, viewBoxHeight, layoutHeight].filter((value) => value !== null);
 
   return {
-    width: layoutWidth ?? attrWidth ?? viewBoxWidth ?? fallback.width,
-    height: layoutHeight ?? attrHeight ?? viewBoxHeight ?? fallback.height,
+    width: widthCandidates.length > 0 ? Math.max(...widthCandidates) : fallback.width,
+    height: heightCandidates.length > 0 ? Math.max(...heightCandidates) : fallback.height,
   };
 }
 
-function contentWidth(viewport: HTMLElement) {
+function availableContentSize(viewport: HTMLElement): PreviewContentSize {
   const style = window.getComputedStyle(viewport);
   const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
   const paddingRight = Number.parseFloat(style.paddingRight) || 0;
-  return Math.max(0, viewport.clientWidth - paddingLeft - paddingRight);
+  const paddingTop = Number.parseFloat(style.paddingTop) || 0;
+  const paddingBottom = Number.parseFloat(style.paddingBottom) || 0;
+  const rectWidth = viewport.getBoundingClientRect().width;
+  const rectHeight = viewport.getBoundingClientRect().height;
+  const viewportWidth = rectWidth > 0 ? rectWidth : viewport.clientWidth;
+  const viewportHeight = rectHeight > 0 ? rectHeight : viewport.clientHeight;
+  return {
+    width: Math.max(0, viewportWidth - paddingLeft - paddingRight),
+    height: Math.max(0, viewportHeight - paddingTop - paddingBottom),
+  };
+}
+
+function boardPathKey(path: string[]) {
+  return JSON.stringify(path);
+}
+
+function boardOptionLabel(board: D2Board) {
+  if (board.kind === "root") return "Root";
+  const kindLabel = board.kind[0]?.toUpperCase() + board.kind.slice(1);
+  const indent = board.depth > 1 ? `${"  ".repeat(board.depth - 1)}` : "";
+  return `${indent}${kindLabel} / ${board.label || board.name}`;
 }
 
 export function PreviewPane({
   objects,
+  boards = [],
+  selectedBoardPath = [],
   renderedSvg,
   overlayViewBox,
   zoom,
@@ -90,6 +117,7 @@ export function PreviewPane({
   onZoomIn,
   onZoomModeChange,
   onAutoZoomChange,
+  onBoardPathChange,
 }: PreviewPaneProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const svgOutputRef = useRef<HTMLDivElement | null>(null);
@@ -109,7 +137,14 @@ export function PreviewPane({
     if (zoomMode === "auto") {
       viewport.scrollLeft = 0;
       viewport.scrollTop = 0;
-      onAutoZoomChange(fitWidthZoom(contentWidth(viewport), nextSize.width));
+      const availableSize = availableContentSize(viewport);
+      const nextZoom = fitBoundsZoom(
+        availableSize.width,
+        availableSize.height,
+        nextSize.width,
+        nextSize.height,
+      );
+      onAutoZoomChange(settleAutoZoom(zoom, nextZoom));
     }
   }, [fallbackSize, onAutoZoomChange, zoom, zoomMode]);
 
@@ -146,18 +181,36 @@ export function PreviewPane({
       <div className="pane-title">
         <span>Preview</span>
         <div className="pane-title-actions">
+          {boards.length > 1 ? (
+            <select
+              className="preview-board-select"
+              title="Preview board"
+              value={boardPathKey(selectedBoardPath)}
+              disabled={!onBoardPathChange}
+              onChange={(event) => {
+                const nextPath = JSON.parse(event.target.value) as string[];
+                onBoardPathChange?.(nextPath);
+              }}
+            >
+              {boards.map((board) => (
+                <option key={boardPathKey(board.path)} value={boardPathKey(board.path)}>
+                  {boardOptionLabel(board)}
+                </option>
+              ))}
+            </select>
+          ) : null}
           <div className="pane-zoom-controls" aria-label="Preview zoom controls">
             <RepeatButton className="pane-zoom-button" title="Zoom preview out" onPress={onZoomOut}>
               <ZoomOut size={13} />
             </RepeatButton>
-            <button className="pane-zoom-value" title="Fit preview width" onClick={onResetZoom}>
+            <button className="pane-zoom-value" title="Fit preview" onClick={onResetZoom}>
               {Math.round(zoom * 100)}%
             </button>
             <RepeatButton className="pane-zoom-button" title="Zoom preview in" onPress={onZoomIn}>
               <ZoomIn size={13} />
             </RepeatButton>
           </div>
-          <label className="preview-auto-zoom-toggle" title="Fit preview width automatically">
+          <label className="preview-auto-zoom-toggle" title="Fit preview automatically">
             <input
               type="checkbox"
               checked={zoomMode === "auto"}
@@ -173,58 +226,63 @@ export function PreviewPane({
         tabIndex={0}
         onPointerDown={(event) => event.currentTarget.focus()}
       >
-        <div className="preview-canvas" style={{ transform: `scale(${zoom})` }}>
-          <div
-            ref={svgOutputRef}
-            className="svg-output"
-            dangerouslySetInnerHTML={{ __html: renderedSvg }}
-          />
-          <svg className="overlay" viewBox={overlayViewBox}>
-            {objects.map((object) => {
-              const isFocused = object.id === (hoverId ?? activeId);
-              return object.kind === "shape" ? (
-                <g key={object.id}>
-                  {isFocused ? (
+        <div
+          className="preview-canvas"
+          style={{ width: contentSize.width * zoom, height: contentSize.height * zoom }}
+        >
+          <div className="preview-content" style={{ transform: `scale(${zoom})` }}>
+            <div
+              ref={svgOutputRef}
+              className="svg-output"
+              dangerouslySetInnerHTML={{ __html: renderedSvg }}
+            />
+            <svg className="overlay" viewBox={overlayViewBox}>
+              {objects.map((object) => {
+                const isFocused = object.id === (hoverId ?? activeId);
+                return object.kind === "shape" ? (
+                  <g key={object.id}>
+                    {isFocused ? (
+                      <rect
+                        className="focus-indicator"
+                        x={object.preview.x}
+                        y={object.preview.y}
+                        width={object.preview.width}
+                        height={object.preview.height}
+                        rx={8}
+                      />
+                    ) : null}
                     <rect
-                      className="focus-indicator"
+                      className="hit-target"
                       x={object.preview.x}
                       y={object.preview.y}
                       width={object.preview.width}
                       height={object.preview.height}
                       rx={8}
+                      onMouseEnter={() => onHover(object.id)}
+                      onMouseLeave={() => onHover(null)}
+                      onClick={() => onSelect(object.id)}
                     />
-                  ) : null}
-                  <rect
-                    className="hit-target"
-                    x={object.preview.x}
-                    y={object.preview.y}
-                    width={object.preview.width}
-                    height={object.preview.height}
-                    rx={8}
-                    onMouseEnter={() => onHover(object.id)}
-                    onMouseLeave={() => onHover(null)}
-                    onClick={() => onSelect(object.id)}
-                  />
-                </g>
-              ) : (
-                <g key={object.id}>
-                  {isFocused ? (
+                  </g>
+                ) : (
+                  <g key={object.id}>
+                    {isFocused ? (
+                      <path
+                        className="focus-indicator connection"
+                        d={connectionPath(object.preview)}
+                      />
+                    ) : null}
                     <path
-                      className="focus-indicator connection"
+                      className="hit-target"
                       d={connectionPath(object.preview)}
+                      onMouseEnter={() => onHover(object.id)}
+                      onMouseLeave={() => onHover(null)}
+                      onClick={() => onSelect(object.id)}
                     />
-                  ) : null}
-                  <path
-                    className="hit-target"
-                    d={connectionPath(object.preview)}
-                    onMouseEnter={() => onHover(object.id)}
-                    onMouseLeave={() => onHover(null)}
-                    onClick={() => onSelect(object.id)}
-                  />
-                </g>
-              );
-            })}
-          </svg>
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
         </div>
       </div>
     </section>

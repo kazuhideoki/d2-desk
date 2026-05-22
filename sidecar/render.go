@@ -25,10 +25,27 @@ import (
 func compile(params compileParams) (compileResult, error) {
 	compileContext := newCompileContext(params.WorkspaceRootPath, params.CurrentFilePath, params.OpenFiles)
 	previewPad := int64(16)
-	diagram, svg, err := render(params.Source, compileContext, &d2svg.RenderOpts{Pad: &previewPad})
+	renderOpts := &d2svg.RenderOpts{Pad: &previewPad}
+	rootDiagram, err := compileDiagram(params.Source, compileContext, renderOpts)
+	targetDiagram := rootDiagram
+	targetBoardPath := nonNilBoardPath(params.BoardPath)
+	if rootDiagram != nil && len(targetBoardPath) > 0 {
+		if selectedDiagram := rootDiagram.GetBoard(targetBoardPath); selectedDiagram != nil {
+			targetDiagram = selectedDiagram
+		} else {
+			targetBoardPath = []string{}
+		}
+	}
+	var svg []byte
+	var renderErr error
+	if targetDiagram != nil {
+		svg, renderErr = d2svg.Render(targetDiagram, renderOpts)
+	}
+	err = errors.Join(err, renderErr)
 	result := compileResult{
 		SVG:         string(svg),
-		Objects:     buildObjectMap(params.Source, diagram),
+		Objects:     buildObjectMap(params.Source, targetDiagram, targetBoardPath),
+		Boards:      buildBoardSummaries(rootDiagram),
 		Diagnostics: []diagnostic{},
 	}
 	if err != nil {
@@ -38,6 +55,46 @@ func compile(params compileParams) (compileResult, error) {
 		}
 	}
 	return result, nil
+}
+
+func buildBoardSummaries(diagram *d2target.Diagram) []boardSummary {
+	if diagram == nil {
+		return []boardSummary{{Path: []string{}, Kind: "root", Name: "root", Label: "Root", Depth: 0}}
+	}
+	boards := []boardSummary{{Path: []string{}, Kind: "root", Name: "root", Label: "Root", Depth: 0}}
+	appendChildBoards(&boards, diagram, nil, 0)
+	return boards
+}
+
+func appendChildBoards(boards *[]boardSummary, diagram *d2target.Diagram, parentPath []string, parentDepth int) {
+	for _, child := range diagram.Layers {
+		appendBoardSummary(boards, child, parentPath, "layers", parentDepth+1)
+	}
+	for _, child := range diagram.Scenarios {
+		appendBoardSummary(boards, child, parentPath, "scenarios", parentDepth+1)
+	}
+	for _, child := range diagram.Steps {
+		appendBoardSummary(boards, child, parentPath, "steps", parentDepth+1)
+	}
+}
+
+func appendBoardSummary(boards *[]boardSummary, diagram *d2target.Diagram, parentPath []string, kind string, depth int) {
+	if diagram == nil {
+		return
+	}
+	path := append(append([]string{}, parentPath...), kind, diagram.Name)
+	label := diagram.Name
+	if diagram.Root.Label != "" && diagram.Root.Label != diagram.Name {
+		label = diagram.Root.Label
+	}
+	*boards = append(*boards, boardSummary{
+		Path:  path,
+		Kind:  kind,
+		Name:  diagram.Name,
+		Label: label,
+		Depth: depth,
+	})
+	appendChildBoards(boards, diagram, path, depth)
 }
 
 func diagnosticsFromError(err error, source string) []diagnostic {
@@ -147,9 +204,18 @@ func utf16ColumnCount(text string) int {
 }
 
 func render(source string, compileContext compileContext, renderOpts *d2svg.RenderOpts) (*d2target.Diagram, []byte, error) {
+	diagram, err := compileDiagram(source, compileContext, renderOpts)
+	if diagram == nil {
+		return nil, nil, err
+	}
+	svg, renderErr := d2svg.Render(diagram, renderOpts)
+	return diagram, svg, errors.Join(err, renderErr)
+}
+
+func compileDiagram(source string, compileContext compileContext, renderOpts *d2svg.RenderOpts) (*d2target.Diagram, error) {
 	ruler, err := textmeasure.NewRuler()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if renderOpts == nil {
 		renderOpts = &d2svg.RenderOpts{}
@@ -174,10 +240,9 @@ func render(source string, compileContext compileContext, renderOpts *d2svg.Rend
 	ctx := log.WithDefault(context.Background())
 	diagram, _, err := d2lib.Compile(ctx, source, compileOpts, renderOpts)
 	if diagram == nil {
-		return nil, nil, err
+		return nil, err
 	}
-	svg, renderErr := d2svg.Render(diagram, renderOpts)
-	return diagram, svg, errors.Join(err, renderErr)
+	return diagram, err
 }
 
 func format(source string) (string, error) {
