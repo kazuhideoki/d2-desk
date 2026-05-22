@@ -2610,15 +2610,6 @@ function MainApp() {
   const paletteCommands = useMemo<AppCommand[]>(
     () => [
       {
-        id: "workspace.openFolder",
-        title: "Open Workspace Folder",
-        category: "Workspace",
-        keywords: ["folder", "directory", "project"],
-        run: () => {
-          void openWorkspaceFolder();
-        },
-      },
-      {
         id: "workspace.openActiveInFinder",
         title: "Open Current Workspace in Finder",
         category: "Workspace",
@@ -2626,6 +2617,15 @@ function MainApp() {
         enabled: Boolean(activeWorkspaceDirectoryPath(workspaceState)),
         run: () => {
           void openActiveWorkspaceInFinder();
+        },
+      },
+      {
+        id: "workspace.openFolder",
+        title: "Open Workspace Folder",
+        category: "Workspace",
+        keywords: ["add", "register", "switch", "folder", "directory", "project"],
+        run: () => {
+          void openWorkspaceFolder();
         },
       },
       {
