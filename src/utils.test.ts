@@ -12,6 +12,7 @@ import {
   moveSelectionIndex,
   normalizeSvgSize,
   routePath,
+  settleAutoZoom,
 } from "./utils";
 
 describe("utils", () => {
@@ -64,6 +65,13 @@ describe("utils", () => {
     expect(fitWidthZoom(10_000, 100)).toBe(10);
     expect(fitWidthZoom(500, 0)).toBe(1);
     expect(fitWidthZoom(Number.NaN, 1000)).toBe(1);
+  });
+
+  it("keeps auto zoom stable around one-step resize thresholds", () => {
+    expect(settleAutoZoom(1.23, 1.24)).toBe(1.23);
+    expect(settleAutoZoom(1.23, 1.25)).toBe(1.23);
+    expect(settleAutoZoom(1.23, 1.26)).toBe(1.26);
+    expect(settleAutoZoom(Number.NaN, 1.24)).toBe(1.24);
   });
 
   it("moves a selection index within available items", () => {

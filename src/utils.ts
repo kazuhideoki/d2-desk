@@ -44,6 +44,11 @@ export function fitWidthZoom(availableWidth: number, contentWidth: number) {
   return clampZoom(availableWidth / contentWidth);
 }
 
+export function settleAutoZoom(currentZoom: number, nextZoom: number) {
+  if (!Number.isFinite(currentZoom) || currentZoom <= 0) return nextZoom;
+  return Math.abs(nextZoom - currentZoom) <= 0.02 + Number.EPSILON ? currentZoom : nextZoom;
+}
+
 export function moveSelectionIndex(currentIndex: number, delta: number, itemCount: number) {
   return Math.min(Math.max(currentIndex + delta, 0), Math.max(itemCount - 1, 0));
 }
