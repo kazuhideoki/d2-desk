@@ -460,6 +460,10 @@ pub fn run() {
                 MenuItemBuilder::with_id("toggle-detached-preview", "Detach Preview to Window")
                     .accelerator("Command+Alt+Shift+P")
                     .build(handle)?;
+            let toggle_bottom_panel =
+                MenuItemBuilder::with_id("toggle-bottom-panel", "Toggle Bottom Panel")
+                    .accelerator("CmdOrCtrl+J")
+                    .build(handle)?;
             let save = MenuItemBuilder::with_id("save-file", "Save")
                 .accelerator("CmdOrCtrl+S")
                 .build(handle)?;
@@ -494,6 +498,7 @@ pub fn run() {
             let view_menu = SubmenuBuilder::new(handle, "View")
                 .item(&toggle_preview_fullscreen)
                 .item(&toggle_detached_preview)
+                .item(&toggle_bottom_panel)
                 .build()?;
             MenuBuilder::new(handle)
                 .item(&file_menu)
@@ -516,6 +521,8 @@ pub fn run() {
                 let _ = app.emit_to("main", "d2-desk-toggle-preview-fullscreen", ());
             } else if event.id() == "toggle-detached-preview" {
                 let _ = app.emit_to("main", "d2-desk-toggle-detached-preview", ());
+            } else if event.id() == "toggle-bottom-panel" {
+                let _ = app.emit_to("main", "d2-desk-toggle-bottom-panel", ());
             } else if event.id() == "save-file" {
                 let _ = app.emit_to("main", "d2-desk-save", ());
             } else if event.id() == "close-tab" {

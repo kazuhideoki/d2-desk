@@ -325,6 +325,7 @@ function MainApp() {
   const [previewZoomMode, setPreviewZoomMode] = useState<PreviewZoomMode>("auto");
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const [previewDetached, setPreviewDetached] = useState(false);
+  const [bottomPanelVisible, setBottomPanelVisible] = useState(true);
   const [perfDebugOptions, setPerfDebugOptions] =
     useState<PerfDebugOptions>(defaultPerfDebugOptions);
   const [selectedBoardPath, setSelectedBoardPath] = useState<string[]>([]);
@@ -349,6 +350,7 @@ function MainApp() {
   const formatDocumentRef = useRef<() => void>(() => undefined);
   const togglePreviewFullscreenRef = useRef<() => void>(() => undefined);
   const detachPreviewRef = useRef<() => void>(() => undefined);
+  const toggleBottomPanelRef = useRef<() => void>(() => undefined);
   const closeActiveTabRef = useRef<() => void>(() => undefined);
   const quitApplicationRef = useRef<() => void>(() => undefined);
   const pendingEditorViewStateRestoreRef = useRef<number | null>(null);
@@ -1220,6 +1222,13 @@ function MainApp() {
     window.requestAnimationFrame(() => editorRef.current?.focus());
   }, []);
 
+  const toggleBottomPanel = useCallback(() => {
+    setBottomPanelVisible((visible) => {
+      setStatus(visible ? "Bottom panel hidden" : "Bottom panel shown");
+      return !visible;
+    });
+  }, []);
+
   const togglePreviewFullscreen = useCallback(() => {
     if (previewDetached) {
       setStatus("Preview is already detached");
@@ -1827,6 +1836,7 @@ function MainApp() {
     detachPreviewRef.current = () => {
       void toggleDetachedPreview();
     };
+    toggleBottomPanelRef.current = toggleBottomPanel;
     closeActiveTabRef.current = closeActiveTab;
     quitApplicationRef.current = () => {
       void quitApplication();
@@ -1840,6 +1850,7 @@ function MainApp() {
     openWorkspaceFilePalette,
     quitApplication,
     saveSource,
+    toggleBottomPanel,
     toggleDetachedPreview,
     togglePreviewFullscreen,
   ]);
@@ -1868,6 +1879,11 @@ function MainApp() {
       unlisteners.push(unlisten);
     });
     void listen("d2-desk-toggle-detached-preview", () => detachPreviewRef.current()).then(
+      (unlisten) => {
+        unlisteners.push(unlisten);
+      },
+    );
+    void listen("d2-desk-toggle-bottom-panel", () => toggleBottomPanelRef.current()).then(
       (unlisten) => {
         unlisteners.push(unlisten);
       },
@@ -1966,6 +1982,10 @@ function MainApp() {
       } else if (key === "s") {
         event.preventDefault();
         void saveSource();
+      } else if (!event.shiftKey && key === "j") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        toggleBottomPanel();
       } else if (event.shiftKey && key === "i") {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -2008,6 +2028,7 @@ function MainApp() {
     renameFocusedNode,
     resetFocusedView,
     saveSource,
+    toggleBottomPanel,
     toggleDetachedPreview,
     togglePreviewFullscreen,
     zoomFocusedPaneIn,
@@ -2052,6 +2073,9 @@ function MainApp() {
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       saveSourceRef.current();
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ, () => {
+      toggleBottomPanelRef.current();
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyI, () => {
       formatDocumentRef.current();
@@ -2607,6 +2631,14 @@ function MainApp() {
     () => [
       ...topbarCommands,
       {
+        id: "view.toggleBottomPanel",
+        title: bottomPanelVisible ? "Hide Bottom Panel" : "Show Bottom Panel",
+        category: "View",
+        keywords: ["bottom", "panel", "status", "diagnostics", "debug"],
+        shortcut: "Command/Ctrl + J",
+        run: toggleBottomPanel,
+      },
+      {
         id: "editor.switchEdgeDirection",
         title: "Switch Edge Notation",
         category: "Edit",
@@ -2636,9 +2668,11 @@ function MainApp() {
     ],
     [
       copyFocusedTabAbsolutePath,
+      bottomPanelVisible,
       currentFilePath,
       renameFocusedFile,
       switchFocusedEdgeDirection,
+      toggleBottomPanel,
       topbarCommands,
     ],
   );
@@ -2653,7 +2687,7 @@ function MainApp() {
   }, []);
 
   return (
-    <main className="app-shell">
+    <main className={bottomPanelVisible ? "app-shell" : "app-shell bottom-panel-hidden"}>
       <Toolbar
         workspaces={workspaceState.workspaces}
         activeWorkspaceId={workspaceState.activeWorkspaceId}
@@ -2861,13 +2895,15 @@ function MainApp() {
         )}
       </section>
 
-      <BottomPanel
-        status={status}
-        activeObject={activeObject}
-        diagnostics={compileResult.diagnostics}
-        perfDebugOptions={perfDebugOptions}
-        onPerfDebugOptionChange={setPerfDebugOption}
-      />
+      {bottomPanelVisible ? (
+        <BottomPanel
+          status={status}
+          activeObject={activeObject}
+          diagnostics={compileResult.diagnostics}
+          perfDebugOptions={perfDebugOptions}
+          onPerfDebugOptionChange={setPerfDebugOption}
+        />
+      ) : null}
     </main>
   );
 }
