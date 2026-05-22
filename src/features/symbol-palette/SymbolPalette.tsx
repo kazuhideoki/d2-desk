@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { useScrollSelectedOptionIntoView } from "../../shared/hooks/useScrollSelectedOptionIntoView";
 import { moveSelectionIndex } from "../../utils";
 import type { D2SymbolEntry } from "./symbolSearch";
 
@@ -28,6 +29,10 @@ export function SymbolPalette({
   onSelectedIndexChange,
   onGoToSymbol,
 }: SymbolPaletteProps) {
+  const selectedOptionRef = useScrollSelectedOptionIntoView<HTMLButtonElement>(
+    Math.min(state.selectedIndex, filteredSymbols.length - 1),
+  );
+
   return (
     <div className="modal-backdrop palette-backdrop" role="presentation">
       <section
@@ -99,6 +104,7 @@ export function SymbolPalette({
               const isSelected = index === Math.min(state.selectedIndex, filteredSymbols.length - 1);
               return (
                 <button
+                  ref={isSelected ? selectedOptionRef : null}
                   className={`file-palette-row symbol-palette-row${
                     isSelected ? " selected" : ""
                   }`}

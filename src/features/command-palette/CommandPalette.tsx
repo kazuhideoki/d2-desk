@@ -1,6 +1,7 @@
 import { useMemo, useRef } from "react";
 import type { AppCommand } from "../../shared/commands";
 import { isCommandEnabled } from "../../shared/commands";
+import { useScrollSelectedOptionIntoView } from "../../shared/hooks/useScrollSelectedOptionIntoView";
 import { filterCommands } from "./commands";
 import { moveSelectionIndex } from "../../utils";
 
@@ -26,6 +27,7 @@ export function CommandPalette({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const filteredCommands = useMemo(() => filterCommands(commands, query), [commands, query]);
   const cappedSelectedIndex = Math.min(selectedIndex, filteredCommands.length - 1);
+  const selectedOptionRef = useScrollSelectedOptionIntoView<HTMLButtonElement>(cappedSelectedIndex);
 
   return (
     <div className="modal-backdrop palette-backdrop" role="presentation">
@@ -102,6 +104,7 @@ export function CommandPalette({
               const isEnabled = isCommandEnabled(command);
               return (
                 <button
+                  ref={isSelected ? selectedOptionRef : null}
                   className={`file-palette-row command-palette-row${
                     isSelected ? " selected" : ""
                   }`}
