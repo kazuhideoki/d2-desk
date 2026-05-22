@@ -153,6 +153,7 @@ type InternalSuggestController = {
 
 const nodeRenamePattern = /^[A-Za-z0-9_-]+$/;
 const tabPersistenceDelayMs = 400;
+const previewCompileDelayMs = 600;
 
 function lastD2IdSegment(id: string) {
   const parts = id.split(".");
@@ -804,10 +805,10 @@ function App() {
     }
     const requestId = activeCompileRequestId.current + 1;
     activeCompileRequestId.current = requestId;
-    setStatus("Compiling");
     const timeout = window.setTimeout(() => {
+      setStatus("Compiling");
       void compile(source, activeTabId, requestId);
-    }, 220);
+    }, previewCompileDelayMs);
     return () => window.clearTimeout(timeout);
   }, [activeTabId, clearSuggestPreview, compile, isEditingIconValueCompletion, source]);
 
