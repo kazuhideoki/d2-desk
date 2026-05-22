@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { loadInitialSession, type InitialSession } from "./app/initialSession";
 import { CommandPalette } from "./features/command-palette/CommandPalette";
+import { createWorkspaceSelectionCommands } from "./features/command-palette/commands";
 import { isCommandEnabled, type AppCommand } from "./shared/commands";
 import { EditorPane } from "./features/editor/EditorPane";
 import { connectionIdAtPosition } from "./features/editor/sourceRanges";
@@ -122,6 +123,7 @@ type EditorCursorSnapshot = {
 };
 
 type CommandPaletteState = {
+  mode: "commands" | "workspaceSelection";
   query: string;
   selectedIndex: number;
 };
@@ -1245,6 +1247,7 @@ function MainApp() {
     setFilePalette(null);
     setSymbolPalette(null);
     setCommandPalette({
+      mode: "commands",
       query: "",
       selectedIndex: 0,
     });
@@ -2729,6 +2732,21 @@ function MainApp() {
     () => [
       ...topbarCommands,
       {
+        id: "workspace.select",
+        title: "Select Workspace",
+        category: "Workspace",
+        keywords: ["switch", "change", "project", "folder"],
+        enabled:
+          workspaceState.workspaces.length > 0 || workspaceState.activeWorkspaceId !== null,
+        run: () => {
+          setCommandPalette({
+            mode: "workspaceSelection",
+            query: "",
+            selectedIndex: 0,
+          });
+        },
+      },
+      {
         id: "view.toggleBottomPanel",
         title: bottomPanelVisible ? "Hide Bottom Panel" : "Show Bottom Panel",
         category: "View",
@@ -2772,8 +2790,29 @@ function MainApp() {
       switchFocusedEdgeDirection,
       toggleBottomPanel,
       topbarCommands,
+      workspaceState.activeWorkspaceId,
+      workspaceState.workspaces,
     ],
   );
+  const workspaceSelectionCommands = useMemo<AppCommand[]>(
+    () =>
+      createWorkspaceSelectionCommands(
+        workspaceState.workspaces,
+        workspaceState.activeWorkspaceId,
+        (workspaceId) => {
+          void switchWorkspace(workspaceId);
+        },
+      ),
+    [switchWorkspace, workspaceState.activeWorkspaceId, workspaceState.workspaces],
+  );
+  const activePaletteCommands =
+    commandPalette?.mode === "workspaceSelection"
+      ? workspaceSelectionCommands
+      : paletteCommands;
+  const commandPaletteTitle =
+    commandPalette?.mode === "workspaceSelection" ? "Select Workspace" : "Command Palette";
+  const commandPalettePlaceholder =
+    commandPalette?.mode === "workspaceSelection" ? "Search workspaces" : "Search commands";
   const runAppCommand = useCallback((command: AppCommand) => {
     if (!isCommandEnabled(command)) return;
     setCommandPalette(null);
@@ -2807,7 +2846,9 @@ function MainApp() {
 
       {commandPalette ? (
         <CommandPalette
-          commands={paletteCommands}
+          commands={activePaletteCommands}
+          title={commandPaletteTitle}
+          placeholder={commandPalettePlaceholder}
           query={commandPalette.query}
           selectedIndex={commandPalette.selectedIndex}
           onQueryChange={(query) =>
