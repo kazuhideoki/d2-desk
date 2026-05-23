@@ -7,7 +7,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import { loadInitialSession, type InitialSession } from "./app/initialSession";
 import { CommandPalette } from "./features/command-palette/CommandPalette";
-import { createWorkspaceSelectionCommands } from "./features/command-palette/commands";
+import {
+  createPreviewAutoZoomCommand,
+  createWorkspaceSelectionCommands,
+} from "./features/command-palette/commands";
 import { isCommandEnabled, type AppCommand } from "./shared/commands";
 import {
   dispatchGlobalShortcut,
@@ -2784,6 +2787,7 @@ function MainApp() {
         shortcut: "Command + Option + Shift + P",
         run: toggleDetachedPreview,
       },
+      createPreviewAutoZoomCommand(previewZoomMode, setPreviewZoomMode),
       {
         id: "view.toggleBottomPanel",
         title: bottomPanelVisible ? "Hide Bottom Panel" : "Show Bottom Panel",
@@ -2871,6 +2875,7 @@ function MainApp() {
       openWorkspaceFilePalette,
       openWorkspaceFolder,
       previewDetached,
+      previewZoomMode,
       quitApplication,
       renameFocusedNode,
       renameFocusedFile,

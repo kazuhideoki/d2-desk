@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { type AppCommand, isCommandEnabled } from "../../shared/commands";
 import type { Workspace } from "../../types";
-import { createWorkspaceSelectionCommands, filterCommands } from "./commands";
+import {
+  createPreviewAutoZoomCommand,
+  createWorkspaceSelectionCommands,
+  filterCommands,
+} from "./commands";
 
 const noop = () => undefined;
 
@@ -83,6 +87,30 @@ describe("commands", () => {
 
     workspaceCommands[2].run();
     expect(selectedWorkspaceIds).toEqual(["two"]);
+  });
+
+  it("builds the preview auto zoom toggle command", () => {
+    const zoomModes: string[] = [];
+    const enableAutoCommand = createPreviewAutoZoomCommand("manual", (zoomMode) => {
+      zoomModes.push(zoomMode);
+    });
+    const disableAutoCommand = createPreviewAutoZoomCommand("auto", (zoomMode) => {
+      zoomModes.push(zoomMode);
+    });
+
+    expect(enableAutoCommand).toMatchObject({
+      id: "view.togglePreviewAutoZoom",
+      title: "Enable Preview Auto Zoom",
+      category: "View",
+    });
+    expect(disableAutoCommand.title).toBe("Disable Preview Auto Zoom");
+    expect(filterCommands([enableAutoCommand], "preview auto").map((command) => command.id)).toEqual(
+      ["view.togglePreviewAutoZoom"],
+    );
+
+    enableAutoCommand.run();
+    disableAutoCommand.run();
+    expect(zoomModes).toEqual(["auto", "manual"]);
   });
 });
 

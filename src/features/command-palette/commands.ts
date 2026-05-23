@@ -1,6 +1,8 @@
 import type { AppCommand } from "../../shared/commands";
 import type { Workspace } from "../../types";
 
+type PreviewZoomMode = "auto" | "manual";
+
 function normalizeCommandQuery(value: string) {
   return value.trim().toLowerCase();
 }
@@ -84,4 +86,20 @@ export function createWorkspaceSelectionCommands(
       run: () => onSelectWorkspace(workspace.id),
     })),
   ];
+}
+
+export function createPreviewAutoZoomCommand(
+  previewZoomMode: PreviewZoomMode,
+  onZoomModeChange: (zoomMode: PreviewZoomMode) => void,
+): AppCommand {
+  const nextZoomMode = previewZoomMode === "auto" ? "manual" : "auto";
+
+  return {
+    id: "view.togglePreviewAutoZoom",
+    title:
+      previewZoomMode === "auto" ? "Disable Preview Auto Zoom" : "Enable Preview Auto Zoom",
+    category: "View",
+    keywords: ["preview", "auto", "fit", "scale", "zoom"],
+    run: () => onZoomModeChange(nextZoomMode),
+  };
 }
