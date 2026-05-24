@@ -846,6 +846,9 @@ func TestSelectionRangesReturnNestedSyntaxRanges(t *testing.T) {
 	if !hasRange(ranges, 2, 3, 18) {
 		t.Fatalf("expected node statement range, got %#v", ranges)
 	}
+	if !hasExactRange(ranges, sourceRange{File: "main.d2", StartLine: 2, StartColumn: 1, EndLine: 4, EndColumn: 1}) {
+		t.Fatalf("expected parent block inner range, got %#v", ranges)
+	}
 	if !hasExactRange(ranges, sourceRange{File: "main.d2", StartLine: 1, StartColumn: 1, EndLine: 4, EndColumn: 2}) {
 		t.Fatalf("expected parent block range, got %#v", ranges)
 	}
@@ -869,8 +872,39 @@ func TestSelectionRangesIncludeConnectionStatement(t *testing.T) {
 	if !hasRange(ranges, 2, 3, 19) {
 		t.Fatalf("expected connection statement range, got %#v", ranges)
 	}
+	if !hasExactRange(ranges, sourceRange{File: "main.d2", StartLine: 2, StartColumn: 1, EndLine: 3, EndColumn: 1}) {
+		t.Fatalf("expected parent block inner range, got %#v", ranges)
+	}
 	if !hasExactRange(ranges, sourceRange{File: "main.d2", StartLine: 1, StartColumn: 1, EndLine: 3, EndColumn: 2}) {
 		t.Fatalf("expected parent block range, got %#v", ranges)
+	}
+}
+
+func TestSelectionRangesPreferPathSegmentThenStatementAndContainers(t *testing.T) {
+	source := `container: {
+  api: {
+    style.opacity: 0.25
+  }
+}
+`
+	ranges := selectionRangesAt(source, 3, 12)
+	expected := []sourceRange{
+		{File: "main.d2", StartLine: 3, StartColumn: 11, EndLine: 3, EndColumn: 18},
+		{File: "main.d2", StartLine: 3, StartColumn: 5, EndLine: 3, EndColumn: 18},
+		{File: "main.d2", StartLine: 3, StartColumn: 5, EndLine: 3, EndColumn: 24},
+		{File: "main.d2", StartLine: 3, StartColumn: 1, EndLine: 4, EndColumn: 3},
+		{File: "main.d2", StartLine: 2, StartColumn: 3, EndLine: 4, EndColumn: 4},
+		{File: "main.d2", StartLine: 2, StartColumn: 1, EndLine: 5, EndColumn: 1},
+		{File: "main.d2", StartLine: 1, StartColumn: 1, EndLine: 5, EndColumn: 2},
+		{File: "main.d2", StartLine: 1, StartColumn: 1, EndLine: 6, EndColumn: 1},
+	}
+	if len(ranges) < len(expected) {
+		t.Fatalf("expected at least %d selection ranges, got %#v", len(expected), ranges)
+	}
+	for i, want := range expected {
+		if !equalSourceRange(ranges[i], want) {
+			t.Fatalf("unexpected range %d: got %#v want %#v; all ranges %#v", i, ranges[i], want, ranges)
+		}
 	}
 }
 
