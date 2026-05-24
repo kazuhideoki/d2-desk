@@ -114,6 +114,16 @@ describe("shortcut dispatcher", () => {
       { stopImmediatePropagation: true },
     );
     expectDispatch(
+      keyEvent({ key: "ArrowUp", ctrlKey: true, altKey: true, shiftKey: true }),
+      "view.previousComposition",
+      { stopImmediatePropagation: true },
+    );
+    expectDispatch(
+      keyEvent({ key: "ArrowDown", ctrlKey: true, altKey: true, shiftKey: true }),
+      "view.nextComposition",
+      { stopImmediatePropagation: true },
+    );
+    expectDispatch(
       keyEvent({ key: "ArrowLeft", ctrlKey: true, altKey: true }),
       "tabs.focusPrevious",
       { stopImmediatePropagation: true },
@@ -123,16 +133,8 @@ describe("shortcut dispatcher", () => {
       "tabs.focusNext",
       { stopImmediatePropagation: true },
     );
-    expectDispatch(
-      keyEvent({ key: "ArrowUp", ctrlKey: true, altKey: true }),
-      "view.previousComposition",
-      { stopImmediatePropagation: true },
-    );
-    expectDispatch(
-      keyEvent({ key: "ArrowDown", ctrlKey: true, altKey: true }),
-      "view.nextComposition",
-      { stopImmediatePropagation: true },
-    );
+    expect(actionOf(keyEvent({ key: "ArrowUp", ctrlKey: true, altKey: true }))).toBeNull();
+    expect(actionOf(keyEvent({ key: "ArrowDown", ctrlKey: true, altKey: true }))).toBeNull();
   });
 
   it("ignores keys outside the existing shortcut shapes", () => {

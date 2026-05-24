@@ -55,6 +55,12 @@ export function dispatchGlobalShortcut(event: ShortcutKeyEvent): ShortcutDispatc
     if (event.key.toLowerCase() === "p" || event.code === "KeyP") {
       return dispatch("view.toggleDetachedPreview", { stopImmediatePropagation: true });
     }
+    if (event.key === "ArrowUp") {
+      return dispatch("view.previousComposition", { stopImmediatePropagation: true });
+    }
+    if (event.key === "ArrowDown") {
+      return dispatch("view.nextComposition", { stopImmediatePropagation: true });
+    }
     return null;
   }
 
@@ -71,12 +77,6 @@ export function dispatchGlobalShortcut(event: ShortcutKeyEvent): ShortcutDispatc
     }
     if (event.key === "ArrowRight") {
       return dispatch("tabs.focusNext", { stopImmediatePropagation: true });
-    }
-    if (event.key === "ArrowUp") {
-      return dispatch("view.previousComposition", { stopImmediatePropagation: true });
-    }
-    if (event.key === "ArrowDown") {
-      return dispatch("view.nextComposition", { stopImmediatePropagation: true });
     }
     return null;
   }
