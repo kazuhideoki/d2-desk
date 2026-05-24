@@ -1,12 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import type * as Monaco from "monaco-editor";
-import type { D2CompletionItem, D2SemanticToken, SourceRange, WorkspaceFileEntry } from "./types";
+import type {
+  D2CompletionItem,
+  D2SelectionRangeResult,
+  D2SemanticToken,
+  SourceRange,
+  WorkspaceFileEntry,
+} from "./types";
 
 const d2ValueCompletionPattern =
   /(?:^|[{\s;])(?:[\w"'-]+(?:\.[\w-]+)*\.)?[\w-]+(?:\.[\w-]+)*\s*:\s*([\w-]*)$/;
 
 let didRegisterD2Completions = false;
 let didRegisterD2SemanticTokens = false;
+let didRegisterD2SelectionRanges = false;
 const d2CompletionTriggerCharacters = [
   ":",
   " ",
@@ -117,6 +124,36 @@ export function configureD2Language(monaco: typeof Monaco) {
         return promise;
       },
       releaseDocumentSemanticTokens() {},
+    });
+  }
+  if (!didRegisterD2SelectionRanges) {
+    didRegisterD2SelectionRanges = true;
+    monaco.languages.registerSelectionRangeProvider("d2", {
+      async provideSelectionRanges(model, positions, token) {
+        const versionId = model.getVersionId();
+        try {
+          const results = await invoke<D2SelectionRangeResult[]>("sidecar_call", {
+            method: "selectionRanges",
+            params: {
+              source: model.getValue(),
+              positions: positions.map((position) => ({
+                line: position.lineNumber,
+                column: position.column,
+              })),
+            },
+          });
+          if (token.isCancellationRequested || model.isDisposed() || model.getVersionId() !== versionId) {
+            return positions.map(() => []);
+          }
+          return results.map((result) =>
+            result.ranges.map((range) => ({
+              range: model.validateRange(sourceRangeToMonacoRange(range)),
+            })),
+          );
+        } catch {
+          return positions.map(() => []);
+        }
+      },
     });
   }
   if (!didRegisterD2Completions) {
@@ -279,6 +316,15 @@ export function encodeD2SemanticTokens(tokens: D2SemanticToken[]) {
 
 function compareSourceRanges(a: SourceRange, b: SourceRange) {
   return a.startLine - b.startLine || a.startColumn - b.startColumn || a.endLine - b.endLine || a.endColumn - b.endColumn;
+}
+
+export function sourceRangeToMonacoRange(range: SourceRange): Monaco.IRange {
+  return {
+    startLineNumber: range.startLine,
+    startColumn: range.startColumn,
+    endLineNumber: range.endLine,
+    endColumn: range.endColumn,
+  };
 }
 
 export function isD2LineCommentPosition(lineContent: string, column: number) {

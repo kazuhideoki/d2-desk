@@ -17,7 +17,13 @@ import {
   type ShortcutAction,
 } from "./features/shortcuts/shortcutDispatcher";
 import { EditorPane } from "./features/editor/EditorPane";
-import { connectionIdAtPosition } from "./features/editor/sourceRanges";
+import {
+  connectionIdAtPosition,
+  nextLargerSourceRange,
+  nextSmallerSourceRange,
+  sortSourceRangesSmallestFirst,
+  sourceRangeEquals,
+} from "./features/editor/sourceRanges";
 import { findSwitchableEdge, switchEdgeDirectionInSource } from "./features/editor/switchEdge";
 import {
   completionPreviewSource,
@@ -60,6 +66,7 @@ import {
   getD2CompletionContext,
   isD2LineCommentPosition,
   setD2ImportCompletionContextProvider,
+  sourceRangeToMonacoRange,
 } from "./d2Language";
 import {
   createTab,
@@ -76,12 +83,14 @@ import { Toolbar } from "./features/toolbar/Toolbar";
 import type {
   CompileResult,
   D2CompletionItem,
+  D2SelectionRangeResult,
   D2Tab,
   ExportResult,
   OpenedD2File,
   PerfDebugOptions,
   RenamedD2File,
   SavedD2File,
+  SourceRange,
   StoredWorkspaces,
   WorkspaceFileEntry,
 } from "./types";
@@ -120,6 +129,12 @@ type EditorCursorSnapshot = {
   viewState: Monaco.editor.ICodeEditorViewState | null;
   selections: Monaco.ISelection[] | null;
   position: Monaco.IPosition | null;
+};
+
+type SyntaxSelectionState = {
+  modelVersionId: number;
+  ranges: SourceRange[];
+  index: number;
 };
 
 type CommandPaletteState = {
@@ -216,6 +231,18 @@ function hasBoardPath(boards: CompileResult["boards"] | undefined, path: string[
 
 function compileResultKey(source: string, boardPath: string[]) {
   return `${boardPathKey(boardPath)}\n${source}`;
+}
+
+function monacoSelectionToSourceRange(selection: Monaco.Selection): SourceRange {
+  const start = selection.getStartPosition();
+  const end = selection.getEndPosition();
+  return {
+    file: "main.d2",
+    startLine: start.lineNumber,
+    startColumn: start.column,
+    endLine: end.lineNumber,
+    endColumn: end.column,
+  };
 }
 
 const emptyDetachedPreviewState: DetachedPreviewState = {
@@ -360,6 +387,8 @@ function MainApp() {
   const openCommandPaletteRef = useRef<() => void>(() => undefined);
   const saveSourceRef = useRef<() => void>(() => undefined);
   const formatDocumentRef = useRef<() => void>(() => undefined);
+  const selectLargerSyntaxNodeRef = useRef<() => void>(() => undefined);
+  const selectSmallerSyntaxNodeRef = useRef<() => void>(() => undefined);
   const togglePreviewViewModeRef = useRef<() => void>(() => undefined);
   const detachPreviewRef = useRef<() => void>(() => undefined);
   const toggleBottomPanelRef = useRef<() => void>(() => undefined);
@@ -381,6 +410,7 @@ function MainApp() {
   const hoverIdRef = useRef(hoverId);
   const compileResultRef = useRef(compileResult);
   const compileResultSourceRef = useRef<string | null>(null);
+  const syntaxSelectionStateRef = useRef<SyntaxSelectionState | null>(null);
   const selectedBoardPathRef = useRef(selectedBoardPath);
   const detachedPreviewStateRef = useRef<DetachedPreviewState>(emptyDetachedPreviewState);
   const perfDebugOptionsRef = useRef(perfDebugOptions);
@@ -1538,6 +1568,79 @@ function MainApp() {
     }
   }, [source, updateActiveTab]);
 
+  const selectSyntaxNode = useCallback(async (direction: "larger" | "smaller") => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    const model = editor?.getModel() ?? null;
+    const selection = editor?.getSelection() ?? null;
+    if (!editor || !monaco || !model || !selection) {
+      return;
+    }
+
+    const currentRange = monacoSelectionToSourceRange(selection);
+    const currentState = syntaxSelectionStateRef.current;
+    const currentStateRange =
+      currentState &&
+      currentState.modelVersionId === model.getVersionId() &&
+      currentState.ranges[currentState.index]
+        ? currentState.ranges[currentState.index]
+        : null;
+    const stateMatchesSelection =
+      currentStateRange !== null && sourceRangeEquals(currentStateRange, currentRange);
+
+    let ranges = stateMatchesSelection ? currentState!.ranges : [];
+    let targetIndex = -1;
+    if (stateMatchesSelection) {
+      targetIndex = direction === "larger" ? currentState!.index + 1 : currentState!.index - 1;
+    } else {
+      try {
+        const position = selection.getPosition();
+        const results = await invoke<D2SelectionRangeResult[]>("sidecar_call", {
+          method: "selectionRanges",
+          params: {
+            source: model.getValue(),
+            positions: [{ line: position.lineNumber, column: position.column }],
+          },
+        });
+        if (model.isDisposed() || editor.getModel() !== model) {
+          return;
+        }
+        ranges = sortSourceRangesSmallestFirst(results[0]?.ranges ?? []);
+      } catch {
+        ranges = [];
+      }
+
+      const targetRange =
+        direction === "larger"
+          ? nextLargerSourceRange(ranges, currentRange)
+          : nextSmallerSourceRange(ranges, currentRange);
+      targetIndex = targetRange ? ranges.findIndex((range) => sourceRangeEquals(range, targetRange)) : -1;
+    }
+
+    const targetRange = ranges[targetIndex] ?? null;
+    if (!targetRange) {
+      editor.focus();
+      return;
+    }
+
+    const monacoRange = sourceRangeToMonacoRange(targetRange);
+    editor.setSelection(
+      new monaco.Selection(
+        monacoRange.startLineNumber,
+        monacoRange.startColumn,
+        monacoRange.endLineNumber,
+        monacoRange.endColumn,
+      ),
+    );
+    editor.revealRangeInCenterIfOutsideViewport(monacoRange);
+    syntaxSelectionStateRef.current = {
+      modelVersionId: model.getVersionId(),
+      ranges,
+      index: targetIndex,
+    };
+    editor.focus();
+  }, []);
+
   const renameFocusedNode = useCallback(async () => {
     const editor = editorRef.current;
     const currentSource = latestCompileInputsRef.current.source;
@@ -1955,6 +2058,12 @@ function MainApp() {
     formatDocumentRef.current = () => {
       void formatDocument();
     };
+    selectLargerSyntaxNodeRef.current = () => {
+      void selectSyntaxNode("larger");
+    };
+    selectSmallerSyntaxNodeRef.current = () => {
+      void selectSyntaxNode("smaller");
+    };
     togglePreviewViewModeRef.current = () => {
       void togglePreviewViewMode();
     };
@@ -1975,6 +2084,7 @@ function MainApp() {
     openWorkspaceFilePalette,
     quitApplication,
     saveSource,
+    selectSyntaxNode,
     toggleBottomPanel,
     toggleDetachedPreview,
     togglePreviewViewMode,
@@ -2036,6 +2146,16 @@ function MainApp() {
       unlisteners.push(unlisten);
     });
     void listen("d2-desk-save", () => saveSourceRef.current()).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen("d2-desk-select-larger-syntax-node", () =>
+      selectLargerSyntaxNodeRef.current(),
+    ).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen("d2-desk-select-smaller-syntax-node", () =>
+      selectSmallerSyntaxNodeRef.current(),
+    ).then((unlisten) => {
       unlisteners.push(unlisten);
     });
     void listen("d2-desk-close-tab", () => closeActiveTabRef.current()).then((unlisten) => {
@@ -2107,6 +2227,12 @@ function MainApp() {
         case "editor.format":
           void formatDocument();
           return;
+        case "editor.selectLargerSyntaxNode":
+          void selectSyntaxNode("larger");
+          return;
+        case "editor.selectSmallerSyntaxNode":
+          void selectSyntaxNode("smaller");
+          return;
         case "view.zoomIn":
           zoomFocusedPaneIn();
           return;
@@ -2144,6 +2270,7 @@ function MainApp() {
       renameFocusedNode,
       resetFocusedView,
       saveSource,
+      selectSyntaxNode,
       switchPreviewBoard,
       toggleBottomPanel,
       toggleDetachedPreview,
@@ -2212,7 +2339,10 @@ function MainApp() {
       toggleBottomPanelRef.current();
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyI, () => {
-      formatDocumentRef.current();
+      selectLargerSyntaxNodeRef.current();
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyE, () => {
+      selectSmallerSyntaxNodeRef.current();
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.LeftArrow, () => {
       focusAdjacentTab(-1);
@@ -2733,7 +2863,6 @@ function MainApp() {
         title: "Format Document",
         category: "Edit",
         keywords: ["source"],
-        shortcut: "Command/Ctrl + Shift + I",
         run: formatDocument,
       },
       {
@@ -2752,6 +2881,26 @@ function MainApp() {
         shortcut: "F2",
         run: () => {
           void renameFocusedNode();
+        },
+      },
+      {
+        id: "editor.selectLargerSyntaxNode",
+        title: "Select Larger Syntax Node",
+        category: "Edit",
+        keywords: ["selection", "expand", "larger", "syntax", "node"],
+        shortcut: "Command/Ctrl + Shift + I",
+        run: () => {
+          void selectSyntaxNode("larger");
+        },
+      },
+      {
+        id: "editor.selectSmallerSyntaxNode",
+        title: "Select Smaller Syntax Node",
+        category: "Edit",
+        keywords: ["selection", "shrink", "smaller", "syntax", "node"],
+        shortcut: "Command/Ctrl + Shift + E",
+        run: () => {
+          void selectSyntaxNode("smaller");
         },
       },
       {
@@ -2880,6 +3029,7 @@ function MainApp() {
       renameFocusedNode,
       renameFocusedFile,
       saveSource,
+      selectSyntaxNode,
       source,
       switchFocusedEdgeDirection,
       switchPreviewBoard,

@@ -32,6 +32,20 @@ type nodeAtParams struct {
 	Column int    `json:"column"`
 }
 
+type selectionRangesParams struct {
+	Source    string                   `json:"source"`
+	Positions []selectionRangePosition `json:"positions"`
+}
+
+type selectionRangePosition struct {
+	Line   int `json:"line"`
+	Column int `json:"column"`
+}
+
+type selectionRangeResult struct {
+	Ranges []sourceRange `json:"ranges"`
+}
+
 type renameNodeParams struct {
 	Source  string `json:"source"`
 	ID      string `json:"id"`

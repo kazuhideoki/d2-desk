@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { encodeD2SemanticTokens, getD2CompletionContext, isD2LineCommentPosition } from "./d2Language";
+import {
+  encodeD2SemanticTokens,
+  getD2CompletionContext,
+  isD2LineCommentPosition,
+  sourceRangeToMonacoRange,
+} from "./d2Language";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -96,5 +101,22 @@ describe("d2Language", () => {
       0, 7, 4, 0, 0,
       2, 4, 5, 0, 0,
     ]);
+  });
+
+  it("maps D2 source ranges to Monaco ranges", () => {
+    expect(
+      sourceRangeToMonacoRange({
+        file: "main.d2",
+        startLine: 2,
+        startColumn: 3,
+        endLine: 4,
+        endColumn: 5,
+      }),
+    ).toEqual({
+      startLineNumber: 2,
+      startColumn: 3,
+      endLineNumber: 4,
+      endColumn: 5,
+    });
   });
 });

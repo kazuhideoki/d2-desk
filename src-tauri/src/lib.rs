@@ -954,6 +954,16 @@ pub fn run() {
             let save = MenuItemBuilder::with_id("save-file", "Save")
                 .accelerator("CmdOrCtrl+S")
                 .build(handle)?;
+            let select_larger_syntax_node =
+                MenuItemBuilder::with_id("select-larger-syntax-node", "Select Larger Syntax Node")
+                    .accelerator("Command+Shift+I")
+                    .build(handle)?;
+            let select_smaller_syntax_node = MenuItemBuilder::with_id(
+                "select-smaller-syntax-node",
+                "Select Smaller Syntax Node",
+            )
+            .accelerator("Command+Shift+E")
+            .build(handle)?;
             let close_tab = MenuItemBuilder::with_id("close-tab", "Close Tab")
                 .accelerator("CmdOrCtrl+W")
                 .build(handle)?;
@@ -964,6 +974,7 @@ pub fn run() {
             let paste = PredefinedMenuItem::paste(handle, None)?;
             let select_all = PredefinedMenuItem::select_all(handle, None)?;
             let separator = PredefinedMenuItem::separator(handle)?;
+            let syntax_selection_separator = PredefinedMenuItem::separator(handle)?;
             let file_menu = SubmenuBuilder::new(handle, "File")
                 .item(&open)
                 .item(&open_workspace_file)
@@ -976,11 +987,14 @@ pub fn run() {
             let edit_menu = SubmenuBuilder::new(handle, "Edit")
                 .item(&undo)
                 .item(&redo)
-                .item(&separator)
+                .item(&syntax_selection_separator)
                 .item(&cut)
                 .item(&copy)
                 .item(&paste)
                 .item(&select_all)
+                .item(&separator)
+                .item(&select_larger_syntax_node)
+                .item(&select_smaller_syntax_node)
                 .build()?;
             let view_menu = SubmenuBuilder::new(handle, "View")
                 .item(&toggle_preview_fullscreen)
@@ -1012,6 +1026,10 @@ pub fn run() {
                 let _ = app.emit_to("main", "d2-desk-toggle-bottom-panel", ());
             } else if event.id() == "save-file" {
                 let _ = app.emit_to("main", "d2-desk-save", ());
+            } else if event.id() == "select-larger-syntax-node" {
+                let _ = app.emit_to("main", "d2-desk-select-larger-syntax-node", ());
+            } else if event.id() == "select-smaller-syntax-node" {
+                let _ = app.emit_to("main", "d2-desk-select-smaller-syntax-node", ());
             } else if event.id() == "close-tab" {
                 if !close_focused_preview_window(app) {
                     let _ = app.emit_to("main", "d2-desk-close-tab", ());

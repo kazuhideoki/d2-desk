@@ -2,6 +2,8 @@ export type ShortcutAction =
   | "editor.format"
   | "editor.goToSymbol"
   | "editor.renameFocusedNode"
+  | "editor.selectLargerSyntaxNode"
+  | "editor.selectSmallerSyntaxNode"
   | "file.closeTab"
   | "file.newTab"
   | "file.open"
@@ -44,6 +46,10 @@ function dispatch(
     preventDefault: true,
     stopImmediatePropagation: options.stopImmediatePropagation ?? false,
   };
+}
+
+function matchesKey(event: ShortcutKeyEvent, key: string, code: string) {
+  return event.key.toLowerCase() === key || event.code === code;
 }
 
 export function dispatchGlobalShortcut(event: ShortcutKeyEvent): ShortcutDispatch | null {
@@ -99,11 +105,14 @@ export function dispatchGlobalShortcut(event: ShortcutKeyEvent): ShortcutDispatc
   if (key === "s") {
     return dispatch("file.save");
   }
+  if (event.shiftKey && matchesKey(event, "i", "KeyI")) {
+    return dispatch("editor.selectLargerSyntaxNode", { stopImmediatePropagation: true });
+  }
+  if (event.shiftKey && matchesKey(event, "e", "KeyE")) {
+    return dispatch("editor.selectSmallerSyntaxNode", { stopImmediatePropagation: true });
+  }
   if (!event.shiftKey && key === "j") {
     return dispatch("view.toggleBottomPanel", { stopImmediatePropagation: true });
-  }
-  if (event.shiftKey && key === "i") {
-    return dispatch("editor.format", { stopImmediatePropagation: true });
   }
   if (event.key === "+" || event.key === "=") {
     return dispatch("view.zoomIn");

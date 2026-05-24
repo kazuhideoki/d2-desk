@@ -830,6 +830,84 @@ func TestNodeAtFindsLeftArrowConnectionOperator(t *testing.T) {
 	}
 }
 
+func TestSelectionRangesReturnNestedSyntaxRanges(t *testing.T) {
+	source := `container: {
+  api: API Server
+  api -> db: query
+}
+`
+	ranges := selectionRangesAt(source, 2, 4)
+	if len(ranges) < 4 {
+		t.Fatalf("expected nested selection ranges, got %#v", ranges)
+	}
+	if !equalSourceRange(ranges[0], sourceRange{File: "main.d2", StartLine: 2, StartColumn: 3, EndLine: 2, EndColumn: 6}) {
+		t.Fatalf("expected first range to select node token, got %#v", ranges[0])
+	}
+	if !hasRange(ranges, 2, 3, 18) {
+		t.Fatalf("expected node statement range, got %#v", ranges)
+	}
+	if !hasExactRange(ranges, sourceRange{File: "main.d2", StartLine: 2, StartColumn: 1, EndLine: 4, EndColumn: 1}) {
+		t.Fatalf("expected parent block inner range, got %#v", ranges)
+	}
+	if !hasExactRange(ranges, sourceRange{File: "main.d2", StartLine: 1, StartColumn: 1, EndLine: 4, EndColumn: 2}) {
+		t.Fatalf("expected parent block range, got %#v", ranges)
+	}
+	if !equalSourceRange(ranges[len(ranges)-1], sourceRange{File: "main.d2", StartLine: 1, StartColumn: 1, EndLine: 5, EndColumn: 1}) {
+		t.Fatalf("expected full document range last, got %#v", ranges[len(ranges)-1])
+	}
+}
+
+func TestSelectionRangesIncludeConnectionStatement(t *testing.T) {
+	source := `container: {
+  api -> db: query
+}
+`
+	ranges := selectionRangesAt(source, 2, 11)
+	if len(ranges) < 4 {
+		t.Fatalf("expected connection selection ranges, got %#v", ranges)
+	}
+	if !equalSourceRange(ranges[0], sourceRange{File: "main.d2", StartLine: 2, StartColumn: 10, EndLine: 2, EndColumn: 12}) {
+		t.Fatalf("expected first range to select endpoint token, got %#v", ranges[0])
+	}
+	if !hasRange(ranges, 2, 3, 19) {
+		t.Fatalf("expected connection statement range, got %#v", ranges)
+	}
+	if !hasExactRange(ranges, sourceRange{File: "main.d2", StartLine: 2, StartColumn: 1, EndLine: 3, EndColumn: 1}) {
+		t.Fatalf("expected parent block inner range, got %#v", ranges)
+	}
+	if !hasExactRange(ranges, sourceRange{File: "main.d2", StartLine: 1, StartColumn: 1, EndLine: 3, EndColumn: 2}) {
+		t.Fatalf("expected parent block range, got %#v", ranges)
+	}
+}
+
+func TestSelectionRangesPreferPathSegmentThenStatementAndContainers(t *testing.T) {
+	source := `container: {
+  api: {
+    style.opacity: 0.25
+  }
+}
+`
+	ranges := selectionRangesAt(source, 3, 12)
+	expected := []sourceRange{
+		{File: "main.d2", StartLine: 3, StartColumn: 11, EndLine: 3, EndColumn: 18},
+		{File: "main.d2", StartLine: 3, StartColumn: 5, EndLine: 3, EndColumn: 18},
+		{File: "main.d2", StartLine: 3, StartColumn: 5, EndLine: 3, EndColumn: 24},
+		{File: "main.d2", StartLine: 3, StartColumn: 1, EndLine: 4, EndColumn: 3},
+		{File: "main.d2", StartLine: 2, StartColumn: 3, EndLine: 4, EndColumn: 4},
+		{File: "main.d2", StartLine: 2, StartColumn: 1, EndLine: 5, EndColumn: 1},
+		{File: "main.d2", StartLine: 1, StartColumn: 1, EndLine: 5, EndColumn: 2},
+		{File: "main.d2", StartLine: 1, StartColumn: 1, EndLine: 6, EndColumn: 1},
+	}
+	if len(ranges) < len(expected) {
+		t.Fatalf("expected at least %d selection ranges, got %#v", len(expected), ranges)
+	}
+	for i, want := range expected {
+		if !equalSourceRange(ranges[i], want) {
+			t.Fatalf("unexpected range %d: got %#v want %#v; all ranges %#v", i, ranges[i], want, ranges)
+		}
+	}
+}
+
 func TestFormatPreservesValidDocument(t *testing.T) {
 	formatted, err := format("api: API Server\napi -> db")
 	if err != nil {
@@ -1799,6 +1877,23 @@ func findConnectionByEndpoints(objects []objectMap, src, dst string) *objectMap 
 func hasRange(ranges []sourceRange, line, startColumn, endColumn int) bool {
 	for _, r := range ranges {
 		if r.StartLine == line && r.EndLine == line && r.StartColumn == startColumn && r.EndColumn == endColumn {
+			return true
+		}
+	}
+	return false
+}
+
+func equalSourceRange(left, right sourceRange) bool {
+	return left.File == right.File &&
+		left.StartLine == right.StartLine &&
+		left.StartColumn == right.StartColumn &&
+		left.EndLine == right.EndLine &&
+		left.EndColumn == right.EndColumn
+}
+
+func hasExactRange(ranges []sourceRange, expected sourceRange) bool {
+	for _, r := range ranges {
+		if equalSourceRange(r, expected) {
 			return true
 		}
 	}
