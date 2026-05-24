@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { CompileResult, SourceRange } from "../../types";
-import { connectionIdAtPosition, objectIdAtPosition, sourceRangeContains } from "./sourceRanges";
+import {
+  connectionIdAtPosition,
+  nextLargerSourceRange,
+  nextSmallerSourceRange,
+  objectIdAtPosition,
+  sourceRangeContains,
+  sourceRangeContainsRange,
+  sourceRangeEquals,
+  sortSourceRangesSmallestFirst,
+} from "./sourceRanges";
 
 const range = (startLine: number, startColumn: number, endLine: number, endColumn: number) => ({
   file: "main.d2",
@@ -40,6 +49,35 @@ describe("sourceRanges", () => {
     expect(sourceRangeContains(sourceRange, 3, 9)).toBe(false);
     expect(sourceRangeContains(sourceRange, 1, 10)).toBe(false);
     expect(sourceRangeContains(sourceRange, 4, 1)).toBe(false);
+  });
+
+  it("compares and orders source ranges", () => {
+    const token = range(2, 3, 2, 6);
+    const statement = range(2, 3, 2, 18);
+    const block = range(1, 1, 4, 2);
+
+    expect(sourceRangeEquals(token, range(2, 3, 2, 6))).toBe(true);
+    expect(sourceRangeContainsRange(statement, token)).toBe(true);
+    expect(sourceRangeContainsRange(token, statement)).toBe(false);
+    expect(sortSourceRangesSmallestFirst([block, statement, token])).toEqual([
+      token,
+      statement,
+      block,
+    ]);
+  });
+
+  it("finds adjacent larger and smaller syntax ranges", () => {
+    const cursor = range(2, 4, 2, 4);
+    const token = range(2, 3, 2, 6);
+    const statement = range(2, 3, 2, 18);
+    const block = range(1, 1, 4, 2);
+    const ranges = [block, statement, token];
+
+    expect(nextLargerSourceRange(ranges, cursor)).toEqual(token);
+    expect(nextLargerSourceRange(ranges, token)).toEqual(statement);
+    expect(nextSmallerSourceRange(ranges, block)).toEqual(statement);
+    expect(nextSmallerSourceRange(ranges, statement)).toEqual(token);
+    expect(nextSmallerSourceRange(ranges, token)).toBeNull();
   });
 
   it("returns the smallest object range containing a position", () => {

@@ -46,6 +46,12 @@ func handle(req request) (any, error) {
 			return nil, err
 		}
 		return nodeAt(params), nil
+	case "selectionRanges":
+		var params selectionRangesParams
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return nil, err
+		}
+		return selectionRanges(params), nil
 	case "renameNode":
 		var params renameNodeParams
 		if err := json.Unmarshal(req.Params, &params); err != nil {

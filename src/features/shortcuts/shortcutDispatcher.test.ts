@@ -90,10 +90,27 @@ describe("shortcut dispatcher", () => {
     );
     expect(actionOf(keyEvent({ key: "J", metaKey: true, shiftKey: true }))).toBeNull();
     expectDispatch(
-      keyEvent({ key: "I", ctrlKey: true, shiftKey: true }),
-      "editor.format",
+      keyEvent({ key: "I", metaKey: true, shiftKey: true }),
+      "editor.selectLargerSyntaxNode",
       { stopImmediatePropagation: true },
     );
+    expectDispatch(
+      keyEvent({ key: "E", ctrlKey: true, shiftKey: true }),
+      "editor.selectSmallerSyntaxNode",
+      { stopImmediatePropagation: true },
+    );
+    expectDispatch(
+      keyEvent({ key: "Unidentified", code: "KeyI", metaKey: true, shiftKey: true }),
+      "editor.selectLargerSyntaxNode",
+      { stopImmediatePropagation: true },
+    );
+    expectDispatch(
+      keyEvent({ key: "Unidentified", code: "KeyE", metaKey: true, shiftKey: true }),
+      "editor.selectSmallerSyntaxNode",
+      { stopImmediatePropagation: true },
+    );
+    expect(actionOf(keyEvent({ key: "i", metaKey: true }))).toBeNull();
+    expect(actionOf(keyEvent({ key: "e", ctrlKey: true }))).toBeNull();
     expectDispatch(keyEvent({ key: "=", metaKey: true }), "view.zoomIn");
     expectDispatch(keyEvent({ key: "+", metaKey: true, shiftKey: true }), "view.zoomIn");
     expectDispatch(keyEvent({ key: "-", ctrlKey: true }), "view.zoomOut");

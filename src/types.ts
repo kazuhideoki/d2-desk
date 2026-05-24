@@ -81,6 +81,10 @@ export type D2SemanticToken = {
   sourceRange: SourceRange;
 };
 
+export type D2SelectionRangeResult = {
+  ranges: SourceRange[];
+};
+
 export type D2Tab = {
   id: string;
   fileName: string;
