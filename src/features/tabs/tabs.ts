@@ -9,8 +9,64 @@ export function hasTabPendingUserChanges(tab: D2Tab) {
   return tab.hasUserChanges && isTabUnsaved(tab);
 }
 
+export function hasTabExternalChanges(tab: D2Tab) {
+  return tab.hasExternalChanges && tabAbsolutePath(tab) !== null;
+}
+
+export function tabDiskSource(tab: Pick<D2Tab, "diskSource" | "savedSource">) {
+  return tab.diskSource ?? tab.savedSource;
+}
+
 export function tabAbsolutePath(tab: Pick<D2Tab, "filePath"> | null | undefined) {
   return tab?.filePath && tab.filePath.length > 0 ? tab.filePath : null;
+}
+
+export function applyExternalFileContents(tab: D2Tab, contents: string) {
+  const previousDiskSource = tabDiskSource(tab);
+  if (contents === previousDiskSource && !tab.hasExternalChanges) return tab;
+
+  if (hasTabPendingUserChanges(tab)) {
+    const hasExternalChanges = contents !== tab.savedSource;
+    if (tab.diskSource === contents && tab.hasExternalChanges === hasExternalChanges) {
+      return tab;
+    }
+    return {
+      ...tab,
+      diskSource: contents,
+      hasExternalChanges,
+    };
+  }
+
+  if (
+    tab.source === contents &&
+    tab.savedSource === contents &&
+    tab.diskSource === contents &&
+    !tab.hasExternalChanges
+  ) {
+    return tab;
+  }
+
+  return {
+    ...tab,
+    source: contents,
+    savedSource: contents,
+    diskSource: contents,
+    hasUserChanges: false,
+    hasExternalChanges: false,
+  };
+}
+
+export function shouldConfirmExternalOverwrite(
+  tab: Pick<D2Tab, "source" | "savedSource" | "hasUserChanges">,
+  diskSource: string,
+  nextSource = tab.source,
+) {
+  return (
+    tab.hasUserChanges &&
+    tab.source !== tab.savedSource &&
+    diskSource !== tab.savedSource &&
+    diskSource !== nextSource
+  );
 }
 
 export type TabDropPosition = "before" | "after";
@@ -64,7 +120,10 @@ export function loadTabs(): D2Tab[] {
           (typeof tab.filePath === "string" ||
             tab.filePath === null ||
             tab.filePath === undefined) &&
+          (typeof tab.diskSource === "string" || tab.diskSource === undefined) &&
           (typeof tab.hasUserChanges === "boolean" || tab.hasUserChanges === undefined) &&
+          (typeof tab.hasExternalChanges === "boolean" ||
+            tab.hasExternalChanges === undefined) &&
           (typeof tab.editorViewState === "object" || tab.editorViewState === undefined),
       )
       .map(normalizeTab);
@@ -107,8 +166,10 @@ export function createTab(fileName: string, source: string, savedSource = source
     fileName,
     source,
     savedSource,
+    diskSource: savedSource,
     filePath: null,
     hasUserChanges: false,
+    hasExternalChanges: false,
     editorViewState: null,
   };
 }
@@ -126,13 +187,16 @@ function createTabId() {
 
 export function normalizeTab(tab: D2Tab): D2Tab {
   const savedSource = tab.savedSource ?? (tab.filePath ? tab.source : "");
+  const diskSource = tab.diskSource ?? savedSource;
   return {
     id: tab.id,
     fileName: tab.fileName,
     source: tab.source,
     savedSource,
+    diskSource,
     filePath: tab.filePath ?? null,
     hasUserChanges: tab.hasUserChanges ?? inferLegacyHasUserChanges(tab, savedSource),
+    hasExternalChanges: tab.hasExternalChanges ?? false,
     editorViewState: tab.editorViewState ?? null,
   };
 }

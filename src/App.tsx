@@ -70,6 +70,7 @@ import {
   sourceRangeToMonacoRange,
 } from "./d2Language";
 import {
+  applyExternalFileContents,
   createTab,
   createEmptyTab,
   hasTabPendingUserChanges,
@@ -77,6 +78,7 @@ import {
   loadActiveTabId,
   loadTabs,
   reorderTabs,
+  shouldConfirmExternalOverwrite,
   tabAbsolutePath,
   type TabDropPosition,
   writeStoredTabs,
@@ -193,6 +195,7 @@ const nodeRenamePattern = /^[A-Za-z0-9_-]+$/;
 const tabPersistenceDelayMs = 400;
 const previewCompileDelayMs = 600;
 const tabSwitchPreviewCompileDelayMs = 140;
+const fileSyncPollDelayMs = 1500;
 const defaultPerfDebugOptions: PerfDebugOptions = {
   wordWrap: true,
   autoSuggest: true,
@@ -398,6 +401,8 @@ function MainApp() {
   const quitApplicationRef = useRef<() => void>(() => undefined);
   const pendingEditorViewStateRestoreRef = useRef<number | null>(null);
   const tabPersistenceTimeoutRef = useRef<number | null>(null);
+  const fileSyncPollInFlightRef = useRef(false);
+  const saveSourceInFlightRef = useRef(false);
   const renameEditorCursorSnapshotRef = useRef<EditorCursorSnapshot | null>(null);
   const workspaceStateRef = useRef(workspaceState);
   const activeWorkspaceIdRef = useRef(workspaceState.activeWorkspaceId);
@@ -1130,6 +1135,81 @@ function MainApp() {
   }, [persistTabs]);
 
   useEffect(() => {
+    let canceled = false;
+
+    async function pollOpenFileChanges() {
+      if (fileSyncPollInFlightRef.current) return;
+      const fileBackedTabs = tabsRef.current.filter((tab) => tab.filePath);
+      if (fileBackedTabs.length === 0) return;
+
+      fileSyncPollInFlightRef.current = true;
+      try {
+        const fileContents = new Map<string, string>();
+        await Promise.all(
+          fileBackedTabs.map(async (tab) => {
+            if (!tab.filePath) return;
+            try {
+              const result = await invoke<OpenedD2File>("read_d2_file", { path: tab.filePath });
+              fileContents.set(tab.filePath, result.contents);
+            } catch {
+              // Missing or unreadable files are handled by the next explicit open/save action.
+            }
+          }),
+        );
+        if (canceled || fileContents.size === 0) return;
+
+        let reloadedFiles: string[] = [];
+        let conflictedFiles: string[] = [];
+        setTabs((currentTabs) => {
+          let changed = false;
+          const nextTabs = currentTabs.map((tab) => {
+            if (!tab.filePath) return tab;
+            const contents = fileContents.get(tab.filePath);
+            if (contents === undefined) return tab;
+
+            const nextTab = applyExternalFileContents(tab, contents);
+            if (nextTab === tab) return tab;
+
+            changed = true;
+            if (nextTab.hasExternalChanges) {
+              conflictedFiles.push(nextTab.fileName);
+            } else {
+              reloadedFiles.push(nextTab.fileName);
+            }
+            return nextTab;
+          });
+          if (!changed) return currentTabs;
+
+          tabsRef.current = nextTabs;
+          return nextTabs;
+        });
+
+        reloadedFiles = Array.from(new Set(reloadedFiles));
+        conflictedFiles = Array.from(new Set(conflictedFiles));
+        if (conflictedFiles.length > 0) {
+          const fileList = conflictedFiles.join(", ");
+          setStatus(`${fileList} changed on disk; save will ask before overwriting`);
+        } else if (reloadedFiles.length > 0) {
+          const fileList = reloadedFiles.join(", ");
+          setStatus(`Reloaded external changes: ${fileList}`);
+        }
+      } finally {
+        fileSyncPollInFlightRef.current = false;
+      }
+    }
+
+    const intervalId = window.setInterval(() => {
+      void pollOpenFileChanges();
+    }, fileSyncPollDelayMs);
+    void pollOpenFileChanges();
+
+    return () => {
+      canceled = true;
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem("d2-desk:last-source", source);
     if (!isEditingIconValueCompletion()) {
       clearSuggestPreview();
@@ -1223,8 +1303,10 @@ function MainApp() {
       updateActiveTab({
         source: result.contents,
         savedSource: result.contents,
+        diskSource: result.contents,
         fileName: fileNameFromPath(result.path),
         filePath: result.path,
+        hasExternalChanges: false,
         editorViewState: null,
       });
       setStatus(`Opened ${result.path}`);
@@ -1403,7 +1485,50 @@ function MainApp() {
     setStatus(`Focused ${symbolId}`);
   }, []);
 
+  const confirmExternalOverwrite = useCallback(async (path: string, contents: string) => {
+    const currentTab = tabsRef.current.find((tab) => tab.id === activeTabIdRef.current);
+    if (!currentTab || currentTab.filePath !== path) return true;
+
+    try {
+      const result = await invoke<OpenedD2File>("read_d2_file", { path });
+      if (!shouldConfirmExternalOverwrite(currentTab, result.contents, contents)) return true;
+
+      const markedTab = {
+        ...currentTab,
+        diskSource: result.contents,
+        hasExternalChanges: result.contents !== contents,
+      };
+      setTabs((currentTabs) => {
+        const nextTabs = currentTabs.map((tab) =>
+          tab.id === currentTab.id ? markedTab : tab,
+        );
+        tabsRef.current = nextTabs;
+        return nextTabs;
+      });
+
+      const shouldOverwrite = await confirm(
+        `${currentTab.fileName} changed on disk. Saving will overwrite those external changes.`,
+        {
+          title: "File changed on disk",
+          kind: "warning",
+          okLabel: "Overwrite",
+          cancelLabel: "Cancel",
+        },
+      );
+      if (!shouldOverwrite) {
+        setStatus("Save canceled; file changed on disk");
+        return false;
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  }, []);
+
   const saveSource = useCallback(async () => {
+    if (saveSourceInFlightRef.current) return;
+    saveSourceInFlightRef.current = true;
+
     try {
       const path =
         currentFilePath ??
@@ -1417,6 +1542,8 @@ function MainApp() {
         return;
       }
 
+      if (!(await confirmExternalOverwrite(path, source))) return;
+
       const result = await invoke<SavedD2File>("write_d2_file", {
         path,
         contents: source,
@@ -1425,12 +1552,16 @@ function MainApp() {
         fileName: fileNameFromPath(result.path),
         filePath: result.path,
         savedSource: source,
+        diskSource: source,
+        hasExternalChanges: false,
       });
       setStatus(`Saved ${result.path}`);
     } catch (error) {
       setStatus(String(error));
+    } finally {
+      saveSourceInFlightRef.current = false;
     }
-  }, [currentFilePath, fileName, source, updateActiveTab]);
+  }, [confirmExternalOverwrite, currentFilePath, fileName, source, updateActiveTab]);
 
   const openWithEditor = useCallback(async () => {
     try {
@@ -1446,6 +1577,8 @@ function MainApp() {
         return;
       }
 
+      if (!(await confirmExternalOverwrite(path, source))) return;
+
       const result = await invoke<SavedD2File>("write_d2_file", {
         path,
         contents: source,
@@ -1454,13 +1587,15 @@ function MainApp() {
         fileName: fileNameFromPath(result.path),
         filePath: result.path,
         savedSource: source,
+        diskSource: source,
+        hasExternalChanges: false,
       });
       await invoke("open_file_with_editor", { path: result.path });
       setStatus(`Opened with $EDITOR: ${result.path}`);
     } catch (error) {
       setStatus(String(error));
     }
-  }, [currentFilePath, fileName, source, updateActiveTab]);
+  }, [confirmExternalOverwrite, currentFilePath, fileName, source, updateActiveTab]);
 
   const renameFocusedFile = useCallback(() => {
     if (!currentFilePath) {
@@ -1534,6 +1669,8 @@ function MainApp() {
             nextTab.source = referenceUpdate.contents;
             if (referenceUpdate.saved) {
               nextTab.savedSource = referenceUpdate.contents;
+              nextTab.diskSource = referenceUpdate.contents;
+              nextTab.hasExternalChanges = false;
             }
             nextTab.hasUserChanges = nextTab.source !== nextTab.savedSource;
           }
