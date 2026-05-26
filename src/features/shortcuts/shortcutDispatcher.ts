@@ -105,7 +105,10 @@ export function dispatchGlobalShortcut(event: ShortcutKeyEvent): ShortcutDispatc
   if (key === "s") {
     return dispatch("file.save");
   }
-  if (event.shiftKey && matchesKey(event, "i", "KeyI")) {
+  if (event.metaKey && !event.ctrlKey && event.shiftKey && matchesKey(event, "i", "KeyI")) {
+    return dispatch("editor.format", { stopImmediatePropagation: true });
+  }
+  if (event.ctrlKey && !event.metaKey && event.shiftKey && matchesKey(event, "i", "KeyI")) {
     return dispatch("editor.selectLargerSyntaxNode", { stopImmediatePropagation: true });
   }
   if (event.shiftKey && matchesKey(event, "e", "KeyE")) {

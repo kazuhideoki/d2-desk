@@ -35,7 +35,8 @@ D2 Desk の操作は、コマンドパレット専用の仕組みではなく、
 - 既存ショートカット処理を `executeCommand(commandId)` に寄せる。
   - `Cmd/Ctrl+O`
   - `Cmd/Ctrl+S`
-  - `Cmd/Ctrl+Shift+I`
+  - `Cmd+Shift+I`
+  - `Ctrl+Shift+I`
   - `Cmd/Ctrl+-`
   - `Cmd/Ctrl+0`
   - `Cmd/Ctrl++`

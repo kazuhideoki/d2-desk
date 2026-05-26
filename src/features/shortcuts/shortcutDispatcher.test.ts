@@ -89,8 +89,11 @@ describe("shortcut dispatcher", () => {
       { stopImmediatePropagation: true },
     );
     expect(actionOf(keyEvent({ key: "J", metaKey: true, shiftKey: true }))).toBeNull();
+    expectDispatch(keyEvent({ key: "I", metaKey: true, shiftKey: true }), "editor.format", {
+      stopImmediatePropagation: true,
+    });
     expectDispatch(
-      keyEvent({ key: "I", metaKey: true, shiftKey: true }),
+      keyEvent({ key: "I", ctrlKey: true, shiftKey: true }),
       "editor.selectLargerSyntaxNode",
       { stopImmediatePropagation: true },
     );
@@ -101,6 +104,11 @@ describe("shortcut dispatcher", () => {
     );
     expectDispatch(
       keyEvent({ key: "Unidentified", code: "KeyI", metaKey: true, shiftKey: true }),
+      "editor.format",
+      { stopImmediatePropagation: true },
+    );
+    expectDispatch(
+      keyEvent({ key: "Unidentified", code: "KeyI", ctrlKey: true, shiftKey: true }),
       "editor.selectLargerSyntaxNode",
       { stopImmediatePropagation: true },
     );
