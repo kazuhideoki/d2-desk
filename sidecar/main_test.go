@@ -1390,6 +1390,23 @@ hoge.`
 	}
 }
 
+func TestCompleteReturnsChildNodeCompletionsForUnquotedNamesWithSpaces(t *testing.T) {
+	source := `status: {
+  hoge tnse
+}
+status.`
+	items, err := complete(completeParams{Source: source, Line: 3, Column: len("status.")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCompletionInsertText(items, "hoge tnse", "hoge tnse") {
+		t.Fatalf("expected space-containing child node completion after dot, got %#v", items)
+	}
+	if hasCompletion(items, "tnse") {
+		t.Fatalf("expected completion to preserve the full child node name, got %#v", items)
+	}
+}
+
 func TestCompleteReturnsChildNodeCompletionsInConnectionEndpoint(t *testing.T) {
 	source := `hoge: {
   hoge1
