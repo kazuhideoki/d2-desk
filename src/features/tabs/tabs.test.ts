@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sampleSource, tabsStorageKey } from "../../constants";
 import {
+  applyExternalFileContents,
   createEmptyTab,
   createTab,
+  hasTabExternalChanges,
   hasTabPendingUserChanges,
   insertTabAfter,
   isTabUnsaved,
@@ -10,6 +12,7 @@ import {
   loadTabs,
   normalizeTab,
   reorderTabs,
+  shouldConfirmExternalOverwrite,
   tabAbsolutePath,
   writeStoredTabs,
 } from "./tabs";
@@ -54,8 +57,10 @@ describe("tabs", () => {
       fileName: "untitled.d2",
       source: "api -> db",
       savedSource: "",
+      diskSource: "",
       filePath: null,
       hasUserChanges: false,
+      hasExternalChanges: false,
       editorViewState: null,
     });
   });
@@ -83,8 +88,10 @@ describe("tabs", () => {
         fileName: "main.d2",
         source: "api -> db",
         savedSource: "api -> db",
+        diskSource: "api -> db",
         filePath: "/tmp/main.d2",
         hasUserChanges: false,
+        hasExternalChanges: false,
         editorViewState: null,
       },
     ]);
@@ -147,6 +154,74 @@ describe("tabs", () => {
     expect(isTabUnsaved(autoChanged)).toBe(true);
     expect(hasTabPendingUserChanges(autoChanged)).toBe(false);
     expect(hasTabPendingUserChanges(userChanged)).toBe(true);
+  });
+
+  it("auto-applies external file contents when the tab has no pending user changes", () => {
+    const tab = { ...createTab("main.d2", "api"), filePath: "/tmp/main.d2" };
+
+    expect(applyExternalFileContents(tab, "api -> db")).toMatchObject({
+      source: "api -> db",
+      savedSource: "api -> db",
+      diskSource: "api -> db",
+      hasUserChanges: false,
+      hasExternalChanges: false,
+    });
+  });
+
+  it("records external file contents without replacing pending user changes", () => {
+    const tab = {
+      ...createTab("main.d2", "api"),
+      filePath: "/tmp/main.d2",
+      source: "api -> cache",
+      hasUserChanges: true,
+    };
+
+    const nextTab = applyExternalFileContents(tab, "api -> db");
+
+    expect(nextTab).toMatchObject({
+      source: "api -> cache",
+      savedSource: "api",
+      diskSource: "api -> db",
+      hasUserChanges: true,
+      hasExternalChanges: true,
+    });
+    expect(hasTabExternalChanges(nextTab)).toBe(true);
+  });
+
+  it("requires save confirmation when unsaved app changes would overwrite external disk changes", () => {
+    const tab = {
+      ...createTab("main.d2", "A"),
+      source: "B",
+      hasUserChanges: true,
+    };
+
+    expect(shouldConfirmExternalOverwrite(tab, "C", "B")).toBe(true);
+  });
+
+  it("skips save confirmation when disk still matches the last saved source", () => {
+    const tab = {
+      ...createTab("main.d2", "A"),
+      source: "B",
+      hasUserChanges: true,
+    };
+
+    expect(shouldConfirmExternalOverwrite(tab, "A", "B")).toBe(false);
+  });
+
+  it("skips save confirmation when disk already matches the content being saved", () => {
+    const tab = {
+      ...createTab("main.d2", "A"),
+      source: "B",
+      hasUserChanges: true,
+    };
+
+    expect(shouldConfirmExternalOverwrite(tab, "B", "B")).toBe(false);
+  });
+
+  it("skips save confirmation for clean tabs", () => {
+    const tab = createTab("main.d2", "A");
+
+    expect(shouldConfirmExternalOverwrite(tab, "C", "A")).toBe(false);
   });
 
   it("returns a copyable absolute path only for file-backed tabs", () => {
@@ -243,8 +318,10 @@ function legacyTab(overrides: Partial<D2Tab>): D2Tab {
     fileName: "untitled.d2",
     source: "",
     savedSource: "",
+    diskSource: "",
     filePath: null,
     hasUserChanges: undefined as unknown as boolean,
+    hasExternalChanges: undefined as unknown as boolean,
     editorViewState: null,
     ...overrides,
   };

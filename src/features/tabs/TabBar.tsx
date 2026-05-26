@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { MouseEvent, PointerEvent } from "react";
-import { FileText, Plus, X } from "lucide-react";
-import { hasTabPendingUserChanges, type TabDropPosition } from "./tabs";
+import { FileText, Plus, TriangleAlert, X } from "lucide-react";
+import { hasTabExternalChanges, hasTabPendingUserChanges, type TabDropPosition } from "./tabs";
 import type { D2Tab } from "../../types";
 
 type TabBarProps = {
@@ -104,6 +104,7 @@ export function TabBar({
       >
         {tabs.map((tab) => {
           const isUnsaved = hasTabPendingUserChanges(tab);
+          const hasExternalChange = hasTabExternalChanges(tab);
           const isDragging = tab.id === draggedTabId;
           const dropPosition =
             dropTarget?.tabId === tab.id && draggedTabId !== tab.id ? dropTarget.position : null;
@@ -120,7 +121,11 @@ export function TabBar({
               key={tab.id}
               className={className}
               data-tab-id={tab.id}
-              title={tab.fileName}
+              title={
+                hasExternalChange
+                  ? `${tab.fileName} changed on disk`
+                  : tab.fileName
+              }
               onPointerDown={(event) => {
                 event.currentTarget.setPointerCapture(event.pointerId);
                 setDragState({
@@ -190,6 +195,13 @@ export function TabBar({
                 </span>
                 <FileText size={14} />
                 <span className="tab-file-name">{tab.fileName}</span>
+                {hasExternalChange ? (
+                  <TriangleAlert
+                    className="tab-external-change-icon"
+                    size={13}
+                    aria-label="Changed on disk"
+                  />
+                ) : null}
               </button>
               <button
                 className="tab-close"

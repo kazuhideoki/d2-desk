@@ -90,8 +90,10 @@ export type D2Tab = {
   fileName: string;
   source: string;
   savedSource: string;
+  diskSource: string;
   filePath: string | null;
   hasUserChanges: boolean;
+  hasExternalChanges: boolean;
   editorViewState: Monaco.editor.ICodeEditorViewState | null;
 };
 

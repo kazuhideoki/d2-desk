@@ -572,6 +572,11 @@ select {
   background: #2563eb;
 }
 
+.tab-external-change-icon {
+  flex: 0 0 auto;
+  color: #b45309;
+}
+
 .tab-close {
   width: 22px;
   min-width: 22px;
