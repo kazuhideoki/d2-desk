@@ -5,7 +5,7 @@ import type { D2Board, D2Object } from "../../types";
 import { connectionPath, fitBoundsZoom, settleAutoZoom } from "../../utils";
 import { RepeatButton } from "../../shared/components/RepeatButton";
 import { boardOptionLabel, boardPathKey } from "./boards";
-import { previewZoomShortcutAction } from "./zoomShortcuts";
+import { previewZoomShortcutAction, previewZoomWheelAction } from "./zoomShortcuts";
 
 export type PreviewZoomMode = "auto" | "manual";
 
@@ -24,6 +24,8 @@ type PreviewPaneProps = {
   onZoomOut: () => void;
   onResetZoom: () => void;
   onZoomIn: () => void;
+  onFineZoomOut: () => void;
+  onFineZoomIn: () => void;
   onZoomModeChange: (zoomMode: PreviewZoomMode) => void;
   onAutoZoomChange: (zoom: number) => void;
   onBoardPathChange?: (boardPath: string[]) => void;
@@ -107,6 +109,8 @@ export function PreviewPane({
   onZoomOut,
   onResetZoom,
   onZoomIn,
+  onFineZoomOut,
+  onFineZoomIn,
   onZoomModeChange,
   onAutoZoomChange,
   onBoardPathChange,
@@ -187,6 +191,36 @@ export function PreviewPane({
     },
     [onZoomIn, onZoomOut],
   );
+
+  const handlePreviewWheel = useCallback(
+    (event: WheelEvent) => {
+      if (event.defaultPrevented) return;
+
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+
+      const action = previewZoomWheelAction(event);
+      if (!action) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (action === "zoomIn") {
+        onFineZoomIn();
+      } else {
+        onFineZoomOut();
+      }
+    },
+    [onFineZoomIn, onFineZoomOut],
+  );
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    viewport.addEventListener("wheel", handlePreviewWheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", handlePreviewWheel);
+  }, [handlePreviewWheel]);
 
   return (
     <section className="preview-pane">

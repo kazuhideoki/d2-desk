@@ -4,11 +4,13 @@ import {
   clampZoom,
   connectionPath,
   decreaseZoom,
+  decreaseZoomFine,
   ensureD2FileName,
   fileNameFromPath,
   fitBoundsZoom,
   getDiagramViewBox,
   increaseZoom,
+  increaseZoomFine,
   moveSelectionIndex,
   normalizeSvgSize,
   routePath,
@@ -57,6 +59,16 @@ describe("utils", () => {
     expect(decreaseZoom(2.2)).toBe(2);
     expect(decreaseZoom(2.1)).toBe(2);
     expect(decreaseZoom(2)).toBe(1.9);
+  });
+
+  it("uses one-percent fine zoom steps", () => {
+    expect(increaseZoomFine(1)).toBe(1.01);
+    expect(increaseZoomFine(9.99)).toBe(10);
+    expect(increaseZoomFine(10)).toBe(10);
+
+    expect(decreaseZoomFine(1)).toBe(0.99);
+    expect(decreaseZoomFine(0.11)).toBe(0.1);
+    expect(decreaseZoomFine(0.1)).toBe(0.1);
   });
 
   it("calculates a clamped bounds-fit zoom", () => {
