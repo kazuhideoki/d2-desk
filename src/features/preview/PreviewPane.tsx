@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 import { ZoomIn, ZoomOut } from "lucide-react";
 import type { D2Board, D2Object } from "../../types";
 import { connectionPath, fitBoundsZoom, settleAutoZoom } from "../../utils";
 import { RepeatButton } from "../../shared/components/RepeatButton";
 import { boardOptionLabel, boardPathKey } from "./boards";
+import { previewZoomShortcutAction } from "./zoomShortcuts";
 
 export type PreviewZoomMode = "auto" | "manual";
 
@@ -167,6 +169,25 @@ export function PreviewPane({
     window.requestAnimationFrame(resetScroll);
   }, [contentSize.height, contentSize.width, zoom, zoomMode]);
 
+  const handlePreviewKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.defaultPrevented) return;
+
+      const action = previewZoomShortcutAction(event);
+      if (!action) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (action === "zoomIn") {
+        onZoomIn();
+      } else {
+        onZoomOut();
+      }
+    },
+    [onZoomIn, onZoomOut],
+  );
+
   return (
     <section className="preview-pane">
       <div className="pane-title">
@@ -216,6 +237,7 @@ export function PreviewPane({
         className="preview-viewport"
         tabIndex={0}
         onPointerDown={(event) => event.currentTarget.focus()}
+        onKeyDown={handlePreviewKeyDown}
       >
         <div
           className="preview-canvas"
