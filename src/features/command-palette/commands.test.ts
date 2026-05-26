@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { type AppCommand, isCommandEnabled } from "../../shared/commands";
 import type { Workspace } from "../../types";
 import {
+  createOpenCurrentWorkspaceCommands,
   createPreviewAutoZoomCommand,
   createWorkspaceSelectionCommands,
   filterCommands,
@@ -87,6 +88,35 @@ describe("commands", () => {
 
     workspaceCommands[2].run();
     expect(selectedWorkspaceIds).toEqual(["two"]);
+  });
+
+  it("builds current workspace open commands for Finder and $EDITOR", () => {
+    const opened: string[] = [];
+    const workspaceCommands = createOpenCurrentWorkspaceCommands(
+      true,
+      () => {
+        opened.push("finder");
+      },
+      () => {
+        opened.push("editor");
+      },
+    );
+
+    expect(workspaceCommands.map((command) => command.id)).toEqual([
+      "workspace.openActiveInFinder",
+      "workspace.openActiveWithEditor",
+    ]);
+    expect(workspaceCommands.map((command) => command.enabled)).toEqual([true, true]);
+    expect(filterCommands(workspaceCommands, "ide zed").map((command) => command.id)).toEqual([
+      "workspace.openActiveWithEditor",
+    ]);
+
+    workspaceCommands[1].run();
+    expect(opened).toEqual(["editor"]);
+
+    expect(
+      createOpenCurrentWorkspaceCommands(false, noop, noop).map((command) => command.enabled),
+    ).toEqual([false, false]);
   });
 
   it("builds the preview auto zoom toggle command", () => {

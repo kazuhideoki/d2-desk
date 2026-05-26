@@ -8,6 +8,7 @@ import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import { loadInitialSession, type InitialSession } from "./app/initialSession";
 import { CommandPalette } from "./features/command-palette/CommandPalette";
 import {
+  createOpenCurrentWorkspaceCommands,
   createPreviewAutoZoomCommand,
   createWorkspaceSelectionCommands,
 } from "./features/command-palette/commands";
@@ -2005,6 +2006,21 @@ function MainApp() {
     }
   }, []);
 
+  const openActiveWorkspaceWithEditor = useCallback(async () => {
+    const workspacePath = activeWorkspaceDirectoryPath(workspaceStateRef.current);
+    if (!workspacePath) {
+      setStatus("Open a workspace folder first");
+      return;
+    }
+
+    try {
+      await invoke("open_workspace_with_editor", { rootPath: workspacePath });
+      setStatus(`Opened ${workspacePath} with $EDITOR`);
+    } catch (error) {
+      setStatus(String(error));
+    }
+  }, []);
+
   const removeRegisteredWorkspace = useCallback(
     async (workspaceId: string) => {
       const workspace = workspaceStateRef.current.workspaces.find((item) => item.id === workspaceId);
@@ -2746,16 +2762,15 @@ function MainApp() {
 
   const paletteCommands = useMemo<AppCommand[]>(
     () => [
-      {
-        id: "workspace.openActiveInFinder",
-        title: "Open Current Workspace in Finder",
-        category: "Workspace",
-        keywords: ["current", "active", "finder", "folder", "directory", "reveal", "show"],
-        enabled: Boolean(activeWorkspaceDirectoryPath(workspaceState)),
-        run: () => {
+      ...createOpenCurrentWorkspaceCommands(
+        Boolean(activeWorkspaceDirectoryPath(workspaceState)),
+        () => {
           void openActiveWorkspaceInFinder();
         },
-      },
+        () => {
+          void openActiveWorkspaceWithEditor();
+        },
+      ),
       {
         id: "workspace.openFolder",
         title: "Open Workspace Folder",
@@ -3021,6 +3036,7 @@ function MainApp() {
       createNewTab,
       currentFilePath,
       openActiveWorkspaceInFinder,
+      openActiveWorkspaceWithEditor,
       exportRenderedSvg,
       fileName,
       formatDocument,

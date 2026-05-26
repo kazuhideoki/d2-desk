@@ -88,6 +88,41 @@ export function createWorkspaceSelectionCommands(
   ];
 }
 
+export function createOpenCurrentWorkspaceCommands(
+  hasActiveWorkspace: boolean,
+  onOpenInFinder: () => void | Promise<void>,
+  onOpenWithEditor: () => void | Promise<void>,
+): AppCommand[] {
+  return [
+    {
+      id: "workspace.openActiveInFinder",
+      title: "Open Current Workspace in Finder",
+      category: "Workspace",
+      keywords: ["current", "active", "finder", "folder", "directory", "reveal", "show"],
+      enabled: hasActiveWorkspace,
+      run: onOpenInFinder,
+    },
+    {
+      id: "workspace.openActiveWithEditor",
+      title: "Open Current Workspace with $EDITOR",
+      category: "Workspace",
+      keywords: [
+        "current",
+        "active",
+        "ide",
+        "editor",
+        "external",
+        "zed",
+        "folder",
+        "directory",
+        "project",
+      ],
+      enabled: hasActiveWorkspace,
+      run: onOpenWithEditor,
+    },
+  ];
+}
+
 export function createPreviewAutoZoomCommand(
   previewZoomMode: PreviewZoomMode,
   onZoomModeChange: (zoomMode: PreviewZoomMode) => void,
