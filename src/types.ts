@@ -18,6 +18,7 @@ export type D2Object = {
   kind: "shape" | "connection";
   boardPath?: string[];
   label?: string;
+  link?: string;
   src?: string;
   dst?: string;
   sourceRanges?: SourceRange[] | null;

@@ -193,6 +193,46 @@ func TestCompileProducesSVGAndObjects(t *testing.T) {
 	}
 }
 
+func TestCompileIncludesObjectLinks(t *testing.T) {
+	source := `api: {
+  link: target.d2
+  worker: {
+    link: nested.d2
+  }
+}
+api -> db: {
+  link: ../db.d2
+}`
+	result, err := compile(compileParams{Source: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	api := findObject(result.Objects, "api")
+	if api == nil {
+		t.Fatalf("expected api object in %#v", result.Objects)
+	}
+	if api.Link != "target.d2" {
+		t.Fatalf("expected shape link, got %q", api.Link)
+	}
+
+	worker := findObject(result.Objects, "api.worker")
+	if worker == nil {
+		t.Fatalf("expected api.worker object in %#v", result.Objects)
+	}
+	if worker.Link != "nested.d2" {
+		t.Fatalf("expected nested shape link, got %q", worker.Link)
+	}
+
+	connection := findConnectionByEndpoints(result.Objects, "api", "db")
+	if connection == nil {
+		t.Fatalf("expected api to db connection in %#v", result.Objects)
+	}
+	if connection.Link != "../db.d2" {
+		t.Fatalf("expected connection link, got %q", connection.Link)
+	}
+}
+
 func TestCompileCanRenderCompositionBoard(t *testing.T) {
 	source := `baseA -> baseB
 

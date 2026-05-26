@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, MouseEvent } from "react";
 import { ZoomIn, ZoomOut } from "lucide-react";
 import type { D2Board, D2Object } from "../../types";
 import { connectionPath, fitBoundsZoom, settleAutoZoom } from "../../utils";
@@ -27,6 +27,7 @@ type PreviewPaneProps = {
   onZoomModeChange: (zoomMode: PreviewZoomMode) => void;
   onAutoZoomChange: (zoom: number) => void;
   onBoardPathChange?: (boardPath: string[]) => void;
+  onOpenLink?: (href: string) => void;
 };
 
 type PreviewContentSize = {
@@ -92,6 +93,33 @@ function availableContentSize(viewport: HTMLElement): PreviewContentSize {
   };
 }
 
+function hrefFromAnchor(anchor: Element | null) {
+  return anchor?.getAttribute("href") ?? anchor?.getAttribute("xlink:href") ?? null;
+}
+
+function anchorHrefFromTarget(target: EventTarget | null) {
+  const element = target instanceof Element ? target : null;
+  return hrefFromAnchor(element?.closest("a") ?? null);
+}
+
+function anchorHrefAtPoint(container: HTMLElement | null, clientX: number, clientY: number) {
+  if (!container) return null;
+
+  const anchors = Array.from(container.querySelectorAll("a"));
+  for (const anchor of anchors.reverse()) {
+    const rect = anchor.getBoundingClientRect();
+    if (
+      clientX >= rect.left &&
+      clientX <= rect.right &&
+      clientY >= rect.top &&
+      clientY <= rect.bottom
+    ) {
+      return hrefFromAnchor(anchor);
+    }
+  }
+  return null;
+}
+
 export function PreviewPane({
   objects,
   boards = [],
@@ -110,6 +138,7 @@ export function PreviewPane({
   onZoomModeChange,
   onAutoZoomChange,
   onBoardPathChange,
+  onOpenLink,
 }: PreviewPaneProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const svgOutputRef = useRef<HTMLDivElement | null>(null);
@@ -188,6 +217,39 @@ export function PreviewPane({
     [onZoomIn, onZoomOut],
   );
 
+  const openLink = useCallback(
+    (href: string | null, event: MouseEvent) => {
+      if (!href || !onOpenLink) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      onOpenLink(href);
+      return true;
+    },
+    [onOpenLink],
+  );
+
+  const handleSvgClick = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      openLink(anchorHrefFromTarget(event.target), event);
+    },
+    [openLink],
+  );
+
+  const handleOverlaySelect = useCallback(
+    (object: D2Object, event: MouseEvent) => {
+      if (
+        openLink(
+          object.link ?? anchorHrefAtPoint(svgOutputRef.current, event.clientX, event.clientY),
+          event,
+        )
+      ) {
+        return;
+      }
+      onSelect(object.id);
+    },
+    [onSelect, openLink],
+  );
+
   return (
     <section className="preview-pane">
       <div className="pane-title">
@@ -247,6 +309,7 @@ export function PreviewPane({
             <div
               ref={svgOutputRef}
               className="svg-output"
+              onClick={handleSvgClick}
               dangerouslySetInnerHTML={{ __html: renderedSvg }}
             />
             <svg className="overlay" viewBox={overlayViewBox}>
@@ -273,7 +336,7 @@ export function PreviewPane({
                       rx={8}
                       onMouseEnter={() => onHover(object.id)}
                       onMouseLeave={() => onHover(null)}
-                      onClick={() => onSelect(object.id)}
+                      onClick={(event) => handleOverlaySelect(object, event)}
                     />
                   </g>
                 ) : (
@@ -289,7 +352,7 @@ export function PreviewPane({
                       d={connectionPath(object.preview)}
                       onMouseEnter={() => onHover(object.id)}
                       onMouseLeave={() => onHover(null)}
-                      onClick={() => onSelect(object.id)}
+                      onClick={(event) => handleOverlaySelect(object, event)}
                     />
                   </g>
                 );

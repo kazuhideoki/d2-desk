@@ -43,6 +43,7 @@ import {
 } from "./features/file-palette/WorkspaceFilePalette";
 import { PreviewPane, type PreviewZoomMode } from "./features/preview/PreviewPane";
 import { getPreviewCompileDelayMs } from "./features/preview/compileSchedule";
+import { resolvePreviewFileLink } from "./features/preview/links";
 import {
   adjacentBoardPath,
   boardDisplayName,
@@ -332,6 +333,9 @@ function PreviewWindowApp() {
         onZoomModeChange={setPreviewZoomMode}
         onAutoZoomChange={setPreviewZoom}
         onBoardPathChange={selectDetachedPreviewBoard}
+        onOpenLink={(href) => {
+          void emitTo("main", "d2-desk-open-preview-link", href);
+        }}
       />
     </main>
   );
@@ -1388,6 +1392,35 @@ function MainApp() {
     [openFileInNewTab],
   );
 
+  const openPreviewLink = useCallback(
+    async (href: string) => {
+      const workspaceId = activeWorkspaceIdRef.current;
+      const workspace = workspaceId
+        ? workspaceStateRef.current.workspaces.find((item) => item.id === workspaceId)
+        : null;
+      const activeTabForLink =
+        tabsRef.current.find((tab) => tab.id === activeTabIdRef.current) ?? null;
+      const path = resolvePreviewFileLink(href, {
+        workspaceRootPath: workspace?.rootPath ?? null,
+        currentFilePath: activeTabForLink?.filePath ?? null,
+      });
+
+      if (!path) {
+        setStatus(`Preview link is not a workspace file: ${href}`);
+        return;
+      }
+
+      try {
+        const result = await invoke<OpenedD2File>("read_d2_file", { path });
+        openFileInNewTab(result);
+        window.requestAnimationFrame(() => editorRef.current?.focus());
+      } catch (error) {
+        setStatus(String(error));
+      }
+    },
+    [openFileInNewTab],
+  );
+
   const openSymbolPalette = useCallback(() => {
     setCommandPalette(null);
     setFilePalette(null);
@@ -2320,6 +2353,11 @@ function MainApp() {
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
+    void listen<string>("d2-desk-open-preview-link", (event) => {
+      void openPreviewLink(event.payload);
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
     void listen("d2-desk-save", () => saveSourceRef.current()).then((unlisten) => {
       unlisteners.push(unlisten);
     });
@@ -2350,7 +2388,7 @@ function MainApp() {
         unlisten();
       }
     };
-  }, [selectPreviewBoard, sendDetachedPreviewState]);
+  }, [openPreviewLink, selectPreviewBoard, sendDetachedPreviewState]);
 
   useEffect(() => {
     if (!previewDetached || !perfDebugOptions.previewRender) return;
@@ -3455,6 +3493,7 @@ function MainApp() {
             onZoomModeChange={setPreviewZoomMode}
             onAutoZoomChange={setAutoPreviewZoom}
             onBoardPathChange={selectPreviewBoard}
+            onOpenLink={openPreviewLink}
           />
         ) : null}
       </section>

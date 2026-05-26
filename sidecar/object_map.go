@@ -10,10 +10,16 @@ import (
 	"oss.terrastruct.com/d2/lib/geo"
 )
 
+type blockScope struct {
+	id    string
+	depth int
+}
+
 func buildObjectMap(source string, diagram *d2target.Diagram, boardPath []string) []objectMap {
 	sourceRanges := scanSourceRanges(source)
 	nodeScopeRanges := scanNodeScopeRanges(source)
 	connectionRanges := scanConnectionSourceRanges(source)
+	objectLinks := scanObjectLinks(source)
 	if diagram == nil {
 		return nil
 	}
@@ -23,11 +29,16 @@ func buildObjectMap(source string, diagram *d2target.Diagram, boardPath []string
 		shapesByID[shape.ID] = shape
 		x, y := float64(shape.Pos.X), float64(shape.Pos.Y)
 		w, h := float64(shape.Width), float64(shape.Height)
+		link := shape.Link
+		if link == "" {
+			link = objectLinks[shape.ID]
+		}
 		objects = append(objects, objectMap{
 			ID:           shape.ID,
 			Kind:         "shape",
 			BoardPath:    nonNilBoardPath(boardPath),
 			Label:        shape.Label,
+			Link:         link,
 			SourceRanges: nonNilRanges(rangesForShape(shape.ID, sourceRanges, nodeScopeRanges)),
 			Preview:      previewBox{X: &x, Y: &y, Width: &w, Height: &h},
 		})
@@ -52,6 +63,7 @@ func buildObjectMap(source string, diagram *d2target.Diagram, boardPath []string
 			Kind:         "connection",
 			BoardPath:    nonNilBoardPath(boardPath),
 			Label:        conn.Label,
+			Link:         conn.Link,
 			Src:          conn.Src,
 			Dst:          conn.Dst,
 			SourceRanges: nonNilRanges(rangesForConnection(conn.Src, conn.Dst, connectionIndex, connectionRanges, sourceRanges)),
@@ -65,6 +77,85 @@ func buildObjectMap(source string, diagram *d2target.Diagram, boardPath []string
 		return objects[i].Kind == "shape"
 	})
 	return objects
+}
+
+func scanObjectLinks(source string) map[string]string {
+	links := map[string]string{}
+	var scopes []blockScope
+	depth := 0
+
+	for _, line := range strings.Split(source, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+
+		if len(scopes) > 0 {
+			if key, value, ok := splitD2KeyValue(trimmed); ok && strings.EqualFold(key, "link") {
+				links[scopes[len(scopes)-1].id] = cleanLinkValue(value)
+			}
+		}
+		if id, value, ok := splitD2InlineLink(trimmed); ok {
+			links[qualifyScannedLinkID(scopes, id)] = cleanLinkValue(value)
+		}
+		if id, ok := splitD2BlockStart(trimmed); ok {
+			scopes = append(scopes, blockScope{id: qualifyScannedLinkID(scopes, id), depth: depth + 1})
+		}
+
+		depth += strings.Count(trimmed, "{")
+		depth -= strings.Count(trimmed, "}")
+		for len(scopes) > 0 && depth < scopes[len(scopes)-1].depth {
+			scopes = scopes[:len(scopes)-1]
+		}
+	}
+	return links
+}
+
+func qualifyScannedLinkID(scopes []blockScope, id string) string {
+	if len(scopes) == 0 || strings.Contains(id, ".") {
+		return id
+	}
+	return scopes[len(scopes)-1].id + "." + id
+}
+
+func splitD2InlineLink(line string) (string, string, bool) {
+	index := strings.Index(line, ".link:")
+	if index < 0 {
+		return "", "", false
+	}
+	id := strings.TrimSpace(line[:index])
+	value := strings.TrimSpace(line[index+len(".link:"):])
+	if id == "" || value == "" {
+		return "", "", false
+	}
+	return strings.Trim(id, `"'`), value, true
+}
+
+func splitD2BlockStart(line string) (string, bool) {
+	if !strings.HasSuffix(line, "{") {
+		return "", false
+	}
+	key, _, ok := splitD2KeyValue(strings.TrimSuffix(line, "{"))
+	if !ok || key == "" || strings.Contains(key, "->") {
+		return "", false
+	}
+	return strings.Trim(key, `"'`), true
+}
+
+func splitD2KeyValue(line string) (string, string, bool) {
+	index := strings.Index(line, ":")
+	if index < 0 {
+		return "", "", false
+	}
+	key := strings.TrimSpace(line[:index])
+	value := strings.TrimSpace(line[index+1:])
+	return key, value, key != ""
+}
+
+func cleanLinkValue(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimSuffix(value, ",")
+	return strings.Trim(strings.TrimSpace(value), `"'`)
 }
 
 func nonNilBoardPath(boardPath []string) []string {
