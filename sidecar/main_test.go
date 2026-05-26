@@ -695,6 +695,54 @@ container: {
 	}
 }
 
+func TestNodeAtFindsNestedUnquotedIdentifierWithSpaces(t *testing.T) {
+	source := `status: {
+  HTTP Upgrade
+}
+`
+	result, err := compile(compileParams{Source: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	child := findObject(result.Objects, "status.HTTP Upgrade")
+	if child == nil {
+		t.Fatalf("expected nested HTTP Upgrade object in %#v", result.Objects)
+	}
+	if !hasRange(child.SourceRanges, 2, 3, 15) {
+		t.Fatalf("expected child source range to include full name, got %#v", child.SourceRanges)
+	}
+
+	cursor := nodeAt(nodeAtParams{Source: source, Line: 2, Column: 8})
+	if cursor["id"] != "status.HTTP Upgrade" {
+		t.Fatalf("expected cursor on nested space-containing node to focus child, got %#v", cursor)
+	}
+}
+
+func TestRenameNodeRenamesNestedUnquotedIdentifierWithSpaces(t *testing.T) {
+	source := `status: {
+  HTTP Upgrade
+  HTTP Upgrade -> ok
+}
+`
+	result, err := renameNode(renameNodeParams{Source: source, ID: "status.HTTP Upgrade", NewName: "http_upgrade"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := `status: {
+  http_upgrade
+  http_upgrade -> ok
+}
+`
+	if result.Source != expected {
+		t.Fatalf("unexpected renamed source:\n%s", result.Source)
+	}
+	if result.ID != "status.http_upgrade" {
+		t.Fatalf("expected renamed id, got %q", result.ID)
+	}
+}
+
 func TestRenameNodeOnlyRenamesMatchingNestedIdentifier(t *testing.T) {
 	source := `api: API
 api -> db
