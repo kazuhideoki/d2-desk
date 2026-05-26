@@ -2149,6 +2149,11 @@ function MainApp() {
     void listen("d2-desk-save", () => saveSourceRef.current()).then((unlisten) => {
       unlisteners.push(unlisten);
     });
+    void listen("d2-desk-format-document", () => formatDocumentRef.current()).then(
+      (unlisten) => {
+        unlisteners.push(unlisten);
+      },
+    );
     void listen("d2-desk-select-larger-syntax-node", () =>
       selectLargerSyntaxNodeRef.current(),
     ).then((unlisten) => {
@@ -2864,6 +2869,7 @@ function MainApp() {
         title: "Format Document",
         category: "Edit",
         keywords: ["source"],
+        shortcut: "Command + Shift + I",
         run: formatDocument,
       },
       {
@@ -2889,7 +2895,7 @@ function MainApp() {
         title: "Select Larger Syntax Node",
         category: "Edit",
         keywords: ["selection", "expand", "larger", "syntax", "node"],
-        shortcut: "Command/Ctrl + Shift + I",
+        shortcut: "Ctrl + Shift + I",
         run: () => {
           void selectSyntaxNode("larger");
         },

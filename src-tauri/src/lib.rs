@@ -954,9 +954,12 @@ pub fn run() {
             let save = MenuItemBuilder::with_id("save-file", "Save")
                 .accelerator("CmdOrCtrl+S")
                 .build(handle)?;
+            let format_document = MenuItemBuilder::with_id("format-document", "Format Document")
+                .accelerator("Command+Shift+I")
+                .build(handle)?;
             let select_larger_syntax_node =
                 MenuItemBuilder::with_id("select-larger-syntax-node", "Select Larger Syntax Node")
-                    .accelerator("Command+Shift+I")
+                    .accelerator("Control+Shift+I")
                     .build(handle)?;
             let select_smaller_syntax_node = MenuItemBuilder::with_id(
                 "select-smaller-syntax-node",
@@ -993,6 +996,7 @@ pub fn run() {
                 .item(&paste)
                 .item(&select_all)
                 .item(&separator)
+                .item(&format_document)
                 .item(&select_larger_syntax_node)
                 .item(&select_smaller_syntax_node)
                 .build()?;
@@ -1026,6 +1030,8 @@ pub fn run() {
                 let _ = app.emit_to("main", "d2-desk-toggle-bottom-panel", ());
             } else if event.id() == "save-file" {
                 let _ = app.emit_to("main", "d2-desk-save", ());
+            } else if event.id() == "format-document" {
+                let _ = app.emit_to("main", "d2-desk-format-document", ());
             } else if event.id() == "select-larger-syntax-node" {
                 let _ = app.emit_to("main", "d2-desk-select-larger-syntax-node", ());
             } else if event.id() == "select-smaller-syntax-node" {
