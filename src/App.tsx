@@ -1558,17 +1558,38 @@ function MainApp() {
   }, [currentFilePath, fileName, renameFileDialog]);
 
   const formatDocument = useCallback(async () => {
+    const editor = editorRef.current;
+    const model = editor?.getModel() ?? null;
+    const sourceToFormat = model?.getValue() ?? source;
+    const modelVersionId = model?.getVersionId() ?? null;
+    const editorCursorSnapshot = editor
+      ? {
+          viewState: editor.saveViewState(),
+          selections: editor.getSelections(),
+          position: editor.getPosition(),
+        }
+      : null;
+
     try {
       const formatted = await invoke<string>("sidecar_call", {
         method: "format",
-        params: { source },
+        params: { source: sourceToFormat },
       });
-      updateActiveTab({ source: formatted });
+      if (
+        model &&
+        (model.isDisposed() || editorRef.current?.getModel() !== model || model.getVersionId() !== modelVersionId)
+      ) {
+        setStatus("Format skipped because the editor changed");
+        return;
+      }
+
+      updateActiveTab({ source: formatted, editorViewState: editorCursorSnapshot?.viewState });
       setStatus("Formatted");
+      restoreEditorViewStateAfterSourceUpdate(editorCursorSnapshot, formatted);
     } catch (error) {
       setStatus(String(error));
     }
-  }, [source, updateActiveTab]);
+  }, [restoreEditorViewStateAfterSourceUpdate, source, updateActiveTab]);
 
   const selectSyntaxNode = useCallback(async (direction: "larger" | "smaller") => {
     const editor = editorRef.current;
