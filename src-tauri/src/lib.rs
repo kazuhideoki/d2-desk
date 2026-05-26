@@ -986,6 +986,9 @@ pub fn run() {
             let close_tab = MenuItemBuilder::with_id("close-tab", "Close Tab")
                 .accelerator("CmdOrCtrl+W")
                 .build(handle)?;
+            let quit = MenuItemBuilder::with_id("quit", "Quit D2 Desk")
+                .accelerator("CmdOrCtrl+Q")
+                .build(handle)?;
             let undo = PredefinedMenuItem::undo(handle, None)?;
             let redo = PredefinedMenuItem::redo(handle, None)?;
             let cut = PredefinedMenuItem::cut(handle, None)?;
@@ -1002,6 +1005,8 @@ pub fn run() {
                 .item(&save)
                 .separator()
                 .item(&close_tab)
+                .separator()
+                .item(&quit)
                 .build()?;
             let edit_menu = SubmenuBuilder::new(handle, "Edit")
                 .item(&undo)
@@ -1056,6 +1061,8 @@ pub fn run() {
                 if !close_focused_preview_window(app) {
                     let _ = app.emit_to("main", "d2-desk-close-tab", ());
                 }
+            } else if event.id() == "quit" {
+                let _ = app.emit_to("main", "d2-desk-request-quit", ());
             }
         })
         .on_window_event(|window, event| {
