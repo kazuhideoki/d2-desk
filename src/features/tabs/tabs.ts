@@ -36,6 +36,15 @@ export function reorderTabs(
   return nextTabs;
 }
 
+export function insertTabAfter(tabs: D2Tab[], tab: D2Tab, targetTabId: string) {
+  const targetIndex = tabs.findIndex((existingTab) => existingTab.id === targetTabId);
+  if (targetIndex === -1) return [...tabs, tab];
+
+  const nextTabs = [...tabs];
+  nextTabs.splice(targetIndex + 1, 0, tab);
+  return nextTabs;
+}
+
 export function loadTabs(): D2Tab[] {
   const fallbackSource = localStorage.getItem("d2-desk:last-source") ?? sampleSource;
   const fallbackTab = createTab("untitled.d2", fallbackSource, "");

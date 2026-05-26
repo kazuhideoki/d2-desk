@@ -4,6 +4,7 @@ import {
   createEmptyTab,
   createTab,
   hasTabPendingUserChanges,
+  insertTabAfter,
   isTabUnsaved,
   loadActiveTabId,
   loadTabs,
@@ -175,6 +176,30 @@ describe("tabs", () => {
       "three",
       "one",
       "four",
+    ]);
+  });
+
+  it("inserts a tab after the target tab", () => {
+    const tabs = [
+      { ...createTab("one.d2", ""), id: "one" },
+      { ...createTab("two.d2", ""), id: "two" },
+    ];
+    const tab = { ...createTab("inserted.d2", ""), id: "inserted" };
+
+    expect(insertTabAfter(tabs, tab, "one").map((item) => item.id)).toEqual([
+      "one",
+      "inserted",
+      "two",
+    ]);
+  });
+
+  it("appends a tab when inserting after a missing target", () => {
+    const tabs = [{ ...createTab("one.d2", ""), id: "one" }];
+    const tab = { ...createTab("inserted.d2", ""), id: "inserted" };
+
+    expect(insertTabAfter(tabs, tab, "missing").map((item) => item.id)).toEqual([
+      "one",
+      "inserted",
     ]);
   });
 

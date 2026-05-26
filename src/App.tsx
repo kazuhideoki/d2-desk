@@ -72,6 +72,7 @@ import {
   createTab,
   createEmptyTab,
   hasTabPendingUserChanges,
+  insertTabAfter,
   loadActiveTabId,
   loadTabs,
   reorderTabs,
@@ -865,7 +866,7 @@ function MainApp() {
         filePath: file.path,
         editorViewState: null,
       };
-      const nextTabs = [...currentTabs, nextTab];
+      const nextTabs = insertTabAfter(currentTabs, nextTab, activeTabIdRef.current);
       tabsRef.current = nextTabs;
       activeTabIdRef.current = nextTab.id;
       editorTabIdRef.current = nextTab.id;
