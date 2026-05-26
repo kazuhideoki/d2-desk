@@ -916,8 +916,65 @@ function nodePathsFromStatement(statement: string): string[][] {
 }
 
 function extractD2Path(text: string) {
-  const match = text.trimEnd().match(/[\w-]+(?:\.[\w-]+)*\.?$/);
+  const trimmed = text.trimEnd();
+  const wholePath = extractWholeD2Path(trimmed);
+  if (wholePath.length > 0) return wholePath;
+
+  const match = trimmed.match(/[\w$-]+(?:\.[\w$-]+)*\.?$/);
   return match ? match[0].replace(/\.$/, "").split(".").filter(Boolean) : [];
+}
+
+function extractWholeD2Path(text: string) {
+  const start = firstNonD2PathWhitespaceIndex(text);
+  if (start >= text.length) return [];
+
+  if (text[start] === '"' || text[start] === "'") {
+    const end = quotedD2TokenEnd(text, start);
+    return end === text.length - 1 ? [text.slice(start + 1, end)] : [];
+  }
+
+  for (let index = start; index < text.length; index += 1) {
+    if (!isSimpleUnquotedD2PathCharacter(text[index])) return [];
+  }
+
+  const segments = text
+    .slice(start)
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  return segments.length > 0 ? segments : [];
+}
+
+function firstNonD2PathWhitespaceIndex(text: string) {
+  for (let index = 0; index < text.length; index += 1) {
+    if (!isD2PathWhitespace(text[index])) return index;
+  }
+  return text.length;
+}
+
+function quotedD2TokenEnd(text: string, start: number) {
+  const quote = text[start];
+  let escaped = false;
+  for (let index = start + 1; index < text.length; index += 1) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (text[index] === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (text[index] === quote) return index;
+  }
+  return -1;
+}
+
+function isSimpleUnquotedD2PathCharacter(character: string) {
+  return /^[A-Za-z0-9_$.\-\s]$/.test(character);
+}
+
+function isD2PathWhitespace(character: string) {
+  return character === " " || character === "\t" || character === "\r" || character === "\n";
 }
 
 function stripD2LineComment(text: string) {

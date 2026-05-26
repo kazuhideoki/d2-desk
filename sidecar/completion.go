@@ -1051,6 +1051,17 @@ func extractD2KeyPath(prefix string) []string {
 	for end > 0 && (prefix[end-1] == ' ' || prefix[end-1] == '\t') {
 		end--
 	}
+	if end == 0 {
+		return nil
+	}
+
+	if pathRange, ok := sourcePathRange(prefix[:end], 1, 0, false); ok {
+		start := firstNonSpaceIndex(prefix[:end])
+		if pathRange.rangeValue.StartColumn == start+1 && pathRange.rangeValue.EndColumn == end+1 {
+			return pathRange.path
+		}
+	}
+
 	start := end
 	for start > 0 {
 		char := prefix[start-1]

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
 import {
+  configureD2Language,
   encodeD2SemanticTokens,
   getD2CompletionContext,
   isD2LineCommentPosition,
@@ -83,6 +85,55 @@ describe("d2Language", () => {
     expect(getD2CompletionContext("email@example", "email@example".length + 1)).toBeNull();
     expect(getD2CompletionContext("shape rec", "shape rec".length + 1)).toBeNull();
     expect(getD2CompletionContext("", 1)).toBeNull();
+  });
+
+  it("preserves spaces in local fallback child node completions", async () => {
+    const providers: Array<{
+      provideCompletionItems: (model: unknown, position: { lineNumber: number; column: number }) => Promise<{
+        suggestions: Array<{ insertText: string; label: string | { label: string } }>;
+      }>;
+    }> = [];
+    const monaco = {
+      languages: {
+        CompletionItemKind: { Color: 1, File: 2, EnumMember: 3, Property: 4 },
+        register: vi.fn(),
+        setLanguageConfiguration: vi.fn(),
+        setMonarchTokensProvider: vi.fn(),
+        registerDocumentSemanticTokensProvider: vi.fn(),
+        registerSelectionRangeProvider: vi.fn(),
+        registerCompletionItemProvider: vi.fn((_language: string, provider) => {
+          providers.push(provider);
+        }),
+      },
+      editor: {
+        defineTheme: vi.fn(),
+      },
+    };
+    const source = `status: {
+  hoge tnse
+}
+status.`;
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("sidecar unavailable"));
+
+    configureD2Language(monaco as never);
+    const result = await providers[0].provideCompletionItems(
+      {
+        getLineContent: (lineNumber: number) => source.split("\n")[lineNumber - 1],
+        getValue: () => source,
+      },
+      { lineNumber: 4, column: "status.".length + 1 },
+    );
+
+    expect(result.suggestions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ insertText: "hoge tnse" }),
+      ]),
+    );
+    expect(result.suggestions).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ insertText: "tnse" }),
+      ]),
+    );
   });
 
   it("encodes D2 semantic tokens using Monaco delta positions", () => {

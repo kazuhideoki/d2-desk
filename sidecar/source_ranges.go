@@ -620,6 +620,10 @@ func sourcePathSegments(text string) ([]pathSegmentRange, bool) {
 		}}, true
 	}
 
+	if segments, ok := simpleUnquotedPathSegments(text, start); ok {
+		return segments, true
+	}
+
 	loc := identifierRE.FindStringIndex(text)
 	if loc == nil {
 		return nil, false
@@ -648,6 +652,75 @@ func sourcePathSegments(text string) ([]pathSegmentRange, bool) {
 		return nil, false
 	}
 	return segments, true
+}
+
+func simpleUnquotedPathSegments(text string, start int) ([]pathSegmentRange, bool) {
+	end := len(text)
+	for end > start && isD2PathWhitespace(text[end-1]) {
+		end--
+	}
+	if end <= start {
+		return nil, false
+	}
+
+	for index := start; index < end; index++ {
+		if !isSimpleUnquotedPathChar(text[index]) {
+			return nil, false
+		}
+	}
+
+	segments := []pathSegmentRange{}
+	segmentStart := start
+	for index := start; index <= end; index++ {
+		if index < end && text[index] != '.' {
+			continue
+		}
+		nameStart := segmentStart
+		for nameStart < index && isD2PathWhitespace(text[nameStart]) {
+			nameStart++
+		}
+		nameEnd := index
+		for nameEnd > nameStart && isD2PathWhitespace(text[nameEnd-1]) {
+			nameEnd--
+		}
+		if nameEnd <= nameStart {
+			return nil, false
+		}
+		segments = append(segments, pathSegmentRange{
+			name:       text[nameStart:nameEnd],
+			startIndex: nameStart,
+			endIndex:   nameEnd,
+		})
+		segmentStart = index + 1
+	}
+	if len(segments) == 0 {
+		return nil, false
+	}
+	return segments, true
+}
+
+func isSimpleUnquotedPathChar(char byte) bool {
+	switch {
+	case char >= 'A' && char <= 'Z':
+		return true
+	case char >= 'a' && char <= 'z':
+		return true
+	case char >= '0' && char <= '9':
+		return true
+	case char == '_' || char == '$' || char == '-' || char == '.' || isD2PathWhitespace(char):
+		return true
+	default:
+		return false
+	}
+}
+
+func isD2PathWhitespace(char byte) bool {
+	switch char {
+	case ' ', '\t', '\r', '\n':
+		return true
+	default:
+		return false
+	}
 }
 
 func firstNonSpaceIndex(text string) int {
