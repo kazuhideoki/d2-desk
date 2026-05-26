@@ -169,12 +169,15 @@ fn rename_d2_file(
 
 #[tauri::command]
 fn open_file_with_editor(path: String) -> Result<(), String> {
+    open_existing_path_with_editor(PathBuf::from(path))
+}
+
+fn open_existing_path_with_editor(path: PathBuf) -> Result<(), String> {
     let editor = std::env::var("EDITOR").map_err(|_| "$EDITOR is not set".to_string())?;
     if editor.trim().is_empty() {
         return Err("$EDITOR is empty".to_string());
     }
 
-    let path = PathBuf::from(path);
     if !path.exists() {
         return Err(format!("file does not exist: {}", path.display()));
     }
@@ -191,6 +194,19 @@ fn open_file_with_editor(path: String) -> Result<(), String> {
         .map_err(|err| format!("failed to open $EDITOR: {err}"))?;
 
     Ok(())
+}
+
+#[tauri::command]
+fn open_workspace_with_editor(root_path: String) -> Result<(), String> {
+    let root = PathBuf::from(root_path);
+    let root = root
+        .canonicalize()
+        .map_err(|err| format!("failed to open workspace folder {}: {err}", root.display()))?;
+    if !root.is_dir() {
+        return Err(format!("workspace is not a folder: {}", root.display()));
+    }
+
+    open_existing_path_with_editor(root)
 }
 
 #[tauri::command]
@@ -1070,6 +1086,7 @@ pub fn run() {
             rename_d2_file,
             list_workspace_files,
             open_file_with_editor,
+            open_workspace_with_editor,
             open_workspace_in_finder,
             close_current_window,
             open_preview_window,
