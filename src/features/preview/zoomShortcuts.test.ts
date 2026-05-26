@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { previewZoomShortcutAction } from "./zoomShortcuts";
+import { previewZoomShortcutAction, previewZoomWheelAction } from "./zoomShortcuts";
 
 const baseEvent = {
   key: "",
@@ -27,5 +27,29 @@ describe("preview zoom shortcuts", () => {
       previewZoomShortcutAction({ ...baseEvent, key: "+", metaKey: true, altKey: true }),
     ).toBeNull();
     expect(previewZoomShortcutAction({ ...baseEvent, key: "0", metaKey: true })).toBeNull();
+  });
+
+  it("matches command wheel direction", () => {
+    expect(previewZoomWheelAction({ deltaY: -1, metaKey: true, ctrlKey: false, altKey: false })).toBe(
+      "zoomIn",
+    );
+    expect(previewZoomWheelAction({ deltaY: 1, metaKey: true, ctrlKey: false, altKey: false })).toBe(
+      "zoomOut",
+    );
+  });
+
+  it("ignores wheel events without command or with option/control", () => {
+    expect(
+      previewZoomWheelAction({ deltaY: -1, metaKey: false, ctrlKey: false, altKey: false }),
+    ).toBeNull();
+    expect(
+      previewZoomWheelAction({ deltaY: -1, metaKey: true, ctrlKey: true, altKey: false }),
+    ).toBeNull();
+    expect(
+      previewZoomWheelAction({ deltaY: -1, metaKey: true, ctrlKey: false, altKey: true }),
+    ).toBeNull();
+    expect(
+      previewZoomWheelAction({ deltaY: 0, metaKey: true, ctrlKey: false, altKey: false }),
+    ).toBeNull();
   });
 });

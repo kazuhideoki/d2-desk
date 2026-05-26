@@ -1,4 +1,11 @@
-import { maxZoom, minAutoZoom, minZoom, zoomStep, zoomStepAbove200 } from "./constants";
+import {
+  fineZoomStep,
+  maxZoom,
+  minAutoZoom,
+  minZoom,
+  zoomStep,
+  zoomStepAbove200,
+} from "./constants";
 import type { D2Object, D2Point } from "./types";
 
 export function routePath(route: D2Point[]) {
@@ -34,6 +41,14 @@ export function increaseZoom(value: number) {
 export function decreaseZoom(value: number) {
   if (value > 2) return clampZoom(Math.max(2, value - zoomStepAbove200));
   return clampZoom(value - zoomStep);
+}
+
+export function increaseZoomFine(value: number) {
+  return clampZoom(value + fineZoomStep);
+}
+
+export function decreaseZoomFine(value: number) {
+  return clampZoom(value - fineZoomStep);
 }
 
 export function fitBoundsZoom(

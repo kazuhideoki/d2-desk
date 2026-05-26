@@ -6,6 +6,13 @@ type PreviewZoomShortcutEvent = {
   altKey: boolean;
 };
 
+type PreviewZoomWheelEvent = {
+  deltaY: number;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+};
+
 export type PreviewZoomShortcutAction = "zoomIn" | "zoomOut";
 
 export function previewZoomShortcutAction(
@@ -21,4 +28,11 @@ export function previewZoomShortcutAction(
   }
 
   return null;
+}
+
+export function previewZoomWheelAction(
+  event: PreviewZoomWheelEvent,
+): PreviewZoomShortcutAction | null {
+  if (!event.metaKey || event.ctrlKey || event.altKey || event.deltaY === 0) return null;
+  return event.deltaY < 0 ? "zoomIn" : "zoomOut";
 }

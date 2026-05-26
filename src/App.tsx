@@ -102,12 +102,14 @@ import type {
 import {
   baseName,
   decreaseZoom,
+  decreaseZoomFine,
   downloadBytes,
   downloadURL,
   ensureD2FileName,
   fileNameFromPath,
   getDiagramViewBox,
   increaseZoom,
+  increaseZoomFine,
   moveSelectionIndex,
   normalizeSvgSize,
 } from "./utils";
@@ -308,6 +310,16 @@ function PreviewWindowApp() {
     setPreviewZoom(decreaseZoom);
   }
 
+  function zoomPreviewInFine() {
+    setPreviewZoomMode("manual");
+    setPreviewZoom(increaseZoomFine);
+  }
+
+  function zoomPreviewOutFine() {
+    setPreviewZoomMode("manual");
+    setPreviewZoom(decreaseZoomFine);
+  }
+
   const selectDetachedPreviewBoard = useCallback((boardPath: string[]) => {
     setPreviewZoomMode("auto");
     void emitTo("main", "d2-desk-select-preview-board", boardPath);
@@ -330,6 +342,8 @@ function PreviewWindowApp() {
         onZoomOut={zoomPreviewOut}
         onResetZoom={resetPreviewZoom}
         onZoomIn={zoomPreviewIn}
+        onFineZoomOut={zoomPreviewOutFine}
+        onFineZoomIn={zoomPreviewInFine}
         onZoomModeChange={setPreviewZoomMode}
         onAutoZoomChange={setPreviewZoom}
         onBoardPathChange={selectDetachedPreviewBoard}
@@ -2956,6 +2970,16 @@ function MainApp() {
     setPreviewZoom(decreaseZoom);
   }
 
+  function zoomPreviewInFine() {
+    setPreviewZoomMode("manual");
+    setPreviewZoom(increaseZoomFine);
+  }
+
+  function zoomPreviewOutFine() {
+    setPreviewZoomMode("manual");
+    setPreviewZoom(decreaseZoomFine);
+  }
+
   const paletteCommands = useMemo<AppCommand[]>(
     () => [
       ...createOpenCurrentWorkspaceCommands(
@@ -3490,6 +3514,8 @@ function MainApp() {
             onZoomOut={zoomPreviewOut}
             onResetZoom={resetPreviewZoom}
             onZoomIn={zoomPreviewIn}
+            onFineZoomOut={zoomPreviewOutFine}
+            onFineZoomIn={zoomPreviewInFine}
             onZoomModeChange={setPreviewZoomMode}
             onAutoZoomChange={setAutoPreviewZoom}
             onBoardPathChange={selectPreviewBoard}
