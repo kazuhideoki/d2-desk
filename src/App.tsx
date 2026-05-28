@@ -396,19 +396,13 @@ function MainApp() {
   const [editorZoom, setEditorZoom] = useState(1);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewZoomMode, setPreviewZoomMode] = useState<PreviewZoomMode>("auto");
-<<<<<<< HEAD
-  const [previewViewMode, setPreviewViewMode] = useState<PreviewViewMode>("split");
-  const [previewDetached, setPreviewDetached] = useState(false);
-  const [bottomPanelVisible, setBottomPanelVisible] = useState(loadBottomPanelVisible);
-=======
   const [previewViewMode, setPreviewViewMode] = useState<PreviewViewMode>(
     () => initialPreviewLayoutRef.current!.viewMode,
   );
   const [previewDetached, setPreviewDetached] = useState(
     () => initialPreviewLayoutRef.current!.detached,
   );
-  const [bottomPanelVisible, setBottomPanelVisible] = useState(true);
->>>>>>> feat/persist-preview-mode
+  const [bottomPanelVisible, setBottomPanelVisible] = useState(loadBottomPanelVisible);
   const [perfDebugOptions, setPerfDebugOptions] =
     useState<PerfDebugOptions>(defaultPerfDebugOptions);
   const [selectedBoardPath, setSelectedBoardPath] = useState<string[]>([]);
