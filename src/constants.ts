@@ -31,3 +31,4 @@ export const zoomStepAbove200 = 0.2;
 export const fineZoomStep = 0.01;
 export const tabsStorageKey = "d2-desk:tabs";
 export const workspacesStorageKey = "d2-desk:workspaces";
+export const previewLayoutStorageKey = "d2-desk:preview-layout";
