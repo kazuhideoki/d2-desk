@@ -31,4 +31,8 @@ export const zoomStepAbove200 = 0.2;
 export const fineZoomStep = 0.01;
 export const tabsStorageKey = "d2-desk:tabs";
 export const workspacesStorageKey = "d2-desk:workspaces";
+<<<<<<< HEAD
 export const bottomPanelVisibilityStorageKey = "d2-desk:bottom-panel-visible";
+=======
+export const previewLayoutStorageKey = "d2-desk:preview-layout";
+>>>>>>> feat/persist-preview-mode

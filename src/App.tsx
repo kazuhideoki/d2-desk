@@ -51,9 +51,11 @@ import {
   boardPathKey,
 } from "./features/preview/boards";
 import {
+  loadPreviewLayout,
   nextPreviewViewMode,
   previewViewModeStatus,
   type PreviewViewMode,
+  writePreviewLayout,
 } from "./features/preview/viewMode";
 import { RenameNodeDialog, type RenameDialogState } from "./features/rename-node/RenameNodeDialog";
 import { BottomPanel } from "./features/status/BottomPanel";
@@ -365,6 +367,10 @@ function MainApp() {
   if (!initialSessionRef.current) {
     initialSessionRef.current = loadInitialSession();
   }
+  const initialPreviewLayoutRef = useRef<ReturnType<typeof loadPreviewLayout> | null>(null);
+  if (!initialPreviewLayoutRef.current) {
+    initialPreviewLayoutRef.current = loadPreviewLayout();
+  }
 
   const [workspaceState, setWorkspaceState] = useState(
     () => initialSessionRef.current!.workspaceState,
@@ -390,9 +396,19 @@ function MainApp() {
   const [editorZoom, setEditorZoom] = useState(1);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewZoomMode, setPreviewZoomMode] = useState<PreviewZoomMode>("auto");
+<<<<<<< HEAD
   const [previewViewMode, setPreviewViewMode] = useState<PreviewViewMode>("split");
   const [previewDetached, setPreviewDetached] = useState(false);
   const [bottomPanelVisible, setBottomPanelVisible] = useState(loadBottomPanelVisible);
+=======
+  const [previewViewMode, setPreviewViewMode] = useState<PreviewViewMode>(
+    () => initialPreviewLayoutRef.current!.viewMode,
+  );
+  const [previewDetached, setPreviewDetached] = useState(
+    () => initialPreviewLayoutRef.current!.detached,
+  );
+  const [bottomPanelVisible, setBottomPanelVisible] = useState(true);
+>>>>>>> feat/persist-preview-mode
   const [perfDebugOptions, setPerfDebugOptions] =
     useState<PerfDebugOptions>(defaultPerfDebugOptions);
   const [selectedBoardPath, setSelectedBoardPath] = useState<string[]>([]);
@@ -558,6 +574,10 @@ function MainApp() {
   useEffect(() => {
     selectedBoardPathRef.current = selectedBoardPath;
   }, [selectedBoardPath]);
+
+  useEffect(() => {
+    writePreviewLayout({ viewMode: previewViewMode, detached: previewDetached });
+  }, [previewDetached, previewViewMode]);
 
   function invalidateCursorLookup() {
     compileResultSourceRef.current = null;
@@ -1532,6 +1552,32 @@ function MainApp() {
     }
   }, [previewDetached, sendDetachedPreviewState]);
 
+  useEffect(() => {
+    if (!initialPreviewLayoutRef.current?.detached) return;
+
+    let canceled = false;
+    async function restoreDetachedPreview() {
+      try {
+        await invoke("open_preview_window");
+        if (!canceled) {
+          sendDetachedPreviewState();
+          setStatus("Preview restored to separate window");
+        }
+      } catch (error) {
+        if (!canceled) {
+          setPreviewDetached(false);
+          setPreviewViewMode("split");
+          setStatus(String(error));
+        }
+      }
+    }
+
+    void restoreDetachedPreview();
+    return () => {
+      canceled = true;
+    };
+  }, [sendDetachedPreviewState]);
+
   const goToSymbol = useCallback((symbolId: string) => {
     setSymbolPalette(null);
     setActiveId(symbolId);
@@ -2091,6 +2137,7 @@ function MainApp() {
     quitInFlightRef.current = true;
 
     try {
+      writePreviewLayout({ viewMode: previewViewMode, detached: previewDetached });
       persistActiveEditorViewState();
       setStatus("Quitting");
       try {
@@ -2101,7 +2148,7 @@ function MainApp() {
     } finally {
       quitInFlightRef.current = false;
     }
-  }, [persistActiveEditorViewState]);
+  }, [persistActiveEditorViewState, previewDetached, previewViewMode]);
 
   const applyWorkspaceSelection = useCallback(
     (
