@@ -57,6 +57,10 @@ import {
 } from "./features/preview/viewMode";
 import { RenameNodeDialog, type RenameDialogState } from "./features/rename-node/RenameNodeDialog";
 import { BottomPanel } from "./features/status/BottomPanel";
+import {
+  loadBottomPanelVisible,
+  writeBottomPanelVisible,
+} from "./features/status/bottomPanelVisibility";
 import { SymbolPalette, type SymbolPaletteState } from "./features/symbol-palette/SymbolPalette";
 import {
   buildD2SymbolEntries,
@@ -388,7 +392,7 @@ function MainApp() {
   const [previewZoomMode, setPreviewZoomMode] = useState<PreviewZoomMode>("auto");
   const [previewViewMode, setPreviewViewMode] = useState<PreviewViewMode>("split");
   const [previewDetached, setPreviewDetached] = useState(false);
-  const [bottomPanelVisible, setBottomPanelVisible] = useState(true);
+  const [bottomPanelVisible, setBottomPanelVisible] = useState(loadBottomPanelVisible);
   const [perfDebugOptions, setPerfDebugOptions] =
     useState<PerfDebugOptions>(defaultPerfDebugOptions);
   const [selectedBoardPath, setSelectedBoardPath] = useState<string[]>([]);
@@ -1463,8 +1467,10 @@ function MainApp() {
 
   const toggleBottomPanel = useCallback(() => {
     setBottomPanelVisible((visible) => {
-      setStatus(visible ? "Bottom panel hidden" : "Bottom panel shown");
-      return !visible;
+      const nextVisible = !visible;
+      writeBottomPanelVisible(nextVisible);
+      setStatus(nextVisible ? "Bottom panel shown" : "Bottom panel hidden");
+      return nextVisible;
     });
   }, []);
 
