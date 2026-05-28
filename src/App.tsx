@@ -10,6 +10,7 @@ import { CommandPalette } from "./features/command-palette/CommandPalette";
 import {
   createOpenCurrentWorkspaceCommands,
   createPreviewAutoZoomCommand,
+  createRemoveCurrentWorkspaceCommand,
   createWorkspaceSelectionCommands,
 } from "./features/command-palette/commands";
 import { isCommandEnabled, type AppCommand } from "./shared/commands";
@@ -2991,6 +2992,15 @@ function MainApp() {
           void openActiveWorkspaceWithEditor();
         },
       ),
+      createRemoveCurrentWorkspaceCommand(
+        workspaceState.activeWorkspaceId !== null,
+        () => {
+          const workspaceId = activeWorkspaceIdRef.current;
+          if (workspaceId) {
+            void removeRegisteredWorkspace(workspaceId);
+          }
+        },
+      ),
       {
         id: "workspace.openFolder",
         title: "Open Workspace Folder",
@@ -3271,6 +3281,7 @@ function MainApp() {
       quitApplication,
       renameFocusedNode,
       renameFocusedFile,
+      removeRegisteredWorkspace,
       saveSource,
       selectSyntaxNode,
       source,

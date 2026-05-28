@@ -4,6 +4,7 @@ import type { Workspace } from "../../types";
 import {
   createOpenCurrentWorkspaceCommands,
   createPreviewAutoZoomCommand,
+  createRemoveCurrentWorkspaceCommand,
   createWorkspaceSelectionCommands,
   filterCommands,
 } from "./commands";
@@ -117,6 +118,27 @@ describe("commands", () => {
     expect(
       createOpenCurrentWorkspaceCommands(false, noop, noop).map((command) => command.enabled),
     ).toEqual([false, false]);
+  });
+
+  it("builds the current workspace remove command", () => {
+    let removed = false;
+    const removeCommand = createRemoveCurrentWorkspaceCommand(true, () => {
+      removed = true;
+    });
+
+    expect(removeCommand).toMatchObject({
+      id: "workspace.removeCurrent",
+      title: "Remove Current Workspace",
+      category: "Workspace",
+      enabled: true,
+    });
+    expect(filterCommands([removeCommand], "delete project").map((command) => command.id)).toEqual([
+      "workspace.removeCurrent",
+    ]);
+
+    removeCommand.run();
+    expect(removed).toBe(true);
+    expect(createRemoveCurrentWorkspaceCommand(false, noop).enabled).toBe(false);
   });
 
   it("builds the preview auto zoom toggle command", () => {

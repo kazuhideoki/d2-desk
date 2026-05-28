@@ -123,6 +123,29 @@ export function createOpenCurrentWorkspaceCommands(
   ];
 }
 
+export function createRemoveCurrentWorkspaceCommand(
+  hasActiveWorkspace: boolean,
+  onRemoveCurrentWorkspace: () => void | Promise<void>,
+): AppCommand {
+  return {
+    id: "workspace.removeCurrent",
+    title: "Remove Current Workspace",
+    category: "Workspace",
+    keywords: [
+      "current",
+      "active",
+      "delete",
+      "remove",
+      "unregister",
+      "folder",
+      "directory",
+      "project",
+    ],
+    enabled: hasActiveWorkspace,
+    run: onRemoveCurrentWorkspace,
+  };
+}
+
 export function createPreviewAutoZoomCommand(
   previewZoomMode: PreviewZoomMode,
   onZoomModeChange: (zoomMode: PreviewZoomMode) => void,
