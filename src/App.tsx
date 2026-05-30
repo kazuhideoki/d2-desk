@@ -76,9 +76,11 @@ import {
   sourceRangeToMonacoRange,
 } from "./d2Language";
 import {
+  activeTabIdAfterClose,
   applyExternalFileContents,
   createTab,
   createEmptyTab,
+  emptyActiveTabId,
   hasTabPendingUserChanges,
   insertTabAfter,
   loadActiveTabId,
@@ -450,7 +452,7 @@ function MainApp() {
     [activeTabId, tabs],
   );
   const source = activeTab?.source ?? "";
-  const fileName = activeTab?.fileName ?? "untitled.d2";
+  const fileName = activeTab?.fileName ?? "No file";
   const currentFilePath = tabAbsolutePath(activeTab);
   const selectedBoardPathKey = useMemo(() => boardPathKey(selectedBoardPath), [selectedBoardPath]);
   const latestCompileInputsRef = useRef({ tabId: activeTabId, source });
@@ -1233,7 +1235,9 @@ function MainApp() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("d2-desk:last-source", source);
+    if (activeTab) {
+      localStorage.setItem("d2-desk:last-source", source);
+    }
     if (!isEditingIconValueCompletion()) {
       clearSuggestPreview();
     }
@@ -1271,6 +1275,7 @@ function MainApp() {
     perfDebugOptions.previewCompile,
     selectedBoardPathKey,
     source,
+    activeTab,
   ]);
 
   useEffect(() => {
@@ -1323,6 +1328,11 @@ function MainApp() {
       }
 
       const result = await invoke<OpenedD2File>("read_d2_file", { path: selected });
+      if (!tabsRef.current.some((tab) => tab.id === activeTabIdRef.current)) {
+        openFileInNewTab(result);
+        return;
+      }
+
       updateActiveTab({
         source: result.contents,
         savedSource: result.contents,
@@ -1336,7 +1346,7 @@ function MainApp() {
     } catch (error) {
       setStatus(String(error));
     }
-  }, [currentFilePath, updateActiveTab]);
+  }, [currentFilePath, openFileInNewTab, updateActiveTab]);
 
   const openWorkspaceFilePalette = useCallback(async () => {
     const workspaceId = activeWorkspaceIdRef.current;
@@ -1584,6 +1594,11 @@ function MainApp() {
     saveSourceInFlightRef.current = true;
 
     try {
+      if (!activeTab) {
+        setStatus("Create a tab before saving");
+        return;
+      }
+
       const path =
         currentFilePath ??
         (await save({
@@ -1615,10 +1630,15 @@ function MainApp() {
     } finally {
       saveSourceInFlightRef.current = false;
     }
-  }, [confirmExternalOverwrite, currentFilePath, fileName, source, updateActiveTab]);
+  }, [activeTab, confirmExternalOverwrite, currentFilePath, fileName, source, updateActiveTab]);
 
   const openWithEditor = useCallback(async () => {
     try {
+      if (!activeTab) {
+        setStatus("Create a tab before opening with $EDITOR");
+        return;
+      }
+
       const path =
         currentFilePath ??
         (await save({
@@ -1649,7 +1669,7 @@ function MainApp() {
     } catch (error) {
       setStatus(String(error));
     }
-  }, [confirmExternalOverwrite, currentFilePath, fileName, source, updateActiveTab]);
+  }, [activeTab, confirmExternalOverwrite, currentFilePath, fileName, source, updateActiveTab]);
 
   const renameFocusedFile = useCallback(() => {
     if (!currentFilePath) {
@@ -1749,6 +1769,11 @@ function MainApp() {
   }, [currentFilePath, fileName, renameFileDialog]);
 
   const formatDocument = useCallback(async () => {
+    if (!activeTab) {
+      setStatus("Create a tab before formatting");
+      return;
+    }
+
     const editor = editorRef.current;
     const model = editor?.getModel() ?? null;
     const sourceToFormat = model?.getValue() ?? source;
@@ -1780,7 +1805,7 @@ function MainApp() {
     } catch (error) {
       setStatus(String(error));
     }
-  }, [restoreEditorViewStateAfterSourceUpdate, source, updateActiveTab]);
+  }, [activeTab, restoreEditorViewStateAfterSourceUpdate, source, updateActiveTab]);
 
   const selectSyntaxNode = useCallback(async (direction: "larger" | "smaller") => {
     const editor = editorRef.current;
@@ -2054,22 +2079,12 @@ function MainApp() {
         }
       }
 
-      if (currentTabs.length === 1) {
-        setStatus(`Closing ${targetTab.fileName}`);
-        try {
-          await invoke("close_current_window");
-        } catch {
-          window.close();
-        }
-        return;
-      }
-
-      const targetIndex = currentTabs.findIndex((tab) => tab.id === tabId);
       const nextTabs = currentTabs.filter((tab) => tab.id !== tabId);
       if (tabId === activeTabIdRef.current) {
-        const nextActiveTab = nextTabs[Math.min(targetIndex, nextTabs.length - 1)] ?? nextTabs[0];
-        activeTabIdRef.current = nextActiveTab.id;
-        setActiveTabId(nextActiveTab.id);
+        const nextActiveTabId = activeTabIdAfterClose(currentTabs, activeTabIdRef.current, tabId);
+        activeTabIdRef.current = nextActiveTabId;
+        editorTabIdRef.current = nextActiveTabId;
+        setActiveTabId(nextActiveTabId);
         setActiveId(null);
         setHoverId(null);
       }
@@ -2083,6 +2098,7 @@ function MainApp() {
   }, [persistActiveEditorViewState, persistTabs]);
 
   const closeActiveTab = useCallback(() => {
+    if (activeTabId === emptyActiveTabId) return;
     void closeTab(activeTabId);
   }, [activeTabId, closeTab]);
 
@@ -3070,6 +3086,7 @@ function MainApp() {
         category: "File",
         keywords: ["write"],
         shortcut: "Command/Ctrl + S",
+        enabled: Boolean(activeTab),
         run: saveSource,
       },
       {
@@ -3077,6 +3094,7 @@ function MainApp() {
         title: "Open Current D2 File with $EDITOR",
         category: "File",
         keywords: ["external", "editor"],
+        enabled: Boolean(activeTab),
         run: openWithEditor,
       },
       {
@@ -3103,6 +3121,7 @@ function MainApp() {
         category: "File",
         keywords: ["current", "active"],
         shortcut: "Command/Ctrl + W",
+        enabled: Boolean(activeTab),
         run: closeActiveTab,
       },
       {
@@ -3121,6 +3140,7 @@ function MainApp() {
         category: "Edit",
         keywords: ["source"],
         shortcut: "Command + Shift + I",
+        enabled: Boolean(activeTab),
         run: formatDocument,
       },
       {
@@ -3266,6 +3286,7 @@ function MainApp() {
     ],
     [
       bottomPanelVisible,
+      activeTab,
       closeActiveTab,
       compileResult.boards,
       copyFocusedTabAbsolutePath,

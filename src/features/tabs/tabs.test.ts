@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sampleSource, tabsStorageKey } from "../../constants";
 import {
+  activeTabIdAfterClose,
   applyExternalFileContents,
   createEmptyTab,
   createTab,
@@ -102,6 +103,16 @@ describe("tabs", () => {
     localStorage.setItem(tabsStorageKey, "{");
 
     expect(loadTabs()[0]).toMatchObject({ source: "fallback" });
+  });
+
+  it("creates a startup fallback tab when the persisted tab list is empty", () => {
+    localStorage.setItem("d2-desk:last-source", "fallback");
+    localStorage.setItem(tabsStorageKey, JSON.stringify({ activeTabId: "", tabs: [] }));
+
+    const tabs = loadTabs();
+
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]).toMatchObject({ fileName: "untitled.d2", source: "fallback" });
   });
 
   it("keeps the stored active tab only when it exists", () => {
@@ -276,6 +287,24 @@ describe("tabs", () => {
       "one",
       "inserted",
     ]);
+  });
+
+  it("selects the next active tab after closing the current tab", () => {
+    const tabs = [
+      { ...createTab("one.d2", ""), id: "one" },
+      { ...createTab("two.d2", ""), id: "two" },
+      { ...createTab("three.d2", ""), id: "three" },
+    ];
+
+    expect(activeTabIdAfterClose(tabs, "two", "two")).toBe("three");
+    expect(activeTabIdAfterClose(tabs, "three", "three")).toBe("two");
+    expect(activeTabIdAfterClose(tabs, "two", "one")).toBe("two");
+  });
+
+  it("allows closing the last tab without selecting a replacement", () => {
+    const tabs = [{ ...createTab("one.d2", ""), id: "one" }];
+
+    expect(activeTabIdAfterClose(tabs, "one", "one")).toBe("");
   });
 
   it("keeps tab order when a reorder request is invalid", () => {
