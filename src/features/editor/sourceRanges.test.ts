@@ -5,9 +5,11 @@ import {
   nextLargerSourceRange,
   nextSmallerSourceRange,
   objectIdAtPosition,
+  shapeIdForSelectionRange,
   sourceRangeContains,
   sourceRangeContainsRange,
   sourceRangeEquals,
+  sourceRangeIntersectsRange,
   sortSourceRangesSmallestFirst,
 } from "./sourceRanges";
 
@@ -64,6 +66,9 @@ describe("sourceRanges", () => {
       statement,
       block,
     ]);
+    expect(sourceRangeIntersectsRange(statement, token)).toBe(true);
+    expect(sourceRangeIntersectsRange(token, range(2, 7, 2, 9))).toBe(false);
+    expect(sourceRangeIntersectsRange(block, range(4, 2, 5, 1))).toBe(true);
   });
 
   it("finds adjacent larger and smaller syntax ranges", () => {
@@ -114,5 +119,16 @@ describe("sourceRanges", () => {
     expect(connectionIdAtPosition(objects, 1, 2)).toBe("(api -> db)[0]");
     expect(connectionIdAtPosition(objects, 1, 6)).toBe("(api -> db)[0]");
     expect(connectionIdAtPosition(objects, 2, 1)).toBeNull();
+  });
+
+  it("finds a shape from a selected source range instead of cursor endpoint only", () => {
+    const objects: CompileResult["objects"] = [
+      object("hoge", [range(1, 1, 1, 5), range(1, 1, 3, 2)]),
+      object("hoge.fuga", [range(2, 3, 2, 7)]),
+    ];
+
+    expect(shapeIdForSelectionRange(objects, range(2, 3, 2, 7))).toBe("hoge.fuga");
+    expect(shapeIdForSelectionRange(objects, range(1, 1, 3, 2))).toBe("hoge");
+    expect(shapeIdForSelectionRange(objects, range(1, 1, 4, 1))).toBe("hoge");
   });
 });
