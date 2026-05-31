@@ -24,6 +24,7 @@ import {
   nextLargerSourceRange,
   nextSmallerSourceRange,
   sortSourceRangesSmallestFirst,
+  sourceRangeContainsRange,
   sourceRangeEquals,
 } from "./features/editor/sourceRanges";
 import { findSwitchableEdge, switchEdgeDirectionInSource } from "./features/editor/switchEdge";
@@ -137,6 +138,16 @@ type FocusedPane = "editor" | "preview";
 type RenameNodeResult = {
   source: string;
   id: string;
+};
+
+type AddParentNodeResult = {
+  source: string;
+  ids: string[];
+  parentId: string;
+};
+
+type AddParentDialogState = RenameDialogState & {
+  ids: string[];
 };
 
 type EditorCursorSnapshot = {
@@ -268,6 +279,33 @@ function monacoSelectionToSourceRange(selection: Monaco.Selection): SourceRange 
     endLine: end.lineNumber,
     endColumn: end.column,
   };
+}
+
+function selectedShapeIdsInRange(objects: CompileResult["objects"], selectionRange: SourceRange) {
+  const matches: Array<{ id: string; range: SourceRange }> = [];
+  for (const object of objects) {
+    if (object.kind !== "shape") continue;
+    const range = (object.sourceRanges ?? []).find((candidate) =>
+      sourceRangeContainsRange(selectionRange, candidate),
+    );
+    if (range) {
+      matches.push({ id: object.id, range });
+    }
+  }
+  return matches
+    .sort((left, right) => {
+      return (
+        left.range.startLine - right.range.startLine ||
+        left.range.startColumn - right.range.startColumn ||
+        left.id.localeCompare(right.id)
+      );
+    })
+    .map((match) => match.id)
+    .filter((id, _index, ids) => !ids.some((otherId) => otherId !== id && isD2IdPrefix(id, otherId)));
+}
+
+function isD2IdPrefix(id: string, prefix: string) {
+  return id === prefix || id.startsWith(`${prefix}.`);
 }
 
 const emptyDetachedPreviewState: DetachedPreviewState = {
@@ -455,6 +493,7 @@ function MainApp() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
+  const [addParentDialog, setAddParentDialog] = useState<AddParentDialogState | null>(null);
   const [renameFileDialog, setRenameFileDialog] = useState<RenameDialogState | null>(null);
   const [filePalette, setFilePalette] = useState<WorkspaceFilePaletteState | null>(null);
   const [symbolPalette, setSymbolPalette] = useState<SymbolPaletteState | null>(null);
@@ -480,6 +519,7 @@ function MainApp() {
   const suggestPreviewTimeoutRef = useRef<number | null>(null);
   const suggestPreviewCacheRef = useRef(new Map<string, CompileResult>());
   const renameInputRef = useRef<HTMLInputElement | null>(null);
+  const addParentInputRef = useRef<HTMLInputElement | null>(null);
   const renameFileInputRef = useRef<HTMLInputElement | null>(null);
   const filePaletteInputRef = useRef<HTMLInputElement | null>(null);
   const symbolPaletteInputRef = useRef<HTMLInputElement | null>(null);
@@ -501,6 +541,7 @@ function MainApp() {
   const fileSyncPollInFlightRef = useRef(false);
   const saveSourceInFlightRef = useRef(false);
   const renameEditorCursorSnapshotRef = useRef<EditorCursorSnapshot | null>(null);
+  const addParentEditorCursorSnapshotRef = useRef<EditorCursorSnapshot | null>(null);
   const workspaceStateRef = useRef(workspaceState);
   const activeWorkspaceIdRef = useRef(workspaceState.activeWorkspaceId);
   const tabsRef = useRef(tabs);
@@ -677,6 +718,14 @@ function MainApp() {
       renameInputRef.current?.select();
     });
   }, [renameDialog?.id]);
+
+  useEffect(() => {
+    if (!addParentDialog) return;
+    window.requestAnimationFrame(() => {
+      addParentInputRef.current?.focus();
+      addParentInputRef.current?.select();
+    });
+  }, [addParentDialog?.id]);
 
   useEffect(() => {
     if (!renameFileDialog) return;
@@ -2046,6 +2095,69 @@ function MainApp() {
     setStatus(`Renaming ${targetId}`);
   }, []);
 
+  const addParentToSelectedNodes = useCallback(async () => {
+    const editor = editorRef.current;
+    const currentSource = editor?.getValue() ?? latestCompileInputsRef.current.source;
+    const currentCompileResult = await compileCurrentSourceForLookup(currentSource);
+    if (!currentCompileResult) {
+      setStatus("Add Parent requires a valid diagram");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+
+    const selection = editor?.getSelection() ?? null;
+    let targetIds =
+      selection && !selection.isEmpty()
+        ? selectedShapeIdsInRange(currentCompileResult.objects, monacoSelectionToSourceRange(selection))
+        : [];
+
+    if (targetIds.length === 0) {
+      const editorPosition = editor?.getPosition() ?? null;
+      const shouldPreferEditorCursor = editor?.hasTextFocus() ?? false;
+      let targetId = shouldPreferEditorCursor ? null : activeIdRef.current;
+
+      if (!targetId && editorPosition) {
+        try {
+          const result = await invoke<{ id?: string }>("sidecar_call", {
+            method: "nodeAt",
+            params: {
+              source: currentSource,
+              line: editorPosition.lineNumber,
+              column: editorPosition.column,
+            },
+          });
+          targetId = result.id ?? null;
+        } catch {
+          targetId = null;
+        }
+      }
+
+      const selectedObject = currentCompileResult.objects.find((object) => object.id === targetId);
+      targetIds = selectedObject?.kind === "shape" ? [selectedObject.id] : [];
+    }
+
+    if (targetIds.length === 0) {
+      setStatus("Select a node to add a parent");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+
+    addParentEditorCursorSnapshotRef.current = editor
+      ? {
+          viewState: editor.saveViewState(),
+          selections: editor.getSelections(),
+          position: editor.getPosition(),
+        }
+      : null;
+    setAddParentDialog({
+      id: targetIds.length === 1 ? targetIds[0] : `${targetIds.length} nodes`,
+      ids: targetIds,
+      value: "",
+      error: null,
+    });
+    setStatus(`Adding parent to ${targetIds.length === 1 ? targetIds[0] : `${targetIds.length} nodes`}`);
+  }, [compileCurrentSourceForLookup]);
+
   const switchFocusedEdgeDirection = useCallback(async () => {
     const editor = editorRef.current;
     const currentSource = editor?.getValue() ?? latestCompileInputsRef.current.source;
@@ -2170,6 +2282,55 @@ function MainApp() {
       );
     }
   }, [renameDialog, restoreEditorViewStateAfterSourceUpdate, updateActiveTab]);
+
+  const commitAddParentNode = useCallback(async () => {
+    if (!addParentDialog) return;
+
+    const parentName = addParentDialog.value.trim();
+    const editorCursorSnapshot =
+      addParentEditorCursorSnapshotRef.current ??
+      (editorRef.current
+        ? {
+            viewState: editorRef.current.saveViewState(),
+            selections: editorRef.current.getSelections(),
+            position: editorRef.current.getPosition(),
+          }
+        : null);
+    if (!nodeRenamePattern.test(parentName)) {
+      setAddParentDialog((current) =>
+        current
+          ? {
+              ...current,
+              error: "Use only letters, numbers, underscores, or hyphens.",
+            }
+          : current,
+      );
+      return;
+    }
+
+    try {
+      const result = await invoke<AddParentNodeResult>("sidecar_call", {
+        method: "addParentNode",
+        params: {
+          source: editorRef.current?.getValue() ?? latestCompileInputsRef.current.source,
+          ids: addParentDialog.ids,
+          parentName,
+        },
+      });
+      updateActiveTab({ source: result.source, editorViewState: editorCursorSnapshot?.viewState });
+      setActiveId(result.parentId);
+      activeIdRef.current = result.parentId;
+      setHoverId(null);
+      setAddParentDialog(null);
+      addParentEditorCursorSnapshotRef.current = null;
+      setStatus(`Added ${result.parentId} as parent`);
+      restoreEditorViewStateAfterSourceUpdate(editorCursorSnapshot, result.source);
+    } catch (error) {
+      setAddParentDialog((current) =>
+        current ? { ...current, error: String(error).replace(/^Error: /, "") } : current,
+      );
+    }
+  }, [addParentDialog, restoreEditorViewStateAfterSourceUpdate, updateActiveTab]);
 
   const closeTab = useCallback(async (tabId: string) => {
     if (closeTabInFlightRef.current) return;
@@ -3297,6 +3458,16 @@ function MainApp() {
         },
       },
       {
+        id: "editor.addParentNode",
+        title: "Add Parent to Selected Node",
+        category: "Edit",
+        keywords: ["symbol", "node", "parent", "wrap", "group", "refactor"],
+        enabled: Boolean(activeTab),
+        run: () => {
+          void addParentToSelectedNodes();
+        },
+      },
+      {
         id: "editor.selectLargerSyntaxNode",
         title: "Select Larger Syntax Node",
         category: "Edit",
@@ -3422,6 +3593,7 @@ function MainApp() {
     [
       bottomPanelVisible,
       activeTab,
+      addParentToSelectedNodes,
       closeActiveTab,
       compileResult.boards,
       copyFocusedTabAbsolutePath,
@@ -3555,6 +3727,30 @@ function MainApp() {
           }}
           onValueChange={(value) =>
             setRenameDialog((current) =>
+              current ? { ...current, value, error: null } : current,
+            )
+          }
+        />
+      ) : null}
+
+      {addParentDialog ? (
+        <RenameNodeDialog
+          state={addParentDialog}
+          inputRef={addParentInputRef}
+          title="Add parent"
+          inputLabel="Parent node name"
+          submitLabel="Add Parent"
+          onSubmit={() => {
+            void commitAddParentNode();
+          }}
+          onCancel={() => {
+            setAddParentDialog(null);
+            addParentEditorCursorSnapshotRef.current = null;
+            setStatus("Add parent canceled");
+            window.requestAnimationFrame(() => editorRef.current?.focus());
+          }}
+          onValueChange={(value) =>
+            setAddParentDialog((current) =>
               current ? { ...current, value, error: null } : current,
             )
           }

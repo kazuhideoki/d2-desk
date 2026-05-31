@@ -11,6 +11,7 @@ type RenameNodeDialogProps = {
   inputRef: RefObject<HTMLInputElement | null>;
   title?: string;
   inputLabel?: string;
+  submitLabel?: string;
   onSubmit: () => void;
   onCancel: () => void;
   onValueChange: (value: string) => void;
@@ -21,6 +22,7 @@ export function RenameNodeDialog({
   inputRef,
   title = "Rename node",
   inputLabel = "Node name",
+  submitLabel = "Rename",
   onSubmit,
   onCancel,
   onValueChange,
@@ -59,7 +61,7 @@ export function RenameNodeDialog({
             Cancel
           </button>
           <button className="dialog-button primary" type="submit">
-            Rename
+            {submitLabel}
           </button>
         </footer>
       </form>
