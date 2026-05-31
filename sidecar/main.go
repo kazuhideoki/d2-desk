@@ -58,6 +58,12 @@ func handle(req request) (any, error) {
 			return nil, err
 		}
 		return renameNode(params)
+	case "addParentNode":
+		var params addParentNodeParams
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return nil, err
+		}
+		return addParentNode(params)
 	case "complete":
 		var params completeParams
 		if err := json.Unmarshal(req.Params, &params); err != nil {
