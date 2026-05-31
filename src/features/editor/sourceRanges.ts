@@ -1,4 +1,4 @@
-import type { CompileResult, SourceRange } from "../../types";
+import type { CompileResult, D2Object, SourceRange } from "../../types";
 
 export function sourceRangeEquals(left: SourceRange, right: SourceRange) {
   return (
@@ -27,6 +27,30 @@ export function sourceRangeContainsRange(outer: SourceRange, inner: SourceRange)
     sourceRangeContains(outer, inner.startLine, inner.startColumn) &&
     sourceRangeContains(outer, inner.endLine, inner.endColumn)
   );
+}
+
+export function sourceRangeStartsBeforeOrAt(left: SourceRange, right: SourceRange) {
+  return (
+    left.startLine < right.startLine ||
+    (left.startLine === right.startLine && left.startColumn <= right.startColumn)
+  );
+}
+
+export function sourceRangeEndsAfterOrAt(left: SourceRange, right: SourceRange) {
+  return (
+    left.endLine > right.endLine ||
+    (left.endLine === right.endLine && left.endColumn >= right.endColumn)
+  );
+}
+
+export function sourceRangeIntersectsRange(left: SourceRange, right: SourceRange) {
+  const leftStartsBeforeRightEnds =
+    left.startLine < right.endLine ||
+    (left.startLine === right.endLine && left.startColumn <= right.endColumn);
+  const rightStartsBeforeLeftEnds =
+    right.startLine < left.endLine ||
+    (right.startLine === left.endLine && right.startColumn <= left.endColumn);
+  return leftStartsBeforeRightEnds && rightStartsBeforeLeftEnds;
 }
 
 export function sourceRangeSize(range: SourceRange) {
@@ -102,4 +126,46 @@ export function connectionIdAtPosition(
     }
   }
   return bestMatch?.id ?? null;
+}
+
+type ObjectSelectionMatch = {
+  object: D2Object;
+  range: SourceRange;
+  size: number;
+};
+
+function shapeRangeMatches(objects: CompileResult["objects"], selectionRange: SourceRange) {
+  const matches: ObjectSelectionMatch[] = [];
+  for (const object of objects) {
+    if (object.kind !== "shape") continue;
+    for (const range of object.sourceRanges ?? []) {
+      if (sourceRangeIntersectsRange(range, selectionRange)) {
+        matches.push({ object, range, size: sourceRangeSize(range) });
+      }
+    }
+  }
+  return matches;
+}
+
+export function shapeIdForSelectionRange(
+  objects: CompileResult["objects"],
+  selectionRange: SourceRange,
+) {
+  const matches = shapeRangeMatches(objects, selectionRange);
+
+  const containingSelection = matches
+    .filter((match) => sourceRangeContainsRange(match.range, selectionRange))
+    .sort((left, right) => left.size - right.size);
+  if (containingSelection[0]) {
+    return containingSelection[0].object.id;
+  }
+
+  const containedBySelection = matches
+    .filter((match) => sourceRangeContainsRange(selectionRange, match.range))
+    .sort((left, right) => right.size - left.size);
+  if (containedBySelection[0]) {
+    return containedBySelection[0].object.id;
+  }
+
+  return null;
 }

@@ -23,11 +23,13 @@ import {
   connectionIdAtPosition,
   nextLargerSourceRange,
   nextSmallerSourceRange,
+  shapeIdForSelectionRange,
   sortSourceRangesSmallestFirst,
   sourceRangeContainsRange,
   sourceRangeEquals,
 } from "./features/editor/sourceRanges";
 import { findSwitchableEdge, switchEdgeDirectionInSource } from "./features/editor/switchEdge";
+import { toggleNestingNotationInSource } from "./features/editor/toggleNestingNotation";
 import {
   completionPreviewSource,
   isD2IconValueCompletionPosition,
@@ -2226,6 +2228,90 @@ function MainApp() {
     restoreEditorViewStateAfterSourceUpdate(nextEditorCursorSnapshot, result.source);
   }, [restoreEditorViewStateAfterSourceUpdate, updateActiveTab]);
 
+  const toggleFocusedNodeNestingNotation = useCallback(async () => {
+    const editor = editorRef.current;
+    const currentSource = editor?.getValue() ?? latestCompileInputsRef.current.source;
+    const currentCompileResult = await compileCurrentSourceForLookup(currentSource);
+    if (!currentCompileResult) {
+      setStatus("Toggle Notation requires a valid diagram");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+
+    const editorPosition = editor?.getPosition() ?? null;
+    const selection = editor?.getSelection() ?? null;
+    const shouldPreferEditorCursor = editor?.hasTextFocus() ?? false;
+    let targetId: string | null = null;
+
+    if (selection && !selection.isEmpty()) {
+      targetId = shapeIdForSelectionRange(
+        currentCompileResult.objects,
+        monacoSelectionToSourceRange(selection),
+      );
+    }
+
+    if (!targetId && !shouldPreferEditorCursor) {
+      targetId = activeIdRef.current;
+    }
+
+    if (!targetId && editorPosition) {
+      try {
+        const result = await invoke<{ id?: string }>("sidecar_call", {
+          method: "nodeAt",
+          params: {
+            source: currentSource,
+            line: editorPosition.lineNumber,
+            column: editorPosition.column,
+          },
+        });
+        targetId = result.id ?? null;
+      } catch {
+        targetId = null;
+      }
+    }
+
+    const selectedObject =
+      currentCompileResult.objects.find((object) => object.id === targetId) ?? null;
+    if (!selectedObject || selectedObject.kind !== "shape") {
+      setStatus("Select a node to toggle notation");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+
+    const editorCursorSnapshot = editor
+      ? {
+          viewState: editor.saveViewState(),
+          selections: null,
+          position: editor.getPosition(),
+        }
+      : null;
+    const result = toggleNestingNotationInSource(
+      currentSource,
+      selectedObject,
+      currentCompileResult.objects,
+    );
+    if (!result.ok) {
+      setStatus(result.reason);
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+
+    const nextEditorCursorSnapshot = editorCursorSnapshot
+      ? {
+          ...editorCursorSnapshot,
+          position: result.cursorPosition,
+        }
+      : null;
+    const nextActiveId = await objectIdAtCurrentPosition(result.source, result.cursorPosition);
+    updateActiveTab({ source: result.source, editorViewState: nextEditorCursorSnapshot?.viewState });
+    activeIdRef.current = nextActiveId ?? selectedObject.id;
+    setActiveId(activeIdRef.current);
+    setHoverId(null);
+    hoverIdRef.current = null;
+    setStatus(`Toggled notation for ${activeIdRef.current}`);
+    restoreEditorViewStateAfterSourceUpdate(nextEditorCursorSnapshot, result.source);
+  }, [restoreEditorViewStateAfterSourceUpdate, updateActiveTab]);
+
   const commitRenameNode = useCallback(async () => {
     if (!renameDialog) return;
 
@@ -3497,6 +3583,16 @@ function MainApp() {
         },
       },
       {
+        id: "editor.toggleNestingNotation",
+        title: "Toggle Nesting Notation",
+        category: "Edit",
+        keywords: ["node", "nest", "dot", "notation", "block", "refactor"],
+        enabled: Boolean(activeTab),
+        run: () => {
+          void toggleFocusedNodeNestingNotation();
+        },
+      },
+      {
         id: "view.openCommandPalette",
         title: "Command Palette",
         category: "View",
@@ -3623,6 +3719,7 @@ function MainApp() {
       switchPreviewBoard,
       toggleBottomPanel,
       toggleDetachedPreview,
+      toggleFocusedNodeNestingNotation,
       togglePreviewViewMode,
       workspaceState,
       workspaceState.activeWorkspaceId,
