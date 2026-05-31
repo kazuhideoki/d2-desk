@@ -157,6 +157,16 @@ type CommandPaletteState = {
   selectedIndex: number;
 };
 
+type UnsavedChangesChoice = "save" | "discard" | "cancel";
+
+type UnsavedChangesDialogState = {
+  title: string;
+  message: string;
+  saveLabel: string;
+  discardLabel: string;
+  resolve: (choice: UnsavedChangesChoice) => void;
+};
+
 type InternalSuggestCompletionItem = {
   completion: Monaco.languages.CompletionItem;
 };
@@ -362,6 +372,66 @@ function PreviewWindowApp() {
   );
 }
 
+function UnsavedChangesDialog({
+  state,
+  onChoose,
+}: {
+  state: UnsavedChangesDialogState;
+  onChoose: (choice: UnsavedChangesChoice) => void;
+}) {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      onChoose("cancel");
+    };
+
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
+  }, [onChoose]);
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section
+        aria-labelledby="unsaved-changes-title"
+        aria-modal="true"
+        className="unsaved-changes-dialog"
+        role="dialog"
+      >
+        <header className="unsaved-changes-header">
+          <h2 id="unsaved-changes-title">{state.title}</h2>
+          <p>{state.message}</p>
+        </header>
+        <div className="unsaved-changes-actions">
+          <button
+            autoFocus
+            className="dialog-button primary"
+            type="button"
+            onClick={() => onChoose("save")}
+          >
+            {state.saveLabel}
+          </button>
+          <button
+            className="dialog-button secondary"
+            type="button"
+            onClick={() => onChoose("discard")}
+          >
+            {state.discardLabel}
+          </button>
+          <button
+            className="dialog-button secondary"
+            type="button"
+            onClick={() => onChoose("cancel")}
+          >
+            Cancel
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function MainApp() {
   const initialSessionRef = useRef<InitialSession | null>(null);
   if (!initialSessionRef.current) {
@@ -389,6 +459,8 @@ function MainApp() {
   const [filePalette, setFilePalette] = useState<WorkspaceFilePaletteState | null>(null);
   const [symbolPalette, setSymbolPalette] = useState<SymbolPaletteState | null>(null);
   const [commandPalette, setCommandPalette] = useState<CommandPaletteState | null>(null);
+  const [unsavedChangesDialog, setUnsavedChangesDialog] =
+    useState<UnsavedChangesDialogState | null>(null);
   const [editorZoom, setEditorZoom] = useState(1);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewZoomMode, setPreviewZoomMode] = useState<PreviewZoomMode>("auto");
@@ -1549,29 +1621,51 @@ function MainApp() {
     setStatus(`Focused ${symbolId}`);
   }, []);
 
-  const confirmExternalOverwrite = useCallback(async (path: string, contents: string) => {
-    const currentTab = tabsRef.current.find((tab) => tab.id === activeTabIdRef.current);
-    if (!currentTab || currentTab.filePath !== path) return true;
+  const promptUnsavedChanges = useCallback(
+    (options: {
+      message: string;
+      saveLabel: string;
+      discardLabel: string;
+    }) =>
+      new Promise<UnsavedChangesChoice>((resolve) => {
+        setUnsavedChangesDialog({
+          title: "Unsaved changes",
+          message: options.message,
+          saveLabel: options.saveLabel,
+          discardLabel: options.discardLabel,
+          resolve,
+        });
+      }),
+    [],
+  );
+
+  const chooseUnsavedChangesAction = useCallback((choice: UnsavedChangesChoice) => {
+    setUnsavedChangesDialog((current) => {
+      current?.resolve(choice);
+      return null;
+    });
+  }, []);
+
+  const confirmExternalOverwrite = useCallback(async (tab: D2Tab, path: string, contents: string) => {
+    if (tab.filePath !== path) return true;
 
     try {
       const result = await invoke<OpenedD2File>("read_d2_file", { path });
-      if (!shouldConfirmExternalOverwrite(currentTab, result.contents, contents)) return true;
+      if (!shouldConfirmExternalOverwrite(tab, result.contents, contents)) return true;
 
       const markedTab = {
-        ...currentTab,
+        ...tab,
         diskSource: result.contents,
         hasExternalChanges: result.contents !== contents,
       };
-      setTabs((currentTabs) => {
-        const nextTabs = currentTabs.map((tab) =>
-          tab.id === currentTab.id ? markedTab : tab,
-        );
-        tabsRef.current = nextTabs;
-        return nextTabs;
-      });
+      const nextTabs = tabsRef.current.map((tab) =>
+        tab.id === markedTab.id ? markedTab : tab,
+      );
+      tabsRef.current = nextTabs;
+      setTabs(nextTabs);
 
       const shouldOverwrite = await confirm(
-        `${currentTab.fileName} changed on disk. Saving will overwrite those external changes.`,
+        `${tab.fileName} changed on disk. Saving will overwrite those external changes.`,
         {
           title: "File changed on disk",
           kind: "warning",
@@ -1589,6 +1683,52 @@ function MainApp() {
     }
   }, []);
 
+  const saveTab = useCallback(
+    async (tab: D2Tab) => {
+      try {
+        const path =
+          tab.filePath ??
+          (await save({
+            title: "Save D2 file",
+            filters: [{ name: "D2", extensions: ["d2"] }],
+            defaultPath: ensureD2FileName(tab.fileName),
+          }));
+        if (!path) {
+          setStatus("Save canceled");
+          return null;
+        }
+
+        if (!(await confirmExternalOverwrite(tab, path, tab.source))) return null;
+
+        const result = await invoke<SavedD2File>("write_d2_file", {
+          path,
+          contents: tab.source,
+        });
+        const savedTab = {
+          ...tab,
+          fileName: fileNameFromPath(result.path),
+          filePath: result.path,
+          savedSource: tab.source,
+          diskSource: tab.source,
+          hasUserChanges: false,
+          hasExternalChanges: false,
+        };
+        const nextTabs = tabsRef.current.map((currentTab) =>
+          currentTab.id === savedTab.id ? savedTab : currentTab,
+        );
+        tabsRef.current = nextTabs;
+        setTabs(nextTabs);
+        persistTabs(nextTabs, activeTabIdRef.current);
+        setStatus(`Saved ${result.path}`);
+        return savedTab;
+      } catch (error) {
+        setStatus(String(error));
+        return null;
+      }
+    },
+    [confirmExternalOverwrite, persistTabs],
+  );
+
   const saveSource = useCallback(async () => {
     if (saveSourceInFlightRef.current) return;
     saveSourceInFlightRef.current = true;
@@ -1599,38 +1739,18 @@ function MainApp() {
         return;
       }
 
-      const path =
-        currentFilePath ??
-        (await save({
-          title: "Save D2 file",
-          filters: [{ name: "D2", extensions: ["d2"] }],
-          defaultPath: ensureD2FileName(fileName),
-        }));
-      if (!path) {
-        setStatus("Save canceled");
-        return;
-      }
-
-      if (!(await confirmExternalOverwrite(path, source))) return;
-
-      const result = await invoke<SavedD2File>("write_d2_file", {
-        path,
-        contents: source,
+      await saveTab({
+        ...activeTab,
+        fileName,
+        filePath: currentFilePath,
+        source,
       });
-      updateActiveTab({
-        fileName: fileNameFromPath(result.path),
-        filePath: result.path,
-        savedSource: source,
-        diskSource: source,
-        hasExternalChanges: false,
-      });
-      setStatus(`Saved ${result.path}`);
     } catch (error) {
       setStatus(String(error));
     } finally {
       saveSourceInFlightRef.current = false;
     }
-  }, [activeTab, confirmExternalOverwrite, currentFilePath, fileName, source, updateActiveTab]);
+  }, [activeTab, currentFilePath, fileName, saveTab, source]);
 
   const openWithEditor = useCallback(async () => {
     try {
@@ -1651,7 +1771,7 @@ function MainApp() {
         return;
       }
 
-      if (!(await confirmExternalOverwrite(path, source))) return;
+      if (!(await confirmExternalOverwrite(activeTab, path, source))) return;
 
       const result = await invoke<SavedD2File>("write_d2_file", {
         path,
@@ -2056,26 +2176,32 @@ function MainApp() {
     closeTabInFlightRef.current = true;
 
     try {
-      const currentTabs =
+      let currentTabs =
         tabId === activeTabIdRef.current && tabsRef.current.length === 1
           ? persistActiveEditorViewState()
           : tabsRef.current;
-      const targetTab = currentTabs.find((tab) => tab.id === tabId);
+      let targetTab = currentTabs.find((tab) => tab.id === tabId);
       if (!targetTab) return;
 
       if (hasTabPendingUserChanges(targetTab)) {
-        const shouldClose = await confirm(
-          `${targetTab.fileName} has unsaved changes. Close it anyway?`,
-          {
-            title: "Unsaved changes",
-            kind: "warning",
-            okLabel: "Close without saving",
-            cancelLabel: "Cancel",
-          },
-        );
-        if (!shouldClose) {
+        const choice = await promptUnsavedChanges({
+          message: `${targetTab.fileName} has unsaved changes. Close it?`,
+          saveLabel: "Save and close",
+          discardLabel: "Close without saving",
+        });
+        if (choice === "cancel") {
           setStatus("Close canceled");
           return;
+        }
+        if (choice === "save") {
+          const savedTab = await saveTab(targetTab);
+          if (!savedTab) {
+            setStatus("Close canceled");
+            return;
+          }
+          currentTabs = tabsRef.current;
+          targetTab = currentTabs.find((tab) => tab.id === tabId);
+          if (!targetTab) return;
         }
       }
 
@@ -2095,7 +2221,7 @@ function MainApp() {
     } finally {
       closeTabInFlightRef.current = false;
     }
-  }, [persistActiveEditorViewState, persistTabs]);
+  }, [persistActiveEditorViewState, persistTabs, promptUnsavedChanges, saveTab]);
 
   const closeActiveTab = useCallback(() => {
     if (activeTabId === emptyActiveTabId) return;
@@ -2153,21 +2279,30 @@ function MainApp() {
     if (unsavedTabs.length === 0) return currentTabs;
 
     const fileList = unsavedTabs.map((tab) => tab.fileName).join(", ");
-    const shouldSwitch = await confirm(
-      `${fileList} ${unsavedTabs.length === 1 ? "has" : "have"} unsaved changes. Switch workspace anyway?`,
-      {
-        title: "Unsaved changes",
-        kind: "warning",
-        okLabel: "Switch without saving",
-        cancelLabel: "Cancel",
-      },
-    );
-    if (!shouldSwitch) {
+    const choice = await promptUnsavedChanges({
+      message: `${fileList} ${unsavedTabs.length === 1 ? "has" : "have"} unsaved changes. Switch workspace?`,
+      saveLabel: "Save and switch workspace",
+      discardLabel: "Switch without saving",
+    });
+    if (choice === "cancel") {
       setStatus("Workspace switch canceled");
       return null;
     }
-    return currentTabs;
-  }, [persistActiveEditorViewState]);
+    if (choice === "discard") return currentTabs;
+
+    for (const tab of unsavedTabs) {
+      const currentTab = tabsRef.current.find((item) => item.id === tab.id);
+      if (!currentTab || !hasTabPendingUserChanges(currentTab)) continue;
+
+      const savedTab = await saveTab(currentTab);
+      if (!savedTab) {
+        setStatus("Workspace switch canceled");
+        return null;
+      }
+    }
+
+    return tabsRef.current;
+  }, [persistActiveEditorViewState, promptUnsavedChanges, saveTab]);
 
   const switchWorkspace = useCallback(
     async (workspaceId: string | null) => {
@@ -3395,6 +3530,13 @@ function MainApp() {
           onRemoveWorkspace={(workspaceId) => {
             void removeRegisteredWorkspace(workspaceId);
           }}
+        />
+      ) : null}
+
+      {unsavedChangesDialog ? (
+        <UnsavedChangesDialog
+          state={unsavedChangesDialog}
+          onChoose={chooseUnsavedChangesAction}
         />
       ) : null}
 
