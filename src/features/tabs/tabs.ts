@@ -71,6 +71,8 @@ export function shouldConfirmExternalOverwrite(
 
 export type TabDropPosition = "before" | "after";
 
+export const emptyActiveTabId = "";
+
 export function reorderTabs(
   tabs: D2Tab[],
   draggedTabId: string,
@@ -99,6 +101,19 @@ export function insertTabAfter(tabs: D2Tab[], tab: D2Tab, targetTabId: string) {
   const nextTabs = [...tabs];
   nextTabs.splice(targetIndex + 1, 0, tab);
   return nextTabs;
+}
+
+export function activeTabIdAfterClose(
+  tabs: D2Tab[],
+  activeTabId: string,
+  closedTabId: string,
+) {
+  if (closedTabId !== activeTabId) return activeTabId;
+
+  const targetIndex = tabs.findIndex((tab) => tab.id === closedTabId);
+  const nextTabs = tabs.filter((tab) => tab.id !== closedTabId);
+  const nextActiveTab = nextTabs[Math.min(targetIndex, nextTabs.length - 1)] ?? nextTabs[0];
+  return nextActiveTab?.id ?? emptyActiveTabId;
 }
 
 export function loadTabs(): D2Tab[] {

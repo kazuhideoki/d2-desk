@@ -23,10 +23,13 @@ import {
   connectionIdAtPosition,
   nextLargerSourceRange,
   nextSmallerSourceRange,
+  shapeIdForSelectionRange,
   sortSourceRangesSmallestFirst,
+  sourceRangeContainsRange,
   sourceRangeEquals,
 } from "./features/editor/sourceRanges";
 import { findSwitchableEdge, switchEdgeDirectionInSource } from "./features/editor/switchEdge";
+import { toggleNestingNotationInSource } from "./features/editor/toggleNestingNotation";
 import {
   completionPreviewSource,
   isD2IconValueCompletionPosition,
@@ -78,9 +81,11 @@ import {
   sourceRangeToMonacoRange,
 } from "./d2Language";
 import {
+  activeTabIdAfterClose,
   applyExternalFileContents,
   createTab,
   createEmptyTab,
+  emptyActiveTabId,
   hasTabPendingUserChanges,
   insertTabAfter,
   loadActiveTabId,
@@ -139,6 +144,16 @@ type RenameNodeResult = {
   id: string;
 };
 
+type AddParentNodeResult = {
+  source: string;
+  ids: string[];
+  parentId: string;
+};
+
+type AddParentDialogState = RenameDialogState & {
+  ids: string[];
+};
+
 type EditorCursorSnapshot = {
   viewState: Monaco.editor.ICodeEditorViewState | null;
   selections: Monaco.ISelection[] | null;
@@ -155,6 +170,16 @@ type CommandPaletteState = {
   mode: "commands" | "workspaceSelection";
   query: string;
   selectedIndex: number;
+};
+
+type UnsavedChangesChoice = "save" | "discard" | "cancel";
+
+type UnsavedChangesDialogState = {
+  title: string;
+  message: string;
+  saveLabel: string;
+  discardLabel: string;
+  resolve: (choice: UnsavedChangesChoice) => void;
 };
 
 type InternalSuggestCompletionItem = {
@@ -260,6 +285,33 @@ function monacoSelectionToSourceRange(selection: Monaco.Selection): SourceRange 
   };
 }
 
+function selectedShapeIdsInRange(objects: CompileResult["objects"], selectionRange: SourceRange) {
+  const matches: Array<{ id: string; range: SourceRange }> = [];
+  for (const object of objects) {
+    if (object.kind !== "shape") continue;
+    const range = (object.sourceRanges ?? []).find((candidate) =>
+      sourceRangeContainsRange(selectionRange, candidate),
+    );
+    if (range) {
+      matches.push({ id: object.id, range });
+    }
+  }
+  return matches
+    .sort((left, right) => {
+      return (
+        left.range.startLine - right.range.startLine ||
+        left.range.startColumn - right.range.startColumn ||
+        left.id.localeCompare(right.id)
+      );
+    })
+    .map((match) => match.id)
+    .filter((id, _index, ids) => !ids.some((otherId) => otherId !== id && isD2IdPrefix(id, otherId)));
+}
+
+function isD2IdPrefix(id: string, prefix: string) {
+  return id === prefix || id.startsWith(`${prefix}.`);
+}
+
 const emptyDetachedPreviewState: DetachedPreviewState = {
   objects: [],
   boards: [],
@@ -362,6 +414,66 @@ function PreviewWindowApp() {
   );
 }
 
+function UnsavedChangesDialog({
+  state,
+  onChoose,
+}: {
+  state: UnsavedChangesDialogState;
+  onChoose: (choice: UnsavedChangesChoice) => void;
+}) {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      onChoose("cancel");
+    };
+
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
+  }, [onChoose]);
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section
+        aria-labelledby="unsaved-changes-title"
+        aria-modal="true"
+        className="unsaved-changes-dialog"
+        role="dialog"
+      >
+        <header className="unsaved-changes-header">
+          <h2 id="unsaved-changes-title">{state.title}</h2>
+          <p>{state.message}</p>
+        </header>
+        <div className="unsaved-changes-actions">
+          <button
+            autoFocus
+            className="dialog-button primary"
+            type="button"
+            onClick={() => onChoose("save")}
+          >
+            {state.saveLabel}
+          </button>
+          <button
+            className="dialog-button secondary"
+            type="button"
+            onClick={() => onChoose("discard")}
+          >
+            {state.discardLabel}
+          </button>
+          <button
+            className="dialog-button secondary"
+            type="button"
+            onClick={() => onChoose("cancel")}
+          >
+            Cancel
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function MainApp() {
   const initialSessionRef = useRef<InitialSession | null>(null);
   if (!initialSessionRef.current) {
@@ -389,10 +501,13 @@ function MainApp() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
+  const [addParentDialog, setAddParentDialog] = useState<AddParentDialogState | null>(null);
   const [renameFileDialog, setRenameFileDialog] = useState<RenameDialogState | null>(null);
   const [filePalette, setFilePalette] = useState<WorkspaceFilePaletteState | null>(null);
   const [symbolPalette, setSymbolPalette] = useState<SymbolPaletteState | null>(null);
   const [commandPalette, setCommandPalette] = useState<CommandPaletteState | null>(null);
+  const [unsavedChangesDialog, setUnsavedChangesDialog] =
+    useState<UnsavedChangesDialogState | null>(null);
   const [editorZoom, setEditorZoom] = useState(1);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewZoomMode, setPreviewZoomMode] = useState<PreviewZoomMode>("auto");
@@ -416,6 +531,7 @@ function MainApp() {
   const suggestPreviewTimeoutRef = useRef<number | null>(null);
   const suggestPreviewCacheRef = useRef(new Map<string, CompileResult>());
   const renameInputRef = useRef<HTMLInputElement | null>(null);
+  const addParentInputRef = useRef<HTMLInputElement | null>(null);
   const renameFileInputRef = useRef<HTMLInputElement | null>(null);
   const filePaletteInputRef = useRef<HTMLInputElement | null>(null);
   const symbolPaletteInputRef = useRef<HTMLInputElement | null>(null);
@@ -437,6 +553,7 @@ function MainApp() {
   const fileSyncPollInFlightRef = useRef(false);
   const saveSourceInFlightRef = useRef(false);
   const renameEditorCursorSnapshotRef = useRef<EditorCursorSnapshot | null>(null);
+  const addParentEditorCursorSnapshotRef = useRef<EditorCursorSnapshot | null>(null);
   const workspaceStateRef = useRef(workspaceState);
   const activeWorkspaceIdRef = useRef(workspaceState.activeWorkspaceId);
   const tabsRef = useRef(tabs);
@@ -460,7 +577,7 @@ function MainApp() {
     [activeTabId, tabs],
   );
   const source = activeTab?.source ?? "";
-  const fileName = activeTab?.fileName ?? "untitled.d2";
+  const fileName = activeTab?.fileName ?? "No file";
   const currentFilePath = tabAbsolutePath(activeTab);
   const selectedBoardPathKey = useMemo(() => boardPathKey(selectedBoardPath), [selectedBoardPath]);
   const latestCompileInputsRef = useRef({ tabId: activeTabId, source });
@@ -617,6 +734,14 @@ function MainApp() {
       renameInputRef.current?.select();
     });
   }, [renameDialog?.id]);
+
+  useEffect(() => {
+    if (!addParentDialog) return;
+    window.requestAnimationFrame(() => {
+      addParentInputRef.current?.focus();
+      addParentInputRef.current?.select();
+    });
+  }, [addParentDialog?.id]);
 
   useEffect(() => {
     if (!renameFileDialog) return;
@@ -1247,7 +1372,9 @@ function MainApp() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("d2-desk:last-source", source);
+    if (activeTab) {
+      localStorage.setItem("d2-desk:last-source", source);
+    }
     if (!isEditingIconValueCompletion()) {
       clearSuggestPreview();
     }
@@ -1285,6 +1412,7 @@ function MainApp() {
     perfDebugOptions.previewCompile,
     selectedBoardPathKey,
     source,
+    activeTab,
   ]);
 
   useEffect(() => {
@@ -1337,6 +1465,11 @@ function MainApp() {
       }
 
       const result = await invoke<OpenedD2File>("read_d2_file", { path: selected });
+      if (!tabsRef.current.some((tab) => tab.id === activeTabIdRef.current)) {
+        openFileInNewTab(result);
+        return;
+      }
+
       updateActiveTab({
         source: result.contents,
         savedSource: result.contents,
@@ -1350,7 +1483,7 @@ function MainApp() {
     } catch (error) {
       setStatus(String(error));
     }
-  }, [currentFilePath, updateActiveTab]);
+  }, [currentFilePath, openFileInNewTab, updateActiveTab]);
 
   const openWorkspaceFilePalette = useCallback(async () => {
     const workspaceId = activeWorkspaceIdRef.current;
@@ -1579,29 +1712,51 @@ function MainApp() {
     setStatus(`Focused ${symbolId}`);
   }, []);
 
-  const confirmExternalOverwrite = useCallback(async (path: string, contents: string) => {
-    const currentTab = tabsRef.current.find((tab) => tab.id === activeTabIdRef.current);
-    if (!currentTab || currentTab.filePath !== path) return true;
+  const promptUnsavedChanges = useCallback(
+    (options: {
+      message: string;
+      saveLabel: string;
+      discardLabel: string;
+    }) =>
+      new Promise<UnsavedChangesChoice>((resolve) => {
+        setUnsavedChangesDialog({
+          title: "Unsaved changes",
+          message: options.message,
+          saveLabel: options.saveLabel,
+          discardLabel: options.discardLabel,
+          resolve,
+        });
+      }),
+    [],
+  );
+
+  const chooseUnsavedChangesAction = useCallback((choice: UnsavedChangesChoice) => {
+    setUnsavedChangesDialog((current) => {
+      current?.resolve(choice);
+      return null;
+    });
+  }, []);
+
+  const confirmExternalOverwrite = useCallback(async (tab: D2Tab, path: string, contents: string) => {
+    if (tab.filePath !== path) return true;
 
     try {
       const result = await invoke<OpenedD2File>("read_d2_file", { path });
-      if (!shouldConfirmExternalOverwrite(currentTab, result.contents, contents)) return true;
+      if (!shouldConfirmExternalOverwrite(tab, result.contents, contents)) return true;
 
       const markedTab = {
-        ...currentTab,
+        ...tab,
         diskSource: result.contents,
         hasExternalChanges: result.contents !== contents,
       };
-      setTabs((currentTabs) => {
-        const nextTabs = currentTabs.map((tab) =>
-          tab.id === currentTab.id ? markedTab : tab,
-        );
-        tabsRef.current = nextTabs;
-        return nextTabs;
-      });
+      const nextTabs = tabsRef.current.map((tab) =>
+        tab.id === markedTab.id ? markedTab : tab,
+      );
+      tabsRef.current = nextTabs;
+      setTabs(nextTabs);
 
       const shouldOverwrite = await confirm(
-        `${currentTab.fileName} changed on disk. Saving will overwrite those external changes.`,
+        `${tab.fileName} changed on disk. Saving will overwrite those external changes.`,
         {
           title: "File changed on disk",
           kind: "warning",
@@ -1619,46 +1774,82 @@ function MainApp() {
     }
   }, []);
 
+  const saveTab = useCallback(
+    async (tab: D2Tab) => {
+      try {
+        const path =
+          tab.filePath ??
+          (await save({
+            title: "Save D2 file",
+            filters: [{ name: "D2", extensions: ["d2"] }],
+            defaultPath: ensureD2FileName(tab.fileName),
+          }));
+        if (!path) {
+          setStatus("Save canceled");
+          return null;
+        }
+
+        if (!(await confirmExternalOverwrite(tab, path, tab.source))) return null;
+
+        const result = await invoke<SavedD2File>("write_d2_file", {
+          path,
+          contents: tab.source,
+        });
+        const savedTab = {
+          ...tab,
+          fileName: fileNameFromPath(result.path),
+          filePath: result.path,
+          savedSource: tab.source,
+          diskSource: tab.source,
+          hasUserChanges: false,
+          hasExternalChanges: false,
+        };
+        const nextTabs = tabsRef.current.map((currentTab) =>
+          currentTab.id === savedTab.id ? savedTab : currentTab,
+        );
+        tabsRef.current = nextTabs;
+        setTabs(nextTabs);
+        persistTabs(nextTabs, activeTabIdRef.current);
+        setStatus(`Saved ${result.path}`);
+        return savedTab;
+      } catch (error) {
+        setStatus(String(error));
+        return null;
+      }
+    },
+    [confirmExternalOverwrite, persistTabs],
+  );
+
   const saveSource = useCallback(async () => {
     if (saveSourceInFlightRef.current) return;
     saveSourceInFlightRef.current = true;
 
     try {
-      const path =
-        currentFilePath ??
-        (await save({
-          title: "Save D2 file",
-          filters: [{ name: "D2", extensions: ["d2"] }],
-          defaultPath: ensureD2FileName(fileName),
-        }));
-      if (!path) {
-        setStatus("Save canceled");
+      if (!activeTab) {
+        setStatus("Create a tab before saving");
         return;
       }
 
-      if (!(await confirmExternalOverwrite(path, source))) return;
-
-      const result = await invoke<SavedD2File>("write_d2_file", {
-        path,
-        contents: source,
+      await saveTab({
+        ...activeTab,
+        fileName,
+        filePath: currentFilePath,
+        source,
       });
-      updateActiveTab({
-        fileName: fileNameFromPath(result.path),
-        filePath: result.path,
-        savedSource: source,
-        diskSource: source,
-        hasExternalChanges: false,
-      });
-      setStatus(`Saved ${result.path}`);
     } catch (error) {
       setStatus(String(error));
     } finally {
       saveSourceInFlightRef.current = false;
     }
-  }, [confirmExternalOverwrite, currentFilePath, fileName, source, updateActiveTab]);
+  }, [activeTab, currentFilePath, fileName, saveTab, source]);
 
   const openWithEditor = useCallback(async () => {
     try {
+      if (!activeTab) {
+        setStatus("Create a tab before opening with $EDITOR");
+        return;
+      }
+
       const path =
         currentFilePath ??
         (await save({
@@ -1671,7 +1862,7 @@ function MainApp() {
         return;
       }
 
-      if (!(await confirmExternalOverwrite(path, source))) return;
+      if (!(await confirmExternalOverwrite(activeTab, path, source))) return;
 
       const result = await invoke<SavedD2File>("write_d2_file", {
         path,
@@ -1689,7 +1880,7 @@ function MainApp() {
     } catch (error) {
       setStatus(String(error));
     }
-  }, [confirmExternalOverwrite, currentFilePath, fileName, source, updateActiveTab]);
+  }, [activeTab, confirmExternalOverwrite, currentFilePath, fileName, source, updateActiveTab]);
 
   const renameFocusedFile = useCallback(() => {
     if (!currentFilePath) {
@@ -1789,6 +1980,11 @@ function MainApp() {
   }, [currentFilePath, fileName, renameFileDialog]);
 
   const formatDocument = useCallback(async () => {
+    if (!activeTab) {
+      setStatus("Create a tab before formatting");
+      return;
+    }
+
     const editor = editorRef.current;
     const model = editor?.getModel() ?? null;
     const sourceToFormat = model?.getValue() ?? source;
@@ -1820,7 +2016,7 @@ function MainApp() {
     } catch (error) {
       setStatus(String(error));
     }
-  }, [restoreEditorViewStateAfterSourceUpdate, source, updateActiveTab]);
+  }, [activeTab, restoreEditorViewStateAfterSourceUpdate, source, updateActiveTab]);
 
   const selectSyntaxNode = useCallback(async (direction: "larger" | "smaller") => {
     const editor = editorRef.current;
@@ -1941,6 +2137,69 @@ function MainApp() {
     setStatus(`Renaming ${targetId}`);
   }, []);
 
+  const addParentToSelectedNodes = useCallback(async () => {
+    const editor = editorRef.current;
+    const currentSource = editor?.getValue() ?? latestCompileInputsRef.current.source;
+    const currentCompileResult = await compileCurrentSourceForLookup(currentSource);
+    if (!currentCompileResult) {
+      setStatus("Add Parent requires a valid diagram");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+
+    const selection = editor?.getSelection() ?? null;
+    let targetIds =
+      selection && !selection.isEmpty()
+        ? selectedShapeIdsInRange(currentCompileResult.objects, monacoSelectionToSourceRange(selection))
+        : [];
+
+    if (targetIds.length === 0) {
+      const editorPosition = editor?.getPosition() ?? null;
+      const shouldPreferEditorCursor = editor?.hasTextFocus() ?? false;
+      let targetId = shouldPreferEditorCursor ? null : activeIdRef.current;
+
+      if (!targetId && editorPosition) {
+        try {
+          const result = await invoke<{ id?: string }>("sidecar_call", {
+            method: "nodeAt",
+            params: {
+              source: currentSource,
+              line: editorPosition.lineNumber,
+              column: editorPosition.column,
+            },
+          });
+          targetId = result.id ?? null;
+        } catch {
+          targetId = null;
+        }
+      }
+
+      const selectedObject = currentCompileResult.objects.find((object) => object.id === targetId);
+      targetIds = selectedObject?.kind === "shape" ? [selectedObject.id] : [];
+    }
+
+    if (targetIds.length === 0) {
+      setStatus("Select a node to add a parent");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+
+    addParentEditorCursorSnapshotRef.current = editor
+      ? {
+          viewState: editor.saveViewState(),
+          selections: editor.getSelections(),
+          position: editor.getPosition(),
+        }
+      : null;
+    setAddParentDialog({
+      id: targetIds.length === 1 ? targetIds[0] : `${targetIds.length} nodes`,
+      ids: targetIds,
+      value: "",
+      error: null,
+    });
+    setStatus(`Adding parent to ${targetIds.length === 1 ? targetIds[0] : `${targetIds.length} nodes`}`);
+  }, [compileCurrentSourceForLookup]);
+
   const switchFocusedEdgeDirection = useCallback(async () => {
     const editor = editorRef.current;
     const currentSource = editor?.getValue() ?? latestCompileInputsRef.current.source;
@@ -2009,6 +2268,90 @@ function MainApp() {
     restoreEditorViewStateAfterSourceUpdate(nextEditorCursorSnapshot, result.source);
   }, [restoreEditorViewStateAfterSourceUpdate, updateActiveTab]);
 
+  const toggleFocusedNodeNestingNotation = useCallback(async () => {
+    const editor = editorRef.current;
+    const currentSource = editor?.getValue() ?? latestCompileInputsRef.current.source;
+    const currentCompileResult = await compileCurrentSourceForLookup(currentSource);
+    if (!currentCompileResult) {
+      setStatus("Toggle Notation requires a valid diagram");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+
+    const editorPosition = editor?.getPosition() ?? null;
+    const selection = editor?.getSelection() ?? null;
+    const shouldPreferEditorCursor = editor?.hasTextFocus() ?? false;
+    let targetId: string | null = null;
+
+    if (selection && !selection.isEmpty()) {
+      targetId = shapeIdForSelectionRange(
+        currentCompileResult.objects,
+        monacoSelectionToSourceRange(selection),
+      );
+    }
+
+    if (!targetId && !shouldPreferEditorCursor) {
+      targetId = activeIdRef.current;
+    }
+
+    if (!targetId && editorPosition) {
+      try {
+        const result = await invoke<{ id?: string }>("sidecar_call", {
+          method: "nodeAt",
+          params: {
+            source: currentSource,
+            line: editorPosition.lineNumber,
+            column: editorPosition.column,
+          },
+        });
+        targetId = result.id ?? null;
+      } catch {
+        targetId = null;
+      }
+    }
+
+    const selectedObject =
+      currentCompileResult.objects.find((object) => object.id === targetId) ?? null;
+    if (!selectedObject || selectedObject.kind !== "shape") {
+      setStatus("Select a node to toggle notation");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+
+    const editorCursorSnapshot = editor
+      ? {
+          viewState: editor.saveViewState(),
+          selections: null,
+          position: editor.getPosition(),
+        }
+      : null;
+    const result = toggleNestingNotationInSource(
+      currentSource,
+      selectedObject,
+      currentCompileResult.objects,
+    );
+    if (!result.ok) {
+      setStatus(result.reason);
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+
+    const nextEditorCursorSnapshot = editorCursorSnapshot
+      ? {
+          ...editorCursorSnapshot,
+          position: result.cursorPosition,
+        }
+      : null;
+    const nextActiveId = await objectIdAtCurrentPosition(result.source, result.cursorPosition);
+    updateActiveTab({ source: result.source, editorViewState: nextEditorCursorSnapshot?.viewState });
+    activeIdRef.current = nextActiveId ?? selectedObject.id;
+    setActiveId(activeIdRef.current);
+    setHoverId(null);
+    hoverIdRef.current = null;
+    setStatus(`Toggled notation for ${activeIdRef.current}`);
+    restoreEditorViewStateAfterSourceUpdate(nextEditorCursorSnapshot, result.source);
+  }, [restoreEditorViewStateAfterSourceUpdate, updateActiveTab]);
+
   const commitRenameNode = useCallback(async () => {
     if (!renameDialog) return;
 
@@ -2066,50 +2409,95 @@ function MainApp() {
     }
   }, [renameDialog, restoreEditorViewStateAfterSourceUpdate, updateActiveTab]);
 
+  const commitAddParentNode = useCallback(async () => {
+    if (!addParentDialog) return;
+
+    const parentName = addParentDialog.value.trim();
+    const editorCursorSnapshot =
+      addParentEditorCursorSnapshotRef.current ??
+      (editorRef.current
+        ? {
+            viewState: editorRef.current.saveViewState(),
+            selections: editorRef.current.getSelections(),
+            position: editorRef.current.getPosition(),
+          }
+        : null);
+    if (!nodeRenamePattern.test(parentName)) {
+      setAddParentDialog((current) =>
+        current
+          ? {
+              ...current,
+              error: "Use only letters, numbers, underscores, or hyphens.",
+            }
+          : current,
+      );
+      return;
+    }
+
+    try {
+      const result = await invoke<AddParentNodeResult>("sidecar_call", {
+        method: "addParentNode",
+        params: {
+          source: editorRef.current?.getValue() ?? latestCompileInputsRef.current.source,
+          ids: addParentDialog.ids,
+          parentName,
+        },
+      });
+      updateActiveTab({ source: result.source, editorViewState: editorCursorSnapshot?.viewState });
+      setActiveId(result.parentId);
+      activeIdRef.current = result.parentId;
+      setHoverId(null);
+      setAddParentDialog(null);
+      addParentEditorCursorSnapshotRef.current = null;
+      setStatus(`Added ${result.parentId} as parent`);
+      restoreEditorViewStateAfterSourceUpdate(editorCursorSnapshot, result.source);
+    } catch (error) {
+      setAddParentDialog((current) =>
+        current ? { ...current, error: String(error).replace(/^Error: /, "") } : current,
+      );
+    }
+  }, [addParentDialog, restoreEditorViewStateAfterSourceUpdate, updateActiveTab]);
+
   const closeTab = useCallback(async (tabId: string) => {
     if (closeTabInFlightRef.current) return;
     closeTabInFlightRef.current = true;
 
     try {
-      const currentTabs =
+      let currentTabs =
         tabId === activeTabIdRef.current && tabsRef.current.length === 1
           ? persistActiveEditorViewState()
           : tabsRef.current;
-      const targetTab = currentTabs.find((tab) => tab.id === tabId);
+      let targetTab = currentTabs.find((tab) => tab.id === tabId);
       if (!targetTab) return;
 
       if (hasTabPendingUserChanges(targetTab)) {
-        const shouldClose = await confirm(
-          `${targetTab.fileName} has unsaved changes. Close it anyway?`,
-          {
-            title: "Unsaved changes",
-            kind: "warning",
-            okLabel: "Close without saving",
-            cancelLabel: "Cancel",
-          },
-        );
-        if (!shouldClose) {
+        const choice = await promptUnsavedChanges({
+          message: `${targetTab.fileName} has unsaved changes. Close it?`,
+          saveLabel: "Save and close",
+          discardLabel: "Close without saving",
+        });
+        if (choice === "cancel") {
           setStatus("Close canceled");
           return;
         }
-      }
-
-      if (currentTabs.length === 1) {
-        setStatus(`Closing ${targetTab.fileName}`);
-        try {
-          await invoke("close_current_window");
-        } catch {
-          window.close();
+        if (choice === "save") {
+          const savedTab = await saveTab(targetTab);
+          if (!savedTab) {
+            setStatus("Close canceled");
+            return;
+          }
+          currentTabs = tabsRef.current;
+          targetTab = currentTabs.find((tab) => tab.id === tabId);
+          if (!targetTab) return;
         }
-        return;
       }
 
-      const targetIndex = currentTabs.findIndex((tab) => tab.id === tabId);
       const nextTabs = currentTabs.filter((tab) => tab.id !== tabId);
       if (tabId === activeTabIdRef.current) {
-        const nextActiveTab = nextTabs[Math.min(targetIndex, nextTabs.length - 1)] ?? nextTabs[0];
-        activeTabIdRef.current = nextActiveTab.id;
-        setActiveTabId(nextActiveTab.id);
+        const nextActiveTabId = activeTabIdAfterClose(currentTabs, activeTabIdRef.current, tabId);
+        activeTabIdRef.current = nextActiveTabId;
+        editorTabIdRef.current = nextActiveTabId;
+        setActiveTabId(nextActiveTabId);
         setActiveId(null);
         setHoverId(null);
       }
@@ -2120,9 +2508,10 @@ function MainApp() {
     } finally {
       closeTabInFlightRef.current = false;
     }
-  }, [persistActiveEditorViewState, persistTabs]);
+  }, [persistActiveEditorViewState, persistTabs, promptUnsavedChanges, saveTab]);
 
   const closeActiveTab = useCallback(() => {
+    if (activeTabId === emptyActiveTabId) return;
     void closeTab(activeTabId);
   }, [activeTabId, closeTab]);
 
@@ -2178,21 +2567,30 @@ function MainApp() {
     if (unsavedTabs.length === 0) return currentTabs;
 
     const fileList = unsavedTabs.map((tab) => tab.fileName).join(", ");
-    const shouldSwitch = await confirm(
-      `${fileList} ${unsavedTabs.length === 1 ? "has" : "have"} unsaved changes. Switch workspace anyway?`,
-      {
-        title: "Unsaved changes",
-        kind: "warning",
-        okLabel: "Switch without saving",
-        cancelLabel: "Cancel",
-      },
-    );
-    if (!shouldSwitch) {
+    const choice = await promptUnsavedChanges({
+      message: `${fileList} ${unsavedTabs.length === 1 ? "has" : "have"} unsaved changes. Switch workspace?`,
+      saveLabel: "Save and switch workspace",
+      discardLabel: "Switch without saving",
+    });
+    if (choice === "cancel") {
       setStatus("Workspace switch canceled");
       return null;
     }
-    return currentTabs;
-  }, [persistActiveEditorViewState]);
+    if (choice === "discard") return currentTabs;
+
+    for (const tab of unsavedTabs) {
+      const currentTab = tabsRef.current.find((item) => item.id === tab.id);
+      if (!currentTab || !hasTabPendingUserChanges(currentTab)) continue;
+
+      const savedTab = await saveTab(currentTab);
+      if (!savedTab) {
+        setStatus("Workspace switch canceled");
+        return null;
+      }
+    }
+
+    return tabsRef.current;
+  }, [persistActiveEditorViewState, promptUnsavedChanges, saveTab]);
 
   const switchWorkspace = useCallback(
     async (workspaceId: string | null) => {
@@ -3111,6 +3509,7 @@ function MainApp() {
         category: "File",
         keywords: ["write"],
         shortcut: "Command/Ctrl + S",
+        enabled: Boolean(activeTab),
         run: saveSource,
       },
       {
@@ -3118,6 +3517,7 @@ function MainApp() {
         title: "Open Current D2 File with $EDITOR",
         category: "File",
         keywords: ["external", "editor"],
+        enabled: Boolean(activeTab),
         run: openWithEditor,
       },
       {
@@ -3144,6 +3544,7 @@ function MainApp() {
         category: "File",
         keywords: ["current", "active"],
         shortcut: "Command/Ctrl + W",
+        enabled: Boolean(activeTab),
         run: closeActiveTab,
       },
       {
@@ -3162,6 +3563,7 @@ function MainApp() {
         category: "Edit",
         keywords: ["source"],
         shortcut: "Command + Shift + I",
+        enabled: Boolean(activeTab),
         run: formatDocument,
       },
       {
@@ -3180,6 +3582,16 @@ function MainApp() {
         shortcut: "F2",
         run: () => {
           void renameFocusedNode();
+        },
+      },
+      {
+        id: "editor.addParentNode",
+        title: "Add Parent to Selected Node",
+        category: "Edit",
+        keywords: ["symbol", "node", "parent", "wrap", "group", "refactor"],
+        enabled: Boolean(activeTab),
+        run: () => {
+          void addParentToSelectedNodes();
         },
       },
       {
@@ -3209,6 +3621,16 @@ function MainApp() {
         keywords: ["edge", "notation", "direction", "flip", "reverse", "connection"],
         run: () => {
           void switchFocusedEdgeDirection();
+        },
+      },
+      {
+        id: "editor.toggleNestingNotation",
+        title: "Toggle Nesting Notation",
+        category: "Edit",
+        keywords: ["node", "nest", "dot", "notation", "block", "refactor"],
+        enabled: Boolean(activeTab),
+        run: () => {
+          void toggleFocusedNodeNestingNotation();
         },
       },
       {
@@ -3307,6 +3729,8 @@ function MainApp() {
     ],
     [
       bottomPanelVisible,
+      activeTab,
+      addParentToSelectedNodes,
       closeActiveTab,
       compileResult.boards,
       copyFocusedTabAbsolutePath,
@@ -3336,6 +3760,7 @@ function MainApp() {
       switchPreviewBoard,
       toggleBottomPanel,
       toggleDetachedPreview,
+      toggleFocusedNodeNestingNotation,
       togglePreviewViewMode,
       workspaceState,
       workspaceState.activeWorkspaceId,
@@ -3418,6 +3843,13 @@ function MainApp() {
         />
       ) : null}
 
+      {unsavedChangesDialog ? (
+        <UnsavedChangesDialog
+          state={unsavedChangesDialog}
+          onChoose={chooseUnsavedChangesAction}
+        />
+      ) : null}
+
       {renameDialog ? (
         <RenameNodeDialog
           state={renameDialog}
@@ -3433,6 +3865,30 @@ function MainApp() {
           }}
           onValueChange={(value) =>
             setRenameDialog((current) =>
+              current ? { ...current, value, error: null } : current,
+            )
+          }
+        />
+      ) : null}
+
+      {addParentDialog ? (
+        <RenameNodeDialog
+          state={addParentDialog}
+          inputRef={addParentInputRef}
+          title="Add parent"
+          inputLabel="Parent node name"
+          submitLabel="Add Parent"
+          onSubmit={() => {
+            void commitAddParentNode();
+          }}
+          onCancel={() => {
+            setAddParentDialog(null);
+            addParentEditorCursorSnapshotRef.current = null;
+            setStatus("Add parent canceled");
+            window.requestAnimationFrame(() => editorRef.current?.focus());
+          }}
+          onValueChange={(value) =>
+            setAddParentDialog((current) =>
               current ? { ...current, value, error: null } : current,
             )
           }

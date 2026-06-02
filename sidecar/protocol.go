@@ -57,6 +57,18 @@ type renameNodeResult struct {
 	ID     string `json:"id"`
 }
 
+type addParentNodeParams struct {
+	Source     string   `json:"source"`
+	IDs        []string `json:"ids"`
+	ParentName string   `json:"parentName"`
+}
+
+type addParentNodeResult struct {
+	Source   string   `json:"source"`
+	IDs      []string `json:"ids"`
+	ParentID string   `json:"parentId"`
+}
+
 type exportParams struct {
 	Source            string        `json:"source"`
 	Format            string        `json:"format"`

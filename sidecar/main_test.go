@@ -82,6 +82,26 @@ func TestHandleDispatchesMethods(t *testing.T) {
 			},
 		},
 		{
+			name: "addParentNode",
+			request: request{
+				Method: "addParentNode",
+				Params: mustParams(t, addParentNodeParams{
+					Source:     "api\ndb\n\napi -> db\n",
+					IDs:        []string{"api", "db"},
+					ParentName: "system",
+				}),
+			},
+			validate: func(t *testing.T, result any) {
+				added, ok := result.(addParentNodeResult)
+				if !ok {
+					t.Fatalf("expected addParentNodeResult, got %T", result)
+				}
+				if added.ParentID != "system" || !strings.Contains(added.Source, "system.api -> system.db") {
+					t.Fatalf("expected parented nodes and references, got %#v", added)
+				}
+			},
+		},
+		{
 			name: "complete",
 			request: request{
 				Method: "complete",
@@ -887,6 +907,163 @@ func TestRenameNodeRejectsInvalidName(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "letters, numbers") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAddParentNodeWrapsSelectedNodesAndUpdatesEdges(t *testing.T) {
+	source := `hoge
+fuga
+
+hoge -> fuga
+`
+	result, err := addParentNode(addParentNodeParams{
+		Source:     source,
+		IDs:        []string{"hoge", "fuga"},
+		ParentName: "piyo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := `piyo {
+  hoge
+  fuga
+}
+
+piyo.hoge -> piyo.fuga
+`
+	if result.Source != expected {
+		t.Fatalf("unexpected source:\n%s", result.Source)
+	}
+	if result.ParentID != "piyo" {
+		t.Fatalf("expected parent id piyo, got %q", result.ParentID)
+	}
+	if strings.Join(result.IDs, ",") != "piyo.hoge,piyo.fuga" {
+		t.Fatalf("unexpected moved ids: %#v", result.IDs)
+	}
+}
+
+func TestAddParentNodeKeepsInternalNestedReferencesRelative(t *testing.T) {
+	source := `container: {
+  hoge: {
+    child
+    child -> peer
+    peer
+  }
+  fuga
+  hoge.child -> fuga
+}
+fuga -> container.hoge.child
+`
+	result, err := addParentNode(addParentNodeParams{
+		Source:     source,
+		IDs:        []string{"container.hoge"},
+		ParentName: "piyo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := `container: {
+  piyo {
+    hoge: {
+      child
+      child -> peer
+      peer
+    }
+  }
+  fuga
+  piyo.hoge.child -> fuga
+}
+fuga -> container.piyo.hoge.child
+`
+	if result.Source != expected {
+		t.Fatalf("unexpected source:\n%s", result.Source)
+	}
+	if result.ParentID != "container.piyo" {
+		t.Fatalf("expected parent id container.piyo, got %q", result.ParentID)
+	}
+}
+
+func TestAddParentNodeUpdatesEdgeReferenceDefinitions(t *testing.T) {
+	source := `api
+db
+api -> db: query
+(api -> db)[0].style.stroke: red
+`
+	result, err := addParentNode(addParentNodeParams{
+		Source:     source,
+		IDs:        []string{"api", "db"},
+		ParentName: "system",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := `system {
+  api
+  db
+}
+system.api -> system.db: query
+(system.api -> system.db)[0].style.stroke: red
+`
+	if result.Source != expected {
+		t.Fatalf("unexpected source:\n%s", result.Source)
+	}
+}
+
+func TestAddParentNodeRejectsParentCollision(t *testing.T) {
+	_, err := addParentNode(addParentNodeParams{
+		Source:     "piyo\nhoge\n",
+		IDs:        []string{"hoge"},
+		ParentName: "piyo",
+	})
+	if err == nil {
+		t.Fatal("expected parent collision error")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAddParentNodeIgnoresSelectedDescendantsWhenParentIsSelected(t *testing.T) {
+	source := `piyo: {
+  p: {
+    hoge
+    fug
+  }
+}
+piyo.p.hoge -> piyo.p.fug
+`
+	result, err := addParentNode(addParentNodeParams{
+		Source: source,
+		IDs: []string{
+			"piyo",
+			"piyo.p",
+			"piyo.p.hoge",
+			"piyo.p.fug",
+		},
+		ParentName: "hoho",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := `hoho {
+  piyo: {
+    p: {
+      hoge
+      fug
+    }
+  }
+}
+hoho.piyo.p.hoge -> hoho.piyo.p.fug
+`
+	if result.Source != expected {
+		t.Fatalf("unexpected source:\n%s", result.Source)
+	}
+	if strings.Join(result.IDs, ",") != "hoho.piyo" {
+		t.Fatalf("unexpected moved ids: %#v", result.IDs)
 	}
 }
 

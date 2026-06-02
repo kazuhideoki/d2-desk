@@ -210,6 +210,45 @@ select {
   box-shadow: 0 20px 48px rgba(15, 23, 42, 0.22);
 }
 
+.unsaved-changes-dialog {
+  display: grid;
+  width: min(440px, 100%);
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid #c7d2d6;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.24);
+}
+
+.unsaved-changes-header {
+  display: grid;
+  gap: 8px;
+}
+
+.unsaved-changes-header h2 {
+  margin: 0;
+  color: #172026;
+  font-size: 16px;
+}
+
+.unsaved-changes-header p {
+  margin: 0;
+  color: #41565e;
+  line-height: 1.45;
+}
+
+.unsaved-changes-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.unsaved-changes-actions .dialog-button {
+  justify-content: center;
+  min-height: 36px;
+  white-space: normal;
+}
+
 .rename-dialog-header {
   display: grid;
   gap: 4px;
