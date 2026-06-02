@@ -112,6 +112,7 @@ import type {
   WorkspaceFileEntry,
 } from "./types";
 import {
+  base64ToBytes,
   baseName,
   decreaseZoom,
   decreaseZoomFine,
@@ -605,8 +606,6 @@ function MainApp() {
     () => normalizeSvgSize(visibleCompileResult.svg),
     [visibleCompileResult.svg],
   );
-
-  const exportRenderedSvg = useMemo(() => normalizeSvgSize(compileResult.svg), [compileResult.svg]);
 
   const overlayViewBox = useMemo(() => getDiagramViewBox(renderedSvg), [renderedSvg]);
   const detachedPreviewState = useMemo<DetachedPreviewState>(
@@ -3327,25 +3326,40 @@ function MainApp() {
   }
 
   async function exportPNG() {
-    const image = new Image();
-    const svgBlob = new Blob([exportRenderedSvg], { type: "image/svg+xml" });
-    const url = URL.createObjectURL(svgBlob);
-    image.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(image.width, 1200);
-      canvas.height = Math.max(image.height, 800);
-      const context = canvas.getContext("2d");
-      if (!context) return;
-      context.fillStyle = "#ffffff";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      context.drawImage(image, 0, 0);
-      URL.revokeObjectURL(url);
-      const pngUrl = canvas.toDataURL("image/png");
-      downloadURL(`${baseName(fileName)}.png`, pngUrl);
-      setStatus("Exported PNG");
-    };
-    image.onerror = () => setStatus("PNG export failed");
-    image.src = url;
+    try {
+      const result = await invoke<ExportResult>("sidecar_call", {
+        method: "export",
+        params: { ...sidecarSourceParams(source), format: "svg" },
+      });
+      const svg = normalizeSvgSize(new TextDecoder().decode(base64ToBytes(result.data)));
+      const image = new Image();
+      const svgBlob = new Blob([svg], { type: "image/svg+xml" });
+      const url = URL.createObjectURL(svgBlob);
+      image.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(image.width, 1200);
+        canvas.height = Math.max(image.height, 800);
+        const context = canvas.getContext("2d");
+        if (!context) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(image, 0, 0);
+        URL.revokeObjectURL(url);
+        const pngUrl = canvas.toDataURL("image/png");
+        downloadURL(`${baseName(fileName)}.png`, pngUrl);
+        setStatus("Exported PNG");
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(url);
+        setStatus("PNG export failed");
+      };
+      image.src = url;
+    } catch (error) {
+      setStatus(String(error));
+    }
   }
 
   function paneFromTarget(target: EventTarget | null): FocusedPane | null {
@@ -3738,7 +3752,6 @@ function MainApp() {
       currentFilePath,
       openActiveWorkspaceInFinder,
       openActiveWorkspaceWithEditor,
-      exportRenderedSvg,
       fileName,
       formatDocument,
       openCommandPalette,

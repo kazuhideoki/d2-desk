@@ -7,7 +7,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
+	"io"
+	"mime"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 
 	"oss.terrastruct.com/d2/d2ast"
 	"oss.terrastruct.com/d2/d2format"
@@ -21,6 +31,11 @@ import (
 	"oss.terrastruct.com/d2/lib/log"
 	"oss.terrastruct.com/d2/lib/textmeasure"
 )
+
+const maxExportImageSize = 1 << 25
+
+var exportImageHrefPattern = regexp.MustCompile(`<image href="([^"]+)"`)
+var exportImageHTTPClient = &http.Client{}
 
 func compile(params compileParams) (compileResult, error) {
 	compileContext := newCompileContext(params.WorkspaceRootPath, params.CurrentFilePath, params.OpenFiles)
@@ -261,12 +276,131 @@ func export(params exportParams) (exportResult, error) {
 	}
 	switch strings.ToLower(params.Format) {
 	case "svg":
+		svg, err = bundleExportSVG(svg, exportImageInputPath(params, compileContext))
+		if err != nil {
+			return exportResult{}, err
+		}
 		return exportResult{Format: "svg", Data: base64.StdEncoding.EncodeToString(svg)}, nil
 	case "png", "pdf":
 		return exportResult{}, fmt.Errorf("%s export needs a raster/pdf renderer and is not wired yet", strings.ToUpper(params.Format))
 	default:
 		return exportResult{}, fmt.Errorf("unsupported export format %q", params.Format)
 	}
+}
+
+func exportImageInputPath(params exportParams, compileContext compileContext) string {
+	if params.CurrentFilePath != "" {
+		return params.CurrentFilePath
+	}
+	if params.WorkspaceRootPath != "" && compileContext.inputPath != "" {
+		return filepath.Join(params.WorkspaceRootPath, compileContext.inputPath)
+	}
+	return compileContext.inputPath
+}
+
+func bundleExportSVG(svg []byte, inputPath string) ([]byte, error) {
+	out := svg
+	for _, match := range exportImageHrefPattern.FindAllSubmatch(svg, -1) {
+		if len(match) != 2 {
+			continue
+		}
+		href := string(match[1])
+		if strings.HasPrefix(href, "data:") {
+			continue
+		}
+		bundled, err := bundledExportImageHref(href, inputPath)
+		if err != nil {
+			return svg, err
+		}
+		out = bytes.ReplaceAll(out, match[0], bundled)
+	}
+	return out, nil
+}
+
+func bundledExportImageHref(href string, inputPath string) ([]byte, error) {
+	decodedHref := html.UnescapeString(href)
+	u, err := url.Parse(decodedHref)
+	if err != nil {
+		return nil, err
+	}
+
+	var data []byte
+	var mimeType string
+	if strings.HasPrefix(u.Scheme, "http") {
+		data, mimeType, err = readRemoteExportImage(decodedHref)
+	} else {
+		data, err = readLocalExportImage(decodedHref, u, inputPath)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if mimeType == "" {
+		mimeType = exportImageMimeType(decodedHref, data, strings.HasPrefix(u.Scheme, "http"))
+	}
+	mimeType = strings.Replace(mimeType, "text/xml", "image/svg+xml", 1)
+	if mimeType == "application/octet-stream" && bytes.Contains(data, []byte("<svg")) {
+		mimeType = "image/svg+xml"
+	}
+
+	return []byte(fmt.Sprintf(
+		`<image href="data:%s;base64,%s"`,
+		mimeType,
+		base64.StdEncoding.EncodeToString(data),
+	)), nil
+}
+
+func readLocalExportImage(href string, u *url.URL, inputPath string) ([]byte, error) {
+	imagePath := href
+	if u.Scheme == "file" {
+		imagePath = u.Path
+	}
+	if inputPath != "" && inputPath != "-" && !filepath.IsAbs(imagePath) {
+		imagePath = filepath.Join(filepath.Dir(inputPath), imagePath)
+	}
+	return os.ReadFile(imagePath)
+}
+
+func readRemoteExportImage(href string) ([]byte, string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", href, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	resp, err := exportImageHTTPClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("expected status 200 but got %d %s", resp.StatusCode, resp.Status)
+	}
+
+	limited := io.LimitReader(resp.Body, maxExportImageSize+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(data) > maxExportImageSize {
+		return nil, "", fmt.Errorf("image is larger than %d bytes", maxExportImageSize)
+	}
+	return data, resp.Header.Get("Content-Type"), nil
+}
+
+func exportImageMimeType(href string, data []byte, remote bool) string {
+	imagePath := href
+	if remote {
+		if u, err := url.Parse(href); err == nil {
+			imagePath = u.Path
+		}
+	}
+	mimeType := mime.TypeByExtension(path.Ext(imagePath))
+	if mimeType == "" {
+		mimeType = http.DetectContentType(data)
+	}
+	return mimeType
 }
 
 func fallbackSVG(message string) string {

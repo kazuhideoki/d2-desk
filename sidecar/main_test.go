@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -2107,6 +2109,55 @@ func TestExportSVGReturnsBase64SVG(t *testing.T) {
 	}
 	if !strings.Contains(string(decoded), "<svg") {
 		t.Fatalf("expected decoded SVG, got %q", string(decoded[:min(len(decoded), 80)]))
+	}
+}
+
+func TestExportSVGBundlesLocalImages(t *testing.T) {
+	dir := t.TempDir()
+	inputPath := filepath.Join(dir, "diagram.d2")
+	iconPath := filepath.Join(dir, "icon.svg")
+	if err := os.WriteFile(iconPath, []byte(`<svg xmlns="http://www.w3.org/2000/svg"><rect width="8" height="8"/></svg>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := export(exportParams{
+		Source:          "api: { icon: icon.svg }",
+		Format:          "svg",
+		CurrentFilePath: inputPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(result.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svg := string(decoded)
+	if strings.Contains(svg, `href="icon.svg"`) {
+		t.Fatalf("expected local image href to be bundled, got %q", svg[:min(len(svg), 300)])
+	}
+	if !strings.Contains(svg, `href="data:image/svg+xml;base64,`) {
+		t.Fatalf("expected bundled data URI image, got %q", svg[:min(len(svg), 300)])
+	}
+}
+
+func TestBundleExportSVGBundlesRemoteImages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		_, _ = w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>`))
+	}))
+	defer server.Close()
+
+	svg, err := bundleExportSVG([]byte(`<svg><image href="`+server.URL+`/icon.svg" /></svg>`), "main.d2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := string(svg)
+	if strings.Contains(output, server.URL) {
+		t.Fatalf("expected remote image href to be bundled, got %q", output)
+	}
+	if !strings.Contains(output, `href="data:image/svg+xml;base64,`) {
+		t.Fatalf("expected bundled data URI image, got %q", output)
 	}
 }
 

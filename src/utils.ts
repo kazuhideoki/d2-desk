@@ -103,12 +103,17 @@ export function getDiagramViewBox(svg: string) {
   return outerSvgMatch?.[1] ?? "0 0 800 600";
 }
 
-export function downloadBytes(name: string, base64Data: string, type: string) {
+export function base64ToBytes(base64Data: string) {
   const binary = atob(base64Data);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) {
     bytes[index] = binary.charCodeAt(index);
   }
+  return bytes;
+}
+
+export function downloadBytes(name: string, base64Data: string, type: string) {
+  const bytes = base64ToBytes(base64Data);
   downloadURL(name, URL.createObjectURL(new Blob([bytes], { type })));
 }
 

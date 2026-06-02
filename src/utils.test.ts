@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  base64ToBytes,
   baseName,
   clampZoom,
   connectionPath,
@@ -125,5 +126,11 @@ describe("utils", () => {
     expect(getDiagramViewBox(svg)).toBe("10 20 300 200");
     expect(getDiagramViewBox('<svg viewBox="1 2 3 4"></svg>')).toBe("1 2 3 4");
     expect(getDiagramViewBox("<svg></svg>")).toBe("0 0 800 600");
+  });
+
+  it("decodes base64 into bytes without interpreting text encoding", () => {
+    expect(Array.from(base64ToBytes("44GT44KT44Gr44Gh44Gv"))).toEqual([
+      227, 129, 147, 227, 130, 147, 227, 129, 171, 227, 129, 161, 227, 129, 175,
+    ]);
   });
 });
