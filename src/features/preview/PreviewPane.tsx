@@ -5,6 +5,7 @@ import type { D2Board, D2Object } from "../../types";
 import { connectionPath, fitBoundsZoom, settleAutoZoom } from "../../utils";
 import { RepeatButton } from "../../shared/components/RepeatButton";
 import { boardOptionLabel, boardPathKey } from "./boards";
+import { firstPreviewExternalUrl } from "./links";
 import { previewZoomShortcutAction, previewZoomWheelAction } from "./zoomShortcuts";
 
 export type PreviewZoomMode = "auto" | "manual";
@@ -104,22 +105,100 @@ function anchorHrefFromTarget(target: EventTarget | null) {
   return hrefFromAnchor(element?.closest("a") ?? null);
 }
 
-function anchorHrefAtPoint(container: HTMLElement | null, clientX: number, clientY: number) {
+function titleTextFromElement(element: Element) {
+  return (
+    Array.from(element.children).find((child) => child.tagName.toLowerCase() === "title")
+      ?.textContent ?? null
+  );
+}
+
+function titleUrlFromTarget(target: EventTarget | null, boundary: HTMLElement | null) {
+  if (!boundary) return null;
+
+  let element = target instanceof Element ? target : null;
+  while (element) {
+    const url = firstPreviewExternalUrl(titleTextFromElement(element));
+    if (url) return url;
+    if (element === boundary) break;
+    element = element.parentElement;
+  }
+  return null;
+}
+
+function titleUrlAtPoint(container: HTMLElement | null, clientX: number, clientY: number) {
   if (!container) return null;
 
-  const anchors = Array.from(container.querySelectorAll("a"));
-  for (const anchor of anchors.reverse()) {
-    const rect = anchor.getBoundingClientRect();
+  const elementsWithTitles = Array.from(container.querySelectorAll("*")).filter((element) =>
+    firstPreviewExternalUrl(titleTextFromElement(element)),
+  );
+  for (const element of elementsWithTitles.reverse()) {
+    const rect = element.getBoundingClientRect();
     if (
       clientX >= rect.left &&
       clientX <= rect.right &&
       clientY >= rect.top &&
       clientY <= rect.bottom
     ) {
-      return hrefFromAnchor(anchor);
+      return firstPreviewExternalUrl(titleTextFromElement(element));
     }
   }
   return null;
+}
+
+function d2ObjectClassName(id: string) {
+  const bytes = new TextEncoder().encode(id);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+function titleUrlForObject(container: HTMLElement | null, object: D2Object) {
+  if (!container) return null;
+
+  const className = d2ObjectClassName(object.id);
+  const groups = Array.from(container.querySelectorAll("g"));
+  for (const group of groups) {
+    if (!group.classList.contains(className)) continue;
+    const url = firstPreviewExternalUrl(titleTextFromElement(group));
+    if (url) return url;
+  }
+  return null;
+}
+
+function isAppendixIconElement(element: Element | null, boundary: HTMLElement | null) {
+  let current = element;
+  while (current) {
+    if (current.classList.contains("appendix-icon")) return true;
+    if (current === boundary) break;
+    current = current.parentElement;
+  }
+  return false;
+}
+
+function appendixAnchorHrefFromTarget(target: EventTarget | null, boundary: HTMLElement | null) {
+  const element = target instanceof Element ? target : null;
+  return isAppendixIconElement(element, boundary) ? anchorHrefFromTarget(target) : null;
+}
+
+function objectChipPreviewBounds(object: D2Object) {
+  const { x, y, width, height } = object.preview;
+  if (
+    object.kind !== "shape" ||
+    x === undefined ||
+    y === undefined ||
+    width === undefined ||
+    height === undefined
+  ) {
+    return null;
+  }
+
+  return {
+    x: x + width - 16,
+    y: y - 16,
+    size: 32,
+  };
 }
 
 export function PreviewPane({
@@ -234,16 +313,29 @@ export function PreviewPane({
 
   const handleSvgClick = useCallback(
     (event: MouseEvent<HTMLDivElement>) => {
-      openLink(anchorHrefFromTarget(event.target), event);
+      openLink(
+        appendixAnchorHrefFromTarget(event.target, event.currentTarget) ??
+          titleUrlFromTarget(event.target, event.currentTarget),
+        event,
+      );
     },
     [openLink],
   );
 
   const handleOverlaySelect = useCallback(
+    (object: D2Object) => {
+      onSelect(object.id);
+    },
+    [onSelect],
+  );
+
+  const handleChipOpen = useCallback(
     (object: D2Object, event: MouseEvent) => {
       if (
         openLink(
-          object.link ?? anchorHrefAtPoint(svgOutputRef.current, event.clientX, event.clientY),
+          object.link ??
+            titleUrlForObject(svgOutputRef.current, object) ??
+            titleUrlAtPoint(svgOutputRef.current, event.clientX, event.clientY),
           event,
         )
       ) {
@@ -349,6 +441,7 @@ export function PreviewPane({
             <svg className="overlay" viewBox={overlayViewBox}>
               {objects.map((object) => {
                 const isFocused = object.id === (hoverId ?? activeId);
+                const chipBounds = objectChipPreviewBounds(object);
                 return object.kind === "shape" ? (
                   <g key={object.id}>
                     {isFocused ? (
@@ -370,8 +463,21 @@ export function PreviewPane({
                       rx={8}
                       onMouseEnter={() => onHover(object.id)}
                       onMouseLeave={() => onHover(null)}
-                      onClick={(event) => handleOverlaySelect(object, event)}
+                      onClick={() => handleOverlaySelect(object)}
                     />
+                    {chipBounds ? (
+                      <rect
+                        className="hit-target chip-hit-target"
+                        x={chipBounds.x}
+                        y={chipBounds.y}
+                        width={chipBounds.size}
+                        height={chipBounds.size}
+                        rx={16}
+                        onMouseEnter={() => onHover(object.id)}
+                        onMouseLeave={() => onHover(null)}
+                        onClick={(event) => handleChipOpen(object, event)}
+                      />
+                    ) : null}
                   </g>
                 ) : (
                   <g key={object.id}>
@@ -386,7 +492,7 @@ export function PreviewPane({
                       d={connectionPath(object.preview)}
                       onMouseEnter={() => onHover(object.id)}
                       onMouseLeave={() => onHover(null)}
-                      onClick={(event) => handleOverlaySelect(object, event)}
+                      onClick={() => handleOverlaySelect(object)}
                     />
                   </g>
                 );

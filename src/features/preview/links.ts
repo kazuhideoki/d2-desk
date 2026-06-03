@@ -5,6 +5,8 @@ export type PreviewFileLinkContext = {
 
 const schemePattern = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
 const windowsDrivePattern = /^[a-zA-Z]:[\\/]/;
+const externalUrlPattern = /https?:\/\/[^\s<>"']+/i;
+const trailingUrlPunctuationPattern = /[),.;:!?]+$/;
 
 export function resolvePreviewFileLink(
   href: string,
@@ -22,6 +24,21 @@ export function resolvePreviewFileLink(
     return null;
   }
   return resolvedPath;
+}
+
+export function resolvePreviewExternalUrl(href: string) {
+  try {
+    const url = new URL(href.trim());
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+export function firstPreviewExternalUrl(text: string | null | undefined) {
+  const match = text?.match(externalUrlPattern)?.[0];
+  if (!match) return null;
+  return resolvePreviewExternalUrl(match.replace(trailingUrlPunctuationPattern, ""));
 }
 
 function filePathFromHref(href: string) {

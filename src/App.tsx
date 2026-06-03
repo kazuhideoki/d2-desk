@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { loadInitialSession, type InitialSession } from "./app/initialSession";
 import { CommandPalette } from "./features/command-palette/CommandPalette";
 import {
@@ -47,7 +48,7 @@ import {
 } from "./features/file-palette/WorkspaceFilePalette";
 import { PreviewPane, type PreviewZoomMode } from "./features/preview/PreviewPane";
 import { getPreviewCompileDelayMs } from "./features/preview/compileSchedule";
-import { resolvePreviewFileLink } from "./features/preview/links";
+import { resolvePreviewExternalUrl, resolvePreviewFileLink } from "./features/preview/links";
 import {
   adjacentBoardPath,
   boardDisplayName,
@@ -1559,6 +1560,17 @@ function MainApp() {
 
   const openPreviewLink = useCallback(
     async (href: string) => {
+      const externalUrl = resolvePreviewExternalUrl(href);
+      if (externalUrl) {
+        try {
+          await openUrl(externalUrl);
+          setStatus(`Opened external link: ${externalUrl}`);
+        } catch (error) {
+          setStatus(String(error));
+        }
+        return;
+      }
+
       const workspaceId = activeWorkspaceIdRef.current;
       const workspace = workspaceId
         ? workspaceStateRef.current.workspaces.find((item) => item.id === workspaceId)

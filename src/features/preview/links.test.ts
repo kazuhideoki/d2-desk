@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { resolvePreviewFileLink } from "./links";
+import {
+  firstPreviewExternalUrl,
+  resolvePreviewExternalUrl,
+  resolvePreviewFileLink,
+} from "./links";
 
 describe("preview links", () => {
   it("resolves relative links from the active file directory", () => {
@@ -44,5 +48,25 @@ describe("preview links", () => {
         currentFilePath: null,
       }),
     ).toBe("/workspace/diagrams/main.d2");
+  });
+
+  it("resolves external http URLs for the system opener", () => {
+    expect(resolvePreviewExternalUrl("https://example.com/path?q=1")).toBe(
+      "https://example.com/path?q=1",
+    );
+    expect(resolvePreviewExternalUrl(" http://example.com ")).toBe("http://example.com/");
+  });
+
+  it("rejects non-browser external link schemes", () => {
+    expect(resolvePreviewExternalUrl("mailto:test@example.com")).toBeNull();
+    expect(resolvePreviewExternalUrl("file:///workspace/diagrams/main.d2")).toBeNull();
+    expect(resolvePreviewExternalUrl("javascript:alert(1)")).toBeNull();
+  });
+
+  it("extracts the first browser URL from tooltip text", () => {
+    expect(firstPreviewExternalUrl("See https://example.com/docs).")).toBe(
+      "https://example.com/docs",
+    );
+    expect(firstPreviewExternalUrl("no URL here")).toBeNull();
   });
 });
