@@ -409,7 +409,7 @@ select {
 }
 
 .symbol-palette-row {
-  grid-template-columns: 76px minmax(120px, 0.45fr) minmax(0, 1fr) minmax(44px, auto);
+  grid-template-columns: 76px minmax(0, 1fr) minmax(44px, auto);
 }
 
 .command-palette-row {

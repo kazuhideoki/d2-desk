@@ -118,7 +118,6 @@ export function SymbolPalette({
                 >
                   <span className={`symbol-palette-kind ${symbol.kind}`}>{symbol.kind}</span>
                   <span className="file-palette-name">{symbol.name}</span>
-                  <span className="file-palette-path">{symbol.detail}</span>
                   <span className="symbol-palette-line">:{symbol.line}</span>
                 </button>
               );

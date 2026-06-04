@@ -22,11 +22,12 @@ export function buildD2SymbolEntries(objects: D2Object[]) {
       if (object.label && object.label !== name) {
         detailParts.push(object.label);
       }
+      const detail = detailParts.join(" - ");
       return {
         id: object.id,
         kind: object.kind,
         name,
-        detail: detailParts.join(" - "),
+        detail,
         line: sourceRange.startLine,
         column: sourceRange.startColumn,
       };
