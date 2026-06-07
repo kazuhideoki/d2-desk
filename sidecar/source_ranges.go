@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-var identifierRE = regexp.MustCompile(`[A-Za-z0-9_.$-]+`)
+var identifierRE = regexp.MustCompile(`[\p{L}\p{N}\p{M}_.$-]+`)
 
 type connectionSourceRange struct {
 	Src   string
@@ -25,6 +25,35 @@ func contains(r sourceRange, line, column int) bool {
 		return false
 	}
 	return true
+}
+
+func utf16ColumnToByteColumn(lineText string, column int) int {
+	if column <= 1 {
+		return 1
+	}
+	utf16Column := 1
+	for byteIndex, runeValue := range lineText {
+		if column <= utf16Column {
+			return byteIndex + 1
+		}
+		if runeValue > 0xFFFF {
+			utf16Column += 2
+		} else {
+			utf16Column++
+		}
+		if column < utf16Column {
+			return byteIndex + 1
+		}
+	}
+	return len(lineText) + 1
+}
+
+func byteColumnForSourcePosition(source string, line, column int) int {
+	lines := strings.Split(source, "\n")
+	if line < 1 || line > len(lines) {
+		return column
+	}
+	return utf16ColumnToByteColumn(lines[line-1], column)
 }
 
 func scanSourceRanges(source string) map[string][]sourceRange {

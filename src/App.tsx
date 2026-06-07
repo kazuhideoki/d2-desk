@@ -228,7 +228,7 @@ type InternalSuggestController = {
   };
 };
 
-const nodeRenamePattern = /^[A-Za-z0-9_-]+$/;
+const nodeRenamePattern = /^[\p{L}\p{N}\p{M}_-]+$/u;
 const tabPersistenceDelayMs = 400;
 const previewCompileDelayMs = 600;
 const tabSwitchPreviewCompileDelayMs = 140;

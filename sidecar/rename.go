@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-var renameIdentifierRE = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+var renameIdentifierRE = regexp.MustCompile(`^[\p{L}\p{N}\p{M}_-]+$`)
 
 func renameNode(params renameNodeParams) (renameNodeResult, error) {
 	targetID := strings.TrimSpace(params.ID)

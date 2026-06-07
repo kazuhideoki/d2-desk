@@ -781,6 +781,31 @@ func TestNodeAtFindsNestedUnquotedIdentifierWithSpaces(t *testing.T) {
 	}
 }
 
+func TestNodeAtFindsHiraganaIdentifier(t *testing.T) {
+	source := `ゆうちょ: ゆうちょ
+あ -> ゆうちょ
+`
+	result, err := compile(compileParams{Source: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	node := findObject(result.Objects, "ゆうちょ")
+	if node == nil {
+		t.Fatalf("expected hiragana object in %#v", result.Objects)
+	}
+
+	definition := nodeAt(nodeAtParams{Source: source, Line: 1, Column: 2})
+	if definition["id"] != "ゆうちょ" {
+		t.Fatalf("expected cursor on hiragana definition to focus node, got %#v", definition)
+	}
+
+	endpoint := nodeAt(nodeAtParams{Source: source, Line: 2, Column: 6})
+	if endpoint["id"] != "ゆうちょ" {
+		t.Fatalf("expected cursor on hiragana endpoint after hiragana source to focus node, got %#v", endpoint)
+	}
+}
+
 func TestRenameNodeRenamesNestedUnquotedIdentifierWithSpaces(t *testing.T) {
 	source := `status: {
   HTTP Upgrade
@@ -801,6 +826,26 @@ func TestRenameNodeRenamesNestedUnquotedIdentifierWithSpaces(t *testing.T) {
 		t.Fatalf("unexpected renamed source:\n%s", result.Source)
 	}
 	if result.ID != "status.http_upgrade" {
+		t.Fatalf("expected renamed id, got %q", result.ID)
+	}
+}
+
+func TestRenameNodeRenamesHiraganaIdentifier(t *testing.T) {
+	source := `ゆうちょ: ゆうちょ
+sony -> ゆうちょ: 310,000
+`
+	result, err := renameNode(renameNodeParams{Source: source, ID: "ゆうちょ", NewName: "郵貯"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := `郵貯: ゆうちょ
+sony -> 郵貯: 310,000
+`
+	if result.Source != expected {
+		t.Fatalf("unexpected renamed source:\n%s", result.Source)
+	}
+	if result.ID != "郵貯" {
 		t.Fatalf("expected renamed id, got %q", result.ID)
 	}
 }

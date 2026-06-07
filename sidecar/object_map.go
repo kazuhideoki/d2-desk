@@ -168,9 +168,10 @@ func nonNilBoardPath(boardPath []string) []string {
 func nodeAt(params nodeAtParams) map[string]string {
 	var bestID string
 	var bestRange *sourceRange
+	column := byteColumnForSourcePosition(params.Source, params.Line, params.Column)
 	for _, obj := range buildObjectMap(params.Source, nilFallbackDiagram(params.Source), nil) {
 		for _, r := range obj.SourceRanges {
-			if contains(r, params.Line, params.Column) {
+			if contains(r, params.Line, column) {
 				if bestRange == nil || sourceRangeSize(r) < sourceRangeSize(*bestRange) {
 					bestID = obj.ID
 					rangeCopy := r
@@ -184,7 +185,7 @@ func nodeAt(params nodeAtParams) map[string]string {
 	}
 	for id, ranges := range scanSourceRanges(params.Source) {
 		for _, r := range ranges {
-			if contains(r, params.Line, params.Column) {
+			if contains(r, params.Line, column) {
 				return map[string]string{"id": id}
 			}
 		}

@@ -19,8 +19,9 @@ func selectionRangesAt(source string, line, column int) []sourceRange {
 	candidates := selectionRangeCandidates(source)
 	ranges := make([]sourceRange, 0, len(candidates))
 	seen := map[sourceRange]bool{}
+	byteColumn := byteColumnForSourcePosition(source, line, column)
 	for _, candidate := range candidates {
-		if !contains(candidate, line, column) || seen[candidate] {
+		if !contains(candidate, line, byteColumn) || seen[candidate] {
 			continue
 		}
 		ranges = append(ranges, candidate)
