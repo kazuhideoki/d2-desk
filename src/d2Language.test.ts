@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
   configureD2Language,
+  d2BlockStringPipeDelimiter,
+  d2BlockStringTagSnippet,
+  d2BlockStringTagSortText,
   encodeD2SemanticTokens,
   getD2CompletionContext,
   isD2LineCommentPosition,
@@ -29,6 +32,40 @@ describe("d2Language", () => {
       kind: "value",
       typedText: "",
     });
+    expect(getD2CompletionContext("api: |", "api: |".length + 1)).toEqual({
+      kind: "value",
+      typedText: "",
+    });
+    expect(getD2CompletionContext("api: |md", "api: |md".length + 1)).toEqual({
+      kind: "value",
+      typedText: "md",
+    });
+  });
+
+  it("builds D2 block string tag snippets with nested cursor indentation", () => {
+    expect(d2BlockStringTagSnippet("md", "p: |", "p: |".length + 1, "")).toBe(
+      "md\n  $0\n|",
+    );
+    expect(d2BlockStringTagSnippet("md", "  p: |m", "  p: |m".length + 1, "m")).toBe(
+      "md\n    $0\n  |",
+    );
+    expect(d2BlockStringTagSnippet("latex", "p: ||la", "p: ||la".length + 1, "la")).toBe(
+      "latex\n  $0\n||",
+    );
+  });
+
+  it("detects D2 block string pipe delimiters before typed tags", () => {
+    expect(d2BlockStringPipeDelimiter("p: |", "p: |".length + 1, "")).toBe("|");
+    expect(d2BlockStringPipeDelimiter("p: |m", "p: |m".length + 1, "m")).toBe("|");
+    expect(d2BlockStringPipeDelimiter("p: ||la", "p: ||la".length + 1, "la")).toBe("||");
+  });
+
+  it("sorts short D2 block string tags before full aliases", () => {
+    expect(
+      ["markdown", "md", "latex", "tex"].sort((left, right) =>
+        d2BlockStringTagSortText(left).localeCompare(d2BlockStringTagSortText(right)),
+      ),
+    ).toEqual(["md", "markdown", "tex", "latex"]);
   });
 
   it("detects key completion contexts at valid D2 boundaries", () => {

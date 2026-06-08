@@ -119,6 +119,20 @@ Under `theme-overrides` and `dark-theme-overrides`:
 - `AB4`
 - `AB5`
 
+## Block string tag candidates
+
+After a value-position pipe such as `label: |`:
+
+- `md`
+- `markdown`
+- `tex`
+- `latex`
+- `go`
+- `js`
+- `ts`
+- `py`
+- `rb`
+
 ## Value candidates
 
 ### `direction`
