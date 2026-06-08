@@ -60,11 +60,90 @@ var d2ThemeOverrideKeyCompletionItems = completionItemsForLabels([]string{
 	"AA2", "AA4", "AA5", "AB4", "AB5",
 }, "theme override", "keyword")
 
+var d2BlockStringTagCompletionItems = []completionItem{
+	{
+		Label:         "md",
+		Kind:          "keyword",
+		Detail:        "block string tag",
+		Description:   "Markdownとして表示",
+		Documentation: "Markdownラベルのblock stringタグ",
+		InsertText:    "md",
+	},
+	{
+		Label:         "markdown",
+		Kind:          "keyword",
+		Detail:        "block string tag",
+		Description:   "Markdownとして表示",
+		Documentation: "Markdownラベルのblock stringタグ",
+		InsertText:    "markdown",
+	},
+	{
+		Label:         "tex",
+		Kind:          "keyword",
+		Detail:        "block string tag",
+		Description:   "LaTeXとして表示",
+		Documentation: "LaTeXラベルのblock stringタグ",
+		InsertText:    "tex",
+	},
+	{
+		Label:         "latex",
+		Kind:          "keyword",
+		Detail:        "block string tag",
+		Description:   "LaTeXとして表示",
+		Documentation: "LaTeXラベルのblock stringタグ",
+		InsertText:    "latex",
+	},
+	{
+		Label:         "go",
+		Kind:          "keyword",
+		Detail:        "block string tag",
+		Description:   "Goコードとして表示",
+		Documentation: "コードラベルのblock stringタグ",
+		InsertText:    "go",
+	},
+	{
+		Label:         "js",
+		Kind:          "keyword",
+		Detail:        "block string tag",
+		Description:   "JavaScriptコードとして表示",
+		Documentation: "コードラベルのblock stringタグ",
+		InsertText:    "js",
+	},
+	{
+		Label:         "ts",
+		Kind:          "keyword",
+		Detail:        "block string tag",
+		Description:   "TypeScriptコードとして表示",
+		Documentation: "コードラベルのblock stringタグ",
+		InsertText:    "ts",
+	},
+	{
+		Label:         "py",
+		Kind:          "keyword",
+		Detail:        "block string tag",
+		Description:   "Pythonコードとして表示",
+		Documentation: "コードラベルのblock stringタグ",
+		InsertText:    "py",
+	},
+	{
+		Label:         "rb",
+		Kind:          "keyword",
+		Detail:        "block string tag",
+		Description:   "Rubyコードとして表示",
+		Documentation: "コードラベルのblock stringタグ",
+		InsertText:    "rb",
+	},
+}
+
 var excludedThemeCompletionIDs = map[int64]struct{}{
 	302: {},
 }
 
 func complete(params completeParams) ([]completionItem, error) {
+	if completions := d2BlockStringTagCompletions(params); completions != nil {
+		return completions, nil
+	}
+
 	items, err := d2lsp.GetCompletionItems(params.Source, params.Line, params.Column)
 	if err != nil {
 		return nil, err
@@ -477,6 +556,98 @@ func d2ContextValueCompletions(params completeParams) []completionItem {
 		return nearConstantCompletions()
 	}
 	return nil
+}
+
+func d2BlockStringTagCompletions(params completeParams) []completionItem {
+	typedTag, ok := completionBlockStringTagPrefix(params.Source, params.Line, params.Column)
+	if !ok {
+		return nil
+	}
+
+	completions := make([]completionItem, 0, len(d2BlockStringTagCompletionItems))
+	for _, item := range d2BlockStringTagCompletionItems {
+		if strings.HasPrefix(item.Label, typedTag) {
+			completions = append(completions, item)
+		}
+	}
+	if typedTag != "" {
+		completions = preferShortBlockStringTagCompletions(completions, typedTag)
+	}
+	return completions
+}
+
+func preferShortBlockStringTagCompletions(items []completionItem, typedTag string) []completionItem {
+	hasShortAlias := false
+	for _, item := range items {
+		if isShortBlockStringTag(item.Label) && strings.HasPrefix(item.Label, typedTag) {
+			hasShortAlias = true
+			break
+		}
+	}
+	if !hasShortAlias {
+		return items
+	}
+
+	filtered := make([]completionItem, 0, len(items))
+	for _, item := range items {
+		if isFullBlockStringAlias(item.Label) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func isShortBlockStringTag(label string) bool {
+	switch label {
+	case "md", "tex", "go", "js", "ts", "py", "rb":
+		return true
+	default:
+		return false
+	}
+}
+
+func isFullBlockStringAlias(label string) bool {
+	switch label {
+	case "markdown", "latex":
+		return true
+	default:
+		return false
+	}
+}
+
+func completionBlockStringTagPrefix(source string, line, column int) (string, bool) {
+	lines := strings.Split(source, "\n")
+	if line < 0 || line >= len(lines) {
+		return "", false
+	}
+
+	lineText := lines[line]
+	column = clamp(column, 0, len(lineText))
+	start := column
+	for start > 0 && isCompletionValueChar(lineText[start-1]) {
+		start--
+	}
+
+	prefix := lineText[:start]
+	pipeStart := len(prefix)
+	for pipeStart > 0 && prefix[pipeStart-1] == '|' {
+		pipeStart--
+	}
+	if pipeStart == len(prefix) {
+		return "", false
+	}
+
+	beforePipe := prefix[:pipeStart]
+	colonIndex := strings.LastIndex(beforePipe, ":")
+	if colonIndex < 0 || strings.TrimSpace(beforePipe[colonIndex+1:]) != "" {
+		return "", false
+	}
+	if len(completionKeyContext(source, line, pipeStart)) == 0 {
+		return "", false
+	}
+
+	return lineText[start:column], true
 }
 
 func arrowheadShapeCompletions() []completionItem {

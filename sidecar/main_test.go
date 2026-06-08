@@ -1956,6 +1956,77 @@ func TestCompleteReturnsAdditionalValueCompletions(t *testing.T) {
 	}
 }
 
+func TestCompleteReturnsBlockStringTagCompletions(t *testing.T) {
+	tests := []struct {
+		name        string
+		source      string
+		line        int
+		column      int
+		want        string
+		wantMissing string
+	}{
+		{
+			name:   "empty tag",
+			source: "api: |",
+			line:   0,
+			column: len("api: |"),
+			want:   "md",
+		},
+		{
+			name:   "typed markdown tag",
+			source: "api: |m",
+			line:   0,
+			column: len("api: |m"),
+			want:   "md",
+		},
+		{
+			name:        "prefers short tag while typing short prefix",
+			source:      "api: |m",
+			line:        0,
+			column:      len("api: |m"),
+			want:        "md",
+			wantMissing: "markdown",
+		},
+		{
+			name:        "full markdown tag",
+			source:      "api: |ma",
+			line:        0,
+			column:      len("api: |ma"),
+			want:        "markdown",
+			wantMissing: "md",
+		},
+		{
+			name:   "multiple pipe delimiter",
+			source: "api: ||la",
+			line:   0,
+			column: len("api: ||la"),
+			want:   "latex",
+		},
+		{
+			name:   "connection label",
+			source: "api -> db: |t",
+			line:   0,
+			column: len("api -> db: |t"),
+			want:   "tex",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			items, err := complete(completeParams{Source: tt.source, Line: tt.line, Column: tt.column})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !hasCompletionInsertText(items, tt.want, tt.want) {
+				t.Fatalf("expected %q block string tag completion, got %#v", tt.want, items)
+			}
+			if tt.wantMissing != "" && hasCompletion(items, tt.wantMissing) {
+				t.Fatalf("expected %q to be filtered out, got %#v", tt.wantMissing, items)
+			}
+		})
+	}
+}
+
 func TestSemanticTokensReturnsOnlyBooleanTypedValues(t *testing.T) {
 	source := "true: label\napi: true\nhoge: { hoge: true }\napi: { style.shadow: true; label: \"false\" }\nvars: { d2-config: { sketch: false } }"
 	tokens, err := semanticTokens(semanticTokenParams{Source: source})

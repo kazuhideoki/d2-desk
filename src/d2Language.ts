@@ -9,7 +9,7 @@ import type {
 } from "./types";
 
 const d2ValueCompletionPattern =
-  /(?:^|[{\s;])(?:[\w"'-]+(?:\.[\w-]+)*\.)?[\w-]+(?:\.[\w-]+)*\s*:\s*([\w-]*)$/;
+  /(?:^|[{\s;])(?:[\w"'-]+(?:\.[\w-]+)*\.)?[\w-]+(?:\.[\w-]+)*\s*:\s*(?:\|+)?([\w-]*)$/;
 
 let didRegisterD2Completions = false;
 let didRegisterD2SemanticTokens = false;
@@ -18,6 +18,7 @@ const d2CompletionTriggerCharacters = [
   ":",
   " ",
   ".",
+  "|",
   "@",
   "/",
   ..."-_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
@@ -212,26 +213,37 @@ export function configureD2Language(monaco: typeof Monaco) {
         }
 
         return {
-          suggestions: completions.map((completion) => ({
-            label: d2CompletionLabel(completion),
-            kind: d2CompletionKindToMonaco(monaco, completion),
-            insertText: completion.insertText || completion.label,
-            filterText: completion.filterText || completion.label,
-            sortText: completion.label,
-            detail:
-              completion.description ||
-              (completion.detail ? `D2 ${completion.detail}` : "D2 completion"),
-            documentation: d2CompletionDocumentation(completion),
-            range: d2CompletionReplacementRange(completion, completionContext, replacementRanges),
-            ...(completionContext.kind === "key" && (completion.insertText || "").endsWith(": ")
-              ? {
-                  command: {
-                    id: "editor.action.triggerSuggest",
-                    title: "Trigger value suggestions",
-                  },
-                }
-              : {}),
-          })),
+          suggestions: completions.map((completion) => {
+            const insertText = d2CompletionInsertText(
+              monaco,
+              completion,
+              completionContext,
+              lineContent,
+              position.column,
+            );
+            return {
+              label: d2CompletionLabel(completion),
+              kind: d2CompletionKindToMonaco(monaco, completion),
+              insertText: insertText.value,
+              ...(insertText.rules !== undefined ? { insertTextRules: insertText.rules } : {}),
+              ...(d2CompletionPreselect(completion) ? { preselect: true } : {}),
+              filterText: completion.filterText || completion.label,
+              sortText: d2CompletionSortText(completion),
+              detail:
+                completion.description ||
+                (completion.detail ? `D2 ${completion.detail}` : "D2 completion"),
+              documentation: d2CompletionDocumentation(completion),
+              range: d2CompletionReplacementRange(completion, completionContext, replacementRanges),
+              ...(completionContext.kind === "key" && (completion.insertText || "").endsWith(": ")
+                ? {
+                    command: {
+                      id: "editor.action.triggerSuggest",
+                      title: "Trigger value suggestions",
+                    },
+                  }
+                : {}),
+            };
+          }),
         };
       },
     });
@@ -644,6 +656,71 @@ function d2CompletionDocumentation(completion: D2CompletionItem) {
     : "";
   const value = `${palette}${documentation}`;
   return value ? { value } : undefined;
+}
+
+function d2CompletionInsertText(
+  monaco: typeof Monaco,
+  completion: D2CompletionItem,
+  completionContext: D2CompletionContext,
+  lineContent: string,
+  column: number,
+) {
+  if (completionContext.kind === "value" && isD2BlockStringTagCompletion(completion)) {
+    return {
+      value: d2BlockStringTagSnippet(
+        completion.insertText || completion.label,
+        lineContent,
+        column,
+        completionContext.typedText,
+      ),
+      rules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+    };
+  }
+  return { value: completion.insertText || completion.label };
+}
+
+function isD2BlockStringTagCompletion(completion: D2CompletionItem) {
+  return completion.detail === "block string tag";
+}
+
+function d2CompletionSortText(completion: D2CompletionItem) {
+  if (isD2BlockStringTagCompletion(completion)) {
+    return d2BlockStringTagSortText(completion.label);
+  }
+  return completion.label;
+}
+
+function d2CompletionPreselect(completion: D2CompletionItem) {
+  return isD2BlockStringTagCompletion(completion) && completion.label === "md";
+}
+
+export function d2BlockStringTagSortText(label: string) {
+  const index = ["md", "markdown", "tex", "latex", "go", "js", "ts", "py", "rb"].indexOf(label);
+  if (index < 0) return label;
+  return `${String(index).padStart(2, "0")}-${label}`;
+}
+
+export function d2BlockStringTagSnippet(
+  tag: string,
+  lineContent: string,
+  column: number,
+  typedText: string,
+) {
+  const lineIndent = lineContent.match(/^\s*/)?.[0] ?? "";
+  const pipeDelimiter = d2BlockStringPipeDelimiter(lineContent, column, typedText);
+  return `${tag}\n${lineIndent}  $0\n${lineIndent}${pipeDelimiter}`;
+}
+
+export function d2BlockStringPipeDelimiter(
+  lineContent: string,
+  column: number,
+  typedText: string,
+) {
+  const prefixBeforeTypedText = lineContent.slice(
+    0,
+    Math.max(0, column - 1 - typedText.length),
+  );
+  return prefixBeforeTypedText.match(/\|+$/)?.[0] ?? "|";
 }
 
 function themePaletteMarkdown(colors: string[]) {
