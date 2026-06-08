@@ -5,12 +5,17 @@ export type PreviewViewMode = "split" | "preview-only" | "editor-only";
 export type PreviewLayout = {
   viewMode: PreviewViewMode;
   detached: boolean;
+  editorPaneRatio: number;
 };
 
 export const defaultPreviewLayout: PreviewLayout = {
   viewMode: "split",
   detached: false,
+  editorPaneRatio: 0.475,
 };
+
+export const minEditorPaneRatio = 0.2;
+export const maxEditorPaneRatio = 0.8;
 
 export function nextPreviewViewMode(current: PreviewViewMode): PreviewViewMode {
   switch (current) {
@@ -54,14 +59,32 @@ export function normalizePreviewLayout(value: unknown): PreviewLayout {
 
   const layout = value as Partial<PreviewLayout>;
   const detached = layout.detached === true;
+  const editorPaneRatio = normalizeEditorPaneRatio(layout.editorPaneRatio);
   if (detached) {
-    return { viewMode: "editor-only", detached: true };
+    return { viewMode: "editor-only", detached: true, editorPaneRatio };
   }
 
   return {
     viewMode: isPreviewViewMode(layout.viewMode) ? layout.viewMode : defaultPreviewLayout.viewMode,
     detached: false,
+    editorPaneRatio,
   };
+}
+
+export function normalizeEditorPaneRatio(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return defaultPreviewLayout.editorPaneRatio;
+  }
+  return Math.min(maxEditorPaneRatio, Math.max(minEditorPaneRatio, value));
+}
+
+export function editorPaneRatioFromPointer(
+  clientX: number,
+  containerLeft: number,
+  containerWidth: number,
+) {
+  if (containerWidth <= 0) return defaultPreviewLayout.editorPaneRatio;
+  return normalizeEditorPaneRatio((clientX - containerLeft) / containerWidth);
 }
 
 function isPreviewViewMode(value: unknown): value is PreviewViewMode {

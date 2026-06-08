@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { previewLayoutStorageKey } from "../../constants";
 import {
+  editorPaneRatioFromPointer,
   loadPreviewLayout,
   nextPreviewViewMode,
+  normalizeEditorPaneRatio,
   normalizePreviewLayout,
   previewViewModeStatus,
   writePreviewLayout,
@@ -55,28 +57,64 @@ describe("preview view mode", () => {
       JSON.stringify({ viewMode: "preview-only", detached: false }),
     );
 
-    expect(loadPreviewLayout()).toEqual({ viewMode: "preview-only", detached: false });
+    expect(loadPreviewLayout()).toEqual({
+      viewMode: "preview-only",
+      detached: false,
+      editorPaneRatio: 0.475,
+    });
+  });
+
+  it("loads the persisted editor pane ratio", () => {
+    localStorage.setItem(
+      previewLayoutStorageKey,
+      JSON.stringify({ viewMode: "split", detached: false, editorPaneRatio: 0.62 }),
+    );
+
+    expect(loadPreviewLayout()).toEqual({
+      viewMode: "split",
+      detached: false,
+      editorPaneRatio: 0.62,
+    });
   });
 
   it("normalizes detached preview layout to editor-only in the main window", () => {
     expect(normalizePreviewLayout({ viewMode: "split", detached: true })).toEqual({
       viewMode: "editor-only",
       detached: true,
+      editorPaneRatio: 0.475,
     });
   });
 
   it("falls back when the stored layout is invalid", () => {
     localStorage.setItem(previewLayoutStorageKey, JSON.stringify({ viewMode: "bogus" }));
 
-    expect(loadPreviewLayout()).toEqual({ viewMode: "split", detached: false });
+    expect(loadPreviewLayout()).toEqual({
+      viewMode: "split",
+      detached: false,
+      editorPaneRatio: 0.475,
+    });
   });
 
   it("writes a normalized preview layout", () => {
-    writePreviewLayout({ viewMode: "preview-only", detached: true });
+    writePreviewLayout({ viewMode: "preview-only", detached: true, editorPaneRatio: 2 });
 
     expect(JSON.parse(localStorage.getItem(previewLayoutStorageKey) ?? "")).toEqual({
       viewMode: "editor-only",
       detached: true,
+      editorPaneRatio: 0.8,
     });
+  });
+
+  it("normalizes editor pane ratios", () => {
+    expect(normalizeEditorPaneRatio(0.1)).toBe(0.2);
+    expect(normalizeEditorPaneRatio(0.5)).toBe(0.5);
+    expect(normalizeEditorPaneRatio(0.9)).toBe(0.8);
+    expect(normalizeEditorPaneRatio(Number.NaN)).toBe(0.475);
+  });
+
+  it("calculates editor pane ratio from pointer position", () => {
+    expect(editorPaneRatioFromPointer(350, 100, 500)).toBe(0.5);
+    expect(editorPaneRatioFromPointer(0, 100, 500)).toBe(0.2);
+    expect(editorPaneRatioFromPointer(700, 100, 500)).toBe(0.8);
   });
 });

@@ -1,4 +1,13 @@
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import type { OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { invoke } from "@tauri-apps/api/core";
@@ -55,6 +64,7 @@ import {
   boardPathKey,
 } from "./features/preview/boards";
 import {
+  editorPaneRatioFromPointer,
   loadPreviewLayout,
   nextPreviewViewMode,
   previewViewModeStatus,
@@ -516,6 +526,9 @@ function MainApp() {
   const [previewViewMode, setPreviewViewMode] = useState<PreviewViewMode>(
     () => initialPreviewLayoutRef.current!.viewMode,
   );
+  const [editorPaneRatio, setEditorPaneRatio] = useState(
+    () => initialPreviewLayoutRef.current!.editorPaneRatio,
+  );
   const [previewDetached, setPreviewDetached] = useState(
     () => initialPreviewLayoutRef.current!.detached,
   );
@@ -573,6 +586,7 @@ function MainApp() {
   const selectedBoardPathRef = useRef(selectedBoardPath);
   const detachedPreviewStateRef = useRef<DetachedPreviewState>(emptyDetachedPreviewState);
   const perfDebugOptionsRef = useRef(perfDebugOptions);
+  const workspaceElementRef = useRef<HTMLElement | null>(null);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0],
@@ -687,8 +701,8 @@ function MainApp() {
   }, [selectedBoardPath]);
 
   useEffect(() => {
-    writePreviewLayout({ viewMode: previewViewMode, detached: previewDetached });
-  }, [previewDetached, previewViewMode]);
+    writePreviewLayout({ viewMode: previewViewMode, detached: previewDetached, editorPaneRatio });
+  }, [editorPaneRatio, previewDetached, previewViewMode]);
 
   function invalidateCursorLookup() {
     compileResultSourceRef.current = null;
@@ -2531,7 +2545,7 @@ function MainApp() {
     quitInFlightRef.current = true;
 
     try {
-      writePreviewLayout({ viewMode: previewViewMode, detached: previewDetached });
+      writePreviewLayout({ viewMode: previewViewMode, detached: previewDetached, editorPaneRatio });
       persistActiveEditorViewState();
       setStatus("Quitting");
       try {
@@ -2542,7 +2556,7 @@ function MainApp() {
     } finally {
       quitInFlightRef.current = false;
     }
-  }, [persistActiveEditorViewState, previewDetached, previewViewMode]);
+  }, [editorPaneRatio, persistActiveEditorViewState, previewDetached, previewViewMode]);
 
   const applyWorkspaceSelection = useCallback(
     (
@@ -3823,11 +3837,48 @@ function MainApp() {
 
   const mainPreviewVisible =
     perfDebugOptions.previewRender && !previewDetached && previewViewMode !== "editor-only";
+  const splitPreviewVisible = mainPreviewVisible && previewViewMode === "split";
   const workspaceClassName = !mainPreviewVisible
     ? "workspace preview-detached"
     : previewViewMode === "preview-only"
       ? "workspace preview-fullscreen"
       : "workspace";
+  const workspaceStyle = splitPreviewVisible
+    ? ({
+        gridTemplateColumns: `minmax(0, calc(${editorPaneRatio * 100}% - 5px)) 10px minmax(0, calc(${
+          (1 - editorPaneRatio) * 100
+        }% - 5px))`,
+      } satisfies CSSProperties)
+    : undefined;
+
+  const startPaneResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    const workspaceElement = workspaceElementRef.current;
+    if (!workspaceElement) return;
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    document.body.classList.add("pane-resizing");
+
+    const updateRatio = (clientX: number) => {
+      const rect = workspaceElement.getBoundingClientRect();
+      setEditorPaneRatio(editorPaneRatioFromPointer(clientX, rect.left, rect.width));
+    };
+    updateRatio(event.clientX);
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      updateRatio(moveEvent.clientX);
+    };
+    const handlePointerEnd = () => {
+      document.body.classList.remove("pane-resizing");
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerEnd);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerEnd);
+    window.addEventListener("pointercancel", handlePointerEnd);
+  }, []);
 
   return (
     <main className={bottomPanelVisible ? "app-shell" : "app-shell bottom-panel-hidden"}>
@@ -4012,7 +4063,7 @@ function MainApp() {
         onReorderTabs={moveTab}
       />
 
-      <section className={workspaceClassName}>
+      <section ref={workspaceElementRef} className={workspaceClassName} style={workspaceStyle}>
         <EditorPane
           activeTabId={activeTabId}
           fileName={fileName}
@@ -4030,36 +4081,47 @@ function MainApp() {
         />
 
         {mainPreviewVisible ? (
-          <PreviewPane
-            objects={visibleCompileResult.objects}
-            boards={compileResult.boards ?? []}
-            selectedBoardPath={selectedBoardPath}
-            renderedSvg={renderedSvg}
-            overlayViewBox={overlayViewBox}
-            zoom={previewZoom}
-            zoomMode={previewZoomMode}
-            activeId={activeId}
-            hoverId={hoverId}
-            onHover={(id) => {
-              hoverIdRef.current = id;
-              setHoverId(id);
-            }}
-            onSelect={(id) => {
-              hoverIdRef.current = null;
-              setHoverId(null);
-              setActiveId(id);
-              highlightObject(id, true);
-            }}
-            onZoomOut={zoomPreviewOut}
-            onResetZoom={resetPreviewZoom}
-            onZoomIn={zoomPreviewIn}
-            onFineZoomOut={zoomPreviewOutFine}
-            onFineZoomIn={zoomPreviewInFine}
-            onZoomModeChange={setPreviewZoomMode}
-            onAutoZoomChange={setAutoPreviewZoom}
-            onBoardPathChange={selectPreviewBoard}
-            onOpenLink={openPreviewLink}
-          />
+          <>
+            {splitPreviewVisible ? (
+              <button
+                className="pane-resize-handle"
+                type="button"
+                aria-label="Resize editor and preview"
+                title="Resize editor and preview"
+                onPointerDown={startPaneResize}
+              />
+            ) : null}
+            <PreviewPane
+              objects={visibleCompileResult.objects}
+              boards={compileResult.boards ?? []}
+              selectedBoardPath={selectedBoardPath}
+              renderedSvg={renderedSvg}
+              overlayViewBox={overlayViewBox}
+              zoom={previewZoom}
+              zoomMode={previewZoomMode}
+              activeId={activeId}
+              hoverId={hoverId}
+              onHover={(id) => {
+                hoverIdRef.current = id;
+                setHoverId(id);
+              }}
+              onSelect={(id) => {
+                hoverIdRef.current = null;
+                setHoverId(null);
+                setActiveId(id);
+                highlightObject(id, true);
+              }}
+              onZoomOut={zoomPreviewOut}
+              onResetZoom={resetPreviewZoom}
+              onZoomIn={zoomPreviewIn}
+              onFineZoomOut={zoomPreviewOutFine}
+              onFineZoomIn={zoomPreviewInFine}
+              onZoomModeChange={setPreviewZoomMode}
+              onAutoZoomChange={setAutoPreviewZoom}
+              onBoardPathChange={selectPreviewBoard}
+              onOpenLink={openPreviewLink}
+            />
+          </>
         ) : null}
       </section>
 
