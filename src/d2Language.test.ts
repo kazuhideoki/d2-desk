@@ -4,6 +4,7 @@ import {
   configureD2Language,
   encodeD2SemanticTokens,
   getD2CompletionContext,
+  getD2CompletionReplacementRanges,
   isD2LineCommentPosition,
   sourceRangeToMonacoRange,
 } from "./d2Language";
@@ -87,7 +88,29 @@ describe("d2Language", () => {
     expect(getD2CompletionContext("", 1)).toBeNull();
   });
 
-  it("preserves spaces in local fallback child node completions", async () => {
+  it("keeps connection label delimiters outside node completion replacement ranges", () => {
+    const lineContent = "con -> cloud.: 測地系モード変換";
+    const column = "con -> cloud.".length + 1;
+    const completionContext = getD2CompletionContext(lineContent, column);
+
+    expect(completionContext).toEqual({ kind: "key", typedText: "" });
+    expect(getD2CompletionReplacementRanges(lineContent, 1, column, completionContext!)).toEqual({
+      token: {
+        startLineNumber: 1,
+        startColumn: column,
+        endLineNumber: 1,
+        endColumn: column,
+      },
+      keyWithExistingDelimiter: {
+        startLineNumber: 1,
+        startColumn: column,
+        endLineNumber: 1,
+        endColumn: column + ": ".length,
+      },
+    });
+  });
+
+  it("preserves local fallback child node completion insert text and label delimiters", async () => {
     const providers: Array<{
       provideCompletionItems: (model: unknown, position: { lineNumber: number; column: number }) => Promise<{
         suggestions: Array<{ insertText: string; label: string | { label: string } }>;
@@ -113,7 +136,7 @@ describe("d2Language", () => {
   hoge tnse
 }
 status.`;
-    vi.mocked(invoke).mockRejectedValueOnce(new Error("sidecar unavailable"));
+    vi.mocked(invoke).mockRejectedValue(new Error("sidecar unavailable"));
 
     configureD2Language(monaco as never);
     const result = await providers[0].provideCompletionItems(
@@ -132,6 +155,33 @@ status.`;
     expect(result.suggestions).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ insertText: "tnse" }),
+      ]),
+    );
+
+    const connectionSource = `cloud: {
+  iot
+}
+con -> cloud.: 測地系モード変換`;
+    const connectionColumn = "con -> cloud.".length + 1;
+    const connectionResult = await providers[0].provideCompletionItems(
+      {
+        getLineContent: (lineNumber: number) => connectionSource.split("\n")[lineNumber - 1],
+        getValue: () => connectionSource,
+      },
+      { lineNumber: 4, column: connectionColumn },
+    );
+
+    expect(connectionResult.suggestions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          insertText: "iot",
+          range: {
+            startLineNumber: 4,
+            startColumn: connectionColumn,
+            endLineNumber: 4,
+            endColumn: connectionColumn,
+          },
+        }),
       ]),
     );
   });
