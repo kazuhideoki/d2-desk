@@ -171,20 +171,12 @@ export function configureD2Language(monaco: typeof Monaco) {
           return { suggestions: [] };
         }
 
-        const lineSuffix = lineContent.slice(position.column - 1);
-        const remainingTextMatch =
-          completionContext.kind === "key"
-            ? lineSuffix.match(/^[\w-]*(?:\s*:\s*)?/)
-            : completionContext.kind === "import-file"
-              ? lineSuffix.match(/^[\w./-]*/)
-            : lineSuffix.match(/^[\w-]*/);
-        const remainingText = remainingTextMatch ? remainingTextMatch[0] : "";
-        const replacementRange = {
-          startLineNumber: position.lineNumber,
-          startColumn: position.column - completionContext.typedText.length,
-          endLineNumber: position.lineNumber,
-          endColumn: position.column + remainingText.length,
-        };
+        const replacementRanges = getD2CompletionReplacementRanges(
+          lineContent,
+          position.lineNumber,
+          position.column,
+          completionContext,
+        );
 
         let completions: D2CompletionItem[];
         if (completionContext.kind === "import-file" || completionContext.kind === "import-node") {
@@ -230,7 +222,7 @@ export function configureD2Language(monaco: typeof Monaco) {
               completion.description ||
               (completion.detail ? `D2 ${completion.detail}` : "D2 completion"),
             documentation: d2CompletionDocumentation(completion),
-            range: replacementRange,
+            range: d2CompletionReplacementRange(completion, completionContext, replacementRanges),
             ...(completionContext.kind === "key" && (completion.insertText || "").endsWith(": ")
               ? {
                   command: {
@@ -263,6 +255,61 @@ export function configureD2Language(monaco: typeof Monaco) {
       "editorCursor.foreground": "#f8fafc",
     },
   });
+}
+
+type D2CompletionReplacementRanges = {
+  token: Monaco.IRange;
+  keyWithExistingDelimiter: Monaco.IRange;
+};
+
+export function getD2CompletionReplacementRanges(
+  lineContent: string,
+  lineNumber: number,
+  column: number,
+  completionContext: D2CompletionContext,
+): D2CompletionReplacementRanges {
+  const lineSuffix = lineContent.slice(column - 1);
+  const tokenRemainingMatch =
+    completionContext.kind === "import-file"
+      ? lineSuffix.match(/^[\w./-]*/)
+      : lineSuffix.match(/^[\w-]*/);
+  const tokenRemainingText = tokenRemainingMatch ? tokenRemainingMatch[0] : "";
+  const tokenRange = {
+    startLineNumber: lineNumber,
+    startColumn: column - completionContext.typedText.length,
+    endLineNumber: lineNumber,
+    endColumn: column + tokenRemainingText.length,
+  };
+
+  if (completionContext.kind !== "key") {
+    return {
+      token: tokenRange,
+      keyWithExistingDelimiter: tokenRange,
+    };
+  }
+
+  const keyWithExistingDelimiterMatch = lineSuffix.match(/^[\w-]*(?:\s*:\s*)?/);
+  const keyWithExistingDelimiterText = keyWithExistingDelimiterMatch
+    ? keyWithExistingDelimiterMatch[0]
+    : "";
+  return {
+    token: tokenRange,
+    keyWithExistingDelimiter: {
+      ...tokenRange,
+      endColumn: column + keyWithExistingDelimiterText.length,
+    },
+  };
+}
+
+function d2CompletionReplacementRange(
+  completion: D2CompletionItem,
+  completionContext: D2CompletionContext,
+  replacementRanges: D2CompletionReplacementRanges,
+) {
+  if (completionContext.kind === "key" && (completion.insertText || "").endsWith(": ")) {
+    return replacementRanges.keyWithExistingDelimiter;
+  }
+  return replacementRanges.token;
 }
 
 async function getD2SemanticTokens(source: string) {
