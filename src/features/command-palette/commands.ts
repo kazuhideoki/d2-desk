@@ -2,6 +2,7 @@ import type { AppCommand } from "../../shared/commands";
 import type { Workspace } from "../../types";
 
 type PreviewZoomMode = "auto" | "manual";
+type EditorPaneRatioMode = "auto" | "manual";
 
 function normalizeCommandQuery(value: string) {
   return value.trim().toLowerCase();
@@ -159,5 +160,21 @@ export function createPreviewAutoZoomCommand(
     category: "View",
     keywords: ["preview", "auto", "fit", "scale", "zoom"],
     run: () => onZoomModeChange(nextZoomMode),
+  };
+}
+
+export function createEditorAutoWidthCommand(
+  editorPaneRatioMode: EditorPaneRatioMode,
+  onEditorPaneRatioModeChange: (mode: EditorPaneRatioMode) => void,
+): AppCommand {
+  const nextMode = editorPaneRatioMode === "auto" ? "manual" : "auto";
+
+  return {
+    id: "view.toggleEditorAutoWidth",
+    title:
+      editorPaneRatioMode === "auto" ? "Disable Editor Auto Width" : "Enable Editor Auto Width",
+    category: "View",
+    keywords: ["editor", "auto", "width", "divider", "layout", "pane"],
+    run: () => onEditorPaneRatioModeChange(nextMode),
   };
 }

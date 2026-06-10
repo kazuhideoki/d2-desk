@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { type AppCommand, isCommandEnabled } from "../../shared/commands";
 import type { Workspace } from "../../types";
 import {
+  createEditorAutoWidthCommand,
   createOpenCurrentWorkspaceCommands,
   createPreviewAutoZoomCommand,
   createRemoveCurrentWorkspaceCommand,
@@ -163,6 +164,30 @@ describe("commands", () => {
     enableAutoCommand.run();
     disableAutoCommand.run();
     expect(zoomModes).toEqual(["auto", "manual"]);
+  });
+
+  it("builds the editor auto width toggle command", () => {
+    const ratioModes: string[] = [];
+    const enableAutoCommand = createEditorAutoWidthCommand("manual", (mode) => {
+      ratioModes.push(mode);
+    });
+    const disableAutoCommand = createEditorAutoWidthCommand("auto", (mode) => {
+      ratioModes.push(mode);
+    });
+
+    expect(enableAutoCommand).toMatchObject({
+      id: "view.toggleEditorAutoWidth",
+      title: "Enable Editor Auto Width",
+      category: "View",
+    });
+    expect(disableAutoCommand.title).toBe("Disable Editor Auto Width");
+    expect(filterCommands([enableAutoCommand], "editor auto").map((command) => command.id)).toEqual(
+      ["view.toggleEditorAutoWidth"],
+    );
+
+    enableAutoCommand.run();
+    disableAutoCommand.run();
+    expect(ratioModes).toEqual(["auto", "manual"]);
   });
 });
 

@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { previewLayoutStorageKey } from "../../constants";
 import {
+  editorPaneRatioForSource,
   editorPaneRatioFromPointer,
   loadPreviewLayout,
   nextPreviewViewMode,
   normalizeEditorPaneRatio,
   normalizePreviewLayout,
   previewViewModeStatus,
+  sourceLongestLineColumns,
   writePreviewLayout,
 } from "./viewMode";
 
@@ -61,10 +63,11 @@ describe("preview view mode", () => {
       viewMode: "preview-only",
       detached: false,
       editorPaneRatio: 0.475,
+      editorPaneRatioMode: "auto",
     });
   });
 
-  it("loads the persisted editor pane ratio", () => {
+  it("loads legacy persisted editor pane ratios as manual", () => {
     localStorage.setItem(
       previewLayoutStorageKey,
       JSON.stringify({ viewMode: "split", detached: false, editorPaneRatio: 0.62 }),
@@ -74,6 +77,7 @@ describe("preview view mode", () => {
       viewMode: "split",
       detached: false,
       editorPaneRatio: 0.62,
+      editorPaneRatioMode: "manual",
     });
   });
 
@@ -82,6 +86,7 @@ describe("preview view mode", () => {
       viewMode: "editor-only",
       detached: true,
       editorPaneRatio: 0.475,
+      editorPaneRatioMode: "auto",
     });
   });
 
@@ -92,16 +97,42 @@ describe("preview view mode", () => {
       viewMode: "split",
       detached: false,
       editorPaneRatio: 0.475,
+      editorPaneRatioMode: "auto",
     });
   });
 
   it("writes a normalized preview layout", () => {
-    writePreviewLayout({ viewMode: "preview-only", detached: true, editorPaneRatio: 2 });
+    writePreviewLayout({
+      viewMode: "preview-only",
+      detached: true,
+      editorPaneRatio: 2,
+      editorPaneRatioMode: "manual",
+    });
 
     expect(JSON.parse(localStorage.getItem(previewLayoutStorageKey) ?? "")).toEqual({
       viewMode: "editor-only",
       detached: true,
       editorPaneRatio: 0.8,
+      editorPaneRatioMode: "manual",
+    });
+  });
+
+  it("loads an explicitly persisted editor pane ratio mode", () => {
+    localStorage.setItem(
+      previewLayoutStorageKey,
+      JSON.stringify({
+        viewMode: "split",
+        detached: false,
+        editorPaneRatio: 0.55,
+        editorPaneRatioMode: "auto",
+      }),
+    );
+
+    expect(loadPreviewLayout()).toEqual({
+      viewMode: "split",
+      detached: false,
+      editorPaneRatio: 0.55,
+      editorPaneRatioMode: "auto",
     });
   });
 
@@ -116,5 +147,54 @@ describe("preview view mode", () => {
     expect(editorPaneRatioFromPointer(350, 100, 500)).toBe(0.5);
     expect(editorPaneRatioFromPointer(0, 100, 500)).toBe(0.2);
     expect(editorPaneRatioFromPointer(700, 100, 500)).toBe(0.8);
+  });
+
+  it("calculates editor pane ratio from the longest source line", () => {
+    expect(
+      editorPaneRatioForSource({
+        source: "short\nthis is the longest line",
+        containerWidth: 1200,
+        fontSize: 14,
+      }),
+    ).toBeCloseTo(360 / 1200);
+
+    expect(
+      editorPaneRatioForSource({
+        source: "x".repeat(60),
+        containerWidth: 1200,
+        fontSize: 14,
+      }),
+    ).toBeCloseTo((60 * 14 * 0.62 + 92) / 1200);
+  });
+
+  it("keeps an editor minimum width even when source is empty", () => {
+    expect(
+      editorPaneRatioForSource({
+        source: "",
+        containerWidth: 1000,
+        fontSize: 14,
+      }),
+    ).toBe(0.36);
+  });
+
+  it("clamps auto editor pane ratios", () => {
+    expect(
+      editorPaneRatioForSource({
+        source: "",
+        containerWidth: 4000,
+        fontSize: 14,
+      }),
+    ).toBe(0.2);
+    expect(
+      editorPaneRatioForSource({
+        source: "x".repeat(200),
+        containerWidth: 1200,
+        fontSize: 14,
+      }),
+    ).toBe(0.8);
+  });
+
+  it("counts tabs and full-width source characters for auto sizing", () => {
+    expect(sourceLongestLineColumns(`abc\n\t${String.fromCharCode(0x6f22)}`)).toBe(4);
   });
 });

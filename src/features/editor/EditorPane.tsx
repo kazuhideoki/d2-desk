@@ -11,10 +11,12 @@ type EditorPaneProps = {
   zoom: number;
   editorFontSize: number;
   editorLineHeight: number;
+  editorAutoWidth: boolean;
   perfDebugOptions: PerfDebugOptions;
   beforeMount: (monaco: typeof Monaco) => void;
   onMount: OnMount;
   onChange: (source: string) => void;
+  onEditorAutoWidthChange: (enabled: boolean) => void;
   onZoomOut: () => void;
   onResetZoom: () => void;
   onZoomIn: () => void;
@@ -27,10 +29,12 @@ export function EditorPane({
   zoom,
   editorFontSize,
   editorLineHeight,
+  editorAutoWidth,
   perfDebugOptions,
   beforeMount,
   onMount,
   onChange,
+  onEditorAutoWidthChange,
   onZoomOut,
   onResetZoom,
   onZoomIn,
@@ -41,6 +45,15 @@ export function EditorPane({
         <span>{fileName}</span>
         <div className="pane-title-actions">
           <span className="line-count">{source.split("\n").length} lines</span>
+          <span className="pane-title-divider" />
+          <label className="pane-auto-toggle editor-auto-width-toggle">
+            <input
+              type="checkbox"
+              checked={editorAutoWidth}
+              onChange={(event) => onEditorAutoWidthChange(event.target.checked)}
+            />
+            <span>Auto width</span>
+          </label>
           <span className="pane-title-divider" />
           <div className="pane-zoom-controls" aria-label="Editor zoom controls">
             <RepeatButton className="pane-zoom-button" title="Zoom editor out" onPress={onZoomOut}>
@@ -70,6 +83,8 @@ export function EditorPane({
           fontLigatures: true,
           minimap: { enabled: false },
           scrollBeyondLastLine: false,
+          scrollBeyondLastColumn: 0,
+          revealHorizontalRightPadding: 0,
           wordWrap: perfDebugOptions.wordWrap ? "on" : "off",
           quickSuggestions: perfDebugOptions.autoSuggest,
           suggestOnTriggerCharacters: perfDebugOptions.autoSuggest,

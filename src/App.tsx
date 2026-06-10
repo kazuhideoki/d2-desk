@@ -18,6 +18,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { loadInitialSession, type InitialSession } from "./app/initialSession";
 import { CommandPalette } from "./features/command-palette/CommandPalette";
 import {
+  createEditorAutoWidthCommand,
   createOpenCurrentWorkspaceCommands,
   createPreviewAutoZoomCommand,
   createRemoveCurrentWorkspaceCommand,
@@ -64,10 +65,13 @@ import {
   boardPathKey,
 } from "./features/preview/boards";
 import {
+  editorPaneRatioForSource,
   editorPaneRatioFromPointer,
   loadPreviewLayout,
+  maxEditorPaneRatio,
   nextPreviewViewMode,
   previewViewModeStatus,
+  type EditorPaneRatioMode,
   type PreviewViewMode,
   writePreviewLayout,
 } from "./features/preview/viewMode";
@@ -529,9 +533,13 @@ function MainApp() {
   const [editorPaneRatio, setEditorPaneRatio] = useState(
     () => initialPreviewLayoutRef.current!.editorPaneRatio,
   );
+  const [editorPaneRatioMode, setEditorPaneRatioMode] = useState<EditorPaneRatioMode>(
+    () => initialPreviewLayoutRef.current!.editorPaneRatioMode,
+  );
   const [previewDetached, setPreviewDetached] = useState(
     () => initialPreviewLayoutRef.current!.detached,
   );
+  const [workspaceWidth, setWorkspaceWidth] = useState(0);
   const [bottomPanelVisible, setBottomPanelVisible] = useState(loadBottomPanelVisible);
   const [perfDebugOptions, setPerfDebugOptions] =
     useState<PerfDebugOptions>(defaultPerfDebugOptions);
@@ -587,6 +595,11 @@ function MainApp() {
   const detachedPreviewStateRef = useRef<DetachedPreviewState>(emptyDetachedPreviewState);
   const perfDebugOptionsRef = useRef(perfDebugOptions);
   const workspaceElementRef = useRef<HTMLElement | null>(null);
+  const editorPaneRatioModeRef = useRef(editorPaneRatioMode);
+  const effectiveEditorPaneRatioRef = useRef(editorPaneRatio);
+  const splitPreviewVisibleRef = useRef(false);
+  const autoEditorScrollFrameRef = useRef<number | null>(null);
+  const autoEditorScrollTimeoutRef = useRef<number | null>(null);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0],
@@ -652,6 +665,17 @@ function MainApp() {
 
   const editorFontSize = Math.round(baseEditorFontSize * editorZoom);
   const editorLineHeight = Math.round(baseEditorLineHeight * editorZoom);
+  const autoEditorPaneRatio = useMemo(
+    () =>
+      editorPaneRatioForSource({
+        source,
+        containerWidth: workspaceWidth,
+        fontSize: editorFontSize,
+      }),
+    [editorFontSize, source, workspaceWidth],
+  );
+  const effectiveEditorPaneRatio =
+    editorPaneRatioMode === "auto" ? autoEditorPaneRatio : editorPaneRatio;
 
   useEffect(() => {
     workspaceStateRef.current = workspaceState;
@@ -684,6 +708,75 @@ function MainApp() {
     );
   }, []);
 
+  const shouldPinAutoEditorScrollLeft = useCallback(
+    () =>
+      editorPaneRatioModeRef.current === "auto" &&
+      splitPreviewVisibleRef.current &&
+      effectiveEditorPaneRatioRef.current < maxEditorPaneRatio - 0.001,
+    [],
+  );
+
+  const settleAutoEditorScrollLeft = useCallback(
+    (targetEditor?: Monaco.editor.IStandaloneCodeEditor | null) => {
+      const editor = targetEditor ?? editorRef.current;
+      if (!editor || editorRef.current !== editor || !shouldPinAutoEditorScrollLeft()) return;
+
+      editor.layout();
+      if (editor.getScrollLeft() !== 0) {
+        editor.setScrollLeft(0);
+      }
+    },
+    [shouldPinAutoEditorScrollLeft],
+  );
+
+  const queueSettleAutoEditorScrollLeft = useCallback(
+    (targetEditor?: Monaco.editor.IStandaloneCodeEditor | null) => {
+      if (autoEditorScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(autoEditorScrollFrameRef.current);
+      }
+      if (autoEditorScrollTimeoutRef.current !== null) {
+        window.clearTimeout(autoEditorScrollTimeoutRef.current);
+        autoEditorScrollTimeoutRef.current = null;
+      }
+
+      autoEditorScrollFrameRef.current = window.requestAnimationFrame(() => {
+        autoEditorScrollFrameRef.current = null;
+        settleAutoEditorScrollLeft(targetEditor);
+        autoEditorScrollTimeoutRef.current = window.setTimeout(() => {
+          autoEditorScrollTimeoutRef.current = null;
+          settleAutoEditorScrollLeft(targetEditor);
+        }, 0);
+      });
+    },
+    [settleAutoEditorScrollLeft],
+  );
+
+  const setEditorPaneRatioModeWithStatus = useCallback(
+    (mode: EditorPaneRatioMode) => {
+      if (mode === "manual") {
+        setEditorPaneRatio(0.5);
+      }
+      setEditorPaneRatioMode(mode);
+      setStatus(mode === "auto" ? "Editor auto width enabled" : "Editor auto width disabled");
+      if (mode === "auto") {
+        queueSettleAutoEditorScrollLeft();
+      }
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+    },
+    [queueSettleAutoEditorScrollLeft],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (autoEditorScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(autoEditorScrollFrameRef.current);
+      }
+      if (autoEditorScrollTimeoutRef.current !== null) {
+        window.clearTimeout(autoEditorScrollTimeoutRef.current);
+      }
+    };
+  }, []);
+
   useEffect(() => {
     activeIdRef.current = activeId;
   }, [activeId]);
@@ -701,8 +794,40 @@ function MainApp() {
   }, [selectedBoardPath]);
 
   useEffect(() => {
-    writePreviewLayout({ viewMode: previewViewMode, detached: previewDetached, editorPaneRatio });
-  }, [editorPaneRatio, previewDetached, previewViewMode]);
+    editorPaneRatioModeRef.current = editorPaneRatioMode;
+  }, [editorPaneRatioMode]);
+
+  useEffect(() => {
+    effectiveEditorPaneRatioRef.current = effectiveEditorPaneRatio;
+  }, [effectiveEditorPaneRatio]);
+
+  useEffect(() => {
+    const workspaceElement = workspaceElementRef.current;
+    if (!workspaceElement) return;
+
+    const updateWorkspaceWidth = (width: number) => {
+      setWorkspaceWidth((current) => (Math.abs(current - width) < 0.5 ? current : width));
+    };
+    updateWorkspaceWidth(workspaceElement.getBoundingClientRect().width);
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      updateWorkspaceWidth(entry.contentRect.width);
+    });
+    resizeObserver.observe(workspaceElement);
+
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  useEffect(() => {
+    writePreviewLayout({
+      viewMode: previewViewMode,
+      detached: previewDetached,
+      editorPaneRatio: effectiveEditorPaneRatio,
+      editorPaneRatioMode,
+    });
+  }, [editorPaneRatioMode, effectiveEditorPaneRatio, previewDetached, previewViewMode]);
 
   function invalidateCursorLookup() {
     compileResultSourceRef.current = null;
@@ -2545,7 +2670,12 @@ function MainApp() {
     quitInFlightRef.current = true;
 
     try {
-      writePreviewLayout({ viewMode: previewViewMode, detached: previewDetached, editorPaneRatio });
+      writePreviewLayout({
+        viewMode: previewViewMode,
+        detached: previewDetached,
+        editorPaneRatio: effectiveEditorPaneRatioRef.current,
+        editorPaneRatioMode,
+      });
       persistActiveEditorViewState();
       setStatus("Quitting");
       try {
@@ -2556,7 +2686,7 @@ function MainApp() {
     } finally {
       quitInFlightRef.current = false;
     }
-  }, [editorPaneRatio, persistActiveEditorViewState, previewDetached, previewViewMode]);
+  }, [editorPaneRatioMode, persistActiveEditorViewState, previewDetached, previewViewMode]);
 
   const applyWorkspaceSelection = useCallback(
     (
@@ -3006,6 +3136,10 @@ function MainApp() {
     editor.onDidFocusEditorWidget(() => {
       focusedPaneRef.current = "editor";
     });
+    const scrollDisposable = editor.onDidScrollChange((event) => {
+      if (!event.scrollLeftChanged || editor.getScrollLeft() === 0) return;
+      queueSettleAutoEditorScrollLeft(editor);
+    });
     let isAutoClosingD2Brace = false;
     const savedViewState = activeTab?.editorViewState;
     if (savedViewState) {
@@ -3206,6 +3340,7 @@ function MainApp() {
       suggestPreviewDisposables.push(suggestWidget.onDidHide(clearSuggestPreview));
     }
     editor.onDidDispose(() => {
+      scrollDisposable.dispose();
       for (const disposable of suggestPreviewDisposables) {
         disposable.dispose();
       }
@@ -3213,6 +3348,7 @@ function MainApp() {
     });
 
     editor.onDidChangeModelContent((event) => {
+      queueSettleAutoEditorScrollLeft(editor);
       if (isAutoClosingD2Brace) {
         return;
       }
@@ -3698,6 +3834,7 @@ function MainApp() {
         run: toggleDetachedPreview,
       },
       createPreviewAutoZoomCommand(previewZoomMode, setPreviewZoomMode),
+      createEditorAutoWidthCommand(editorPaneRatioMode, setEditorPaneRatioModeWithStatus),
       {
         id: "view.toggleBottomPanel",
         title: bottomPanelVisible ? "Hide Bottom Panel" : "Show Bottom Panel",
@@ -3776,6 +3913,7 @@ function MainApp() {
       copyFocusedTabAbsolutePath,
       createNewTab,
       currentFilePath,
+      editorPaneRatioMode,
       openActiveWorkspaceInFinder,
       openActiveWorkspaceWithEditor,
       fileName,
@@ -3794,6 +3932,7 @@ function MainApp() {
       removeRegisteredWorkspace,
       saveSource,
       selectSyntaxNode,
+      setEditorPaneRatioModeWithStatus,
       source,
       switchFocusedEdgeDirection,
       switchPreviewBoard,
@@ -3845,17 +3984,35 @@ function MainApp() {
       : "workspace";
   const workspaceStyle = splitPreviewVisible
     ? ({
-        gridTemplateColumns: `minmax(0, calc(${editorPaneRatio * 100}% - 5px)) 10px minmax(0, calc(${
-          (1 - editorPaneRatio) * 100
-        }% - 5px))`,
+        gridTemplateColumns: `minmax(0, calc(${
+          effectiveEditorPaneRatio * 100
+        }% - 5px)) 10px minmax(0, calc(${(1 - effectiveEditorPaneRatio) * 100}% - 5px))`,
       } satisfies CSSProperties)
     : undefined;
+
+  useEffect(() => {
+    splitPreviewVisibleRef.current = splitPreviewVisible;
+  }, [splitPreviewVisible]);
+
+  useEffect(() => {
+    if (!splitPreviewVisible || editorPaneRatioMode !== "auto") return;
+    queueSettleAutoEditorScrollLeft();
+  }, [
+    autoEditorPaneRatio,
+    editorPaneRatioMode,
+    editorFontSize,
+    queueSettleAutoEditorScrollLeft,
+    source,
+    splitPreviewVisible,
+    workspaceWidth,
+  ]);
 
   const startPaneResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
     const workspaceElement = workspaceElementRef.current;
     if (!workspaceElement) return;
 
     event.preventDefault();
+    setEditorPaneRatioMode("manual");
     event.currentTarget.setPointerCapture(event.pointerId);
     document.body.classList.add("pane-resizing");
 
@@ -4071,10 +4228,17 @@ function MainApp() {
           zoom={editorZoom}
           editorFontSize={editorFontSize}
           editorLineHeight={editorLineHeight}
+          editorAutoWidth={editorPaneRatioMode === "auto"}
           perfDebugOptions={perfDebugOptions}
           beforeMount={configureD2Language}
           onMount={handleMount}
-          onChange={(value) => updateActiveTab({ source: value })}
+          onChange={(value) => {
+            updateActiveTab({ source: value });
+            queueSettleAutoEditorScrollLeft();
+          }}
+          onEditorAutoWidthChange={(enabled) =>
+            setEditorPaneRatioModeWithStatus(enabled ? "auto" : "manual")
+          }
           onZoomOut={zoomEditorOut}
           onResetZoom={resetEditorZoom}
           onZoomIn={zoomEditorIn}
