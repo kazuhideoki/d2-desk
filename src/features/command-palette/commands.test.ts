@@ -52,6 +52,47 @@ describe("commands", () => {
     ]);
   });
 
+  it("matches command title words when the query omits spaces", () => {
+    const openCommands: AppCommand[] = [
+      {
+        id: "workspace.openFolder",
+        title: "Open Workspace Folder",
+        category: "Workspace",
+        keywords: ["add", "register", "switch", "folder", "directory", "project"],
+        run: noop,
+      },
+      {
+        id: "workspace.select",
+        title: "Select Workspace",
+        category: "Workspace",
+        keywords: ["switch", "change", "project", "folder"],
+        run: noop,
+      },
+      {
+        id: "file.openWorkspaceFile",
+        title: "Open Workspace File",
+        category: "File",
+        keywords: ["workspace", "project", "quick open", "finder"],
+        shortcut: "Command + P",
+        run: noop,
+      },
+      {
+        id: "workspace.openActiveInFinder",
+        title: "Open Current Workspace in Finder",
+        category: "Workspace",
+        run: noop,
+      },
+    ];
+
+    expect(filterCommands(openCommands, "opewor").map((command) => command.id)).toEqual([
+      "file.openWorkspaceFile",
+      "workspace.openFolder",
+      "workspace.openActiveInFinder",
+    ]);
+    expect(filterCommands(openCommands, "zzzz")).toEqual([]);
+    expect(filterCommands(openCommands, "未知")).toEqual([]);
+  });
+
   it("keeps declaration order for an empty query", () => {
     expect(filterCommands(commands, "").map((command) => command.id)).toEqual([
       "workspace.openFolder",
