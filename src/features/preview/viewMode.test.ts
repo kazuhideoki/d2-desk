@@ -67,7 +67,7 @@ describe("preview view mode", () => {
     });
   });
 
-  it("loads legacy persisted editor pane ratios as manual", () => {
+  it("loads legacy persisted editor pane ratios with auto width enabled", () => {
     localStorage.setItem(
       previewLayoutStorageKey,
       JSON.stringify({ viewMode: "split", detached: false, editorPaneRatio: 0.62 }),
@@ -77,7 +77,7 @@ describe("preview view mode", () => {
       viewMode: "split",
       detached: false,
       editorPaneRatio: 0.62,
-      editorPaneRatioMode: "manual",
+      editorPaneRatioMode: "auto",
     });
   });
 

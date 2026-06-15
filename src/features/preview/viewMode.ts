@@ -67,10 +67,7 @@ export function normalizePreviewLayout(value: unknown): PreviewLayout {
   const layout = value as Partial<PreviewLayout>;
   const detached = layout.detached === true;
   const editorPaneRatio = normalizeEditorPaneRatio(layout.editorPaneRatio);
-  const editorPaneRatioMode = normalizeEditorPaneRatioMode(
-    layout.editorPaneRatioMode,
-    layout.editorPaneRatio,
-  );
+  const editorPaneRatioMode = normalizeEditorPaneRatioMode(layout.editorPaneRatioMode);
   if (detached) {
     return { viewMode: "editor-only", detached: true, editorPaneRatio, editorPaneRatioMode };
   }
@@ -129,14 +126,9 @@ function isPreviewViewMode(value: unknown): value is PreviewViewMode {
   return value === "split" || value === "preview-only" || value === "editor-only";
 }
 
-function normalizeEditorPaneRatioMode(
-  value: unknown,
-  editorPaneRatio: unknown,
-): EditorPaneRatioMode {
+function normalizeEditorPaneRatioMode(value: unknown): EditorPaneRatioMode {
   if (isEditorPaneRatioMode(value)) return value;
-  return typeof editorPaneRatio === "number" && Number.isFinite(editorPaneRatio)
-    ? "manual"
-    : defaultPreviewLayout.editorPaneRatioMode;
+  return defaultPreviewLayout.editorPaneRatioMode;
 }
 
 function isEditorPaneRatioMode(value: unknown): value is EditorPaneRatioMode {
