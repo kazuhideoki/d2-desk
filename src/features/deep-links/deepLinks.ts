@@ -2,6 +2,16 @@ export type D2DeskDeepLink = {
   filePath: string;
 };
 
+export function createD2DeskDeepLink(filePath: string, scheme: string) {
+  if (filePath.length === 0) {
+    throw new Error("D2 Desk open URL requires a file path");
+  }
+
+  const url = new URL(`${scheme}://open`);
+  url.searchParams.set("file", filePath);
+  return url.toString();
+}
+
 export function parseD2DeskDeepLink(rawUrl: string, expectedScheme: string): D2DeskDeepLink {
   let url: URL;
   try {
