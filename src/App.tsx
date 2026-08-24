@@ -13,9 +13,11 @@ import type * as Monaco from "monaco-editor";
 import { invoke } from "@tauri-apps/api/core";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { loadInitialSession, type InitialSession } from "./app/initialSession";
+import { createSerialTaskQueue } from "./app/serialTaskQueue";
 import { CommandPalette } from "./features/command-palette/CommandPalette";
 import {
   createEditorAutoWidthCommand,
@@ -30,6 +32,7 @@ import {
   type ShortcutAction,
 } from "./features/shortcuts/shortcutDispatcher";
 import { EditorPane } from "./features/editor/EditorPane";
+import { parseD2DeskDeepLink } from "./features/deep-links/deepLinks";
 import {
   connectionIdAtPosition,
   nextLargerSourceRange,
@@ -186,6 +189,11 @@ type CommandPaletteState = {
   mode: "commands" | "workspaceSelection";
   query: string;
   selectedIndex: number;
+};
+
+type ResolvedDeepLinkTarget = {
+  path: string;
+  workspaceId: string | null;
 };
 
 type UnsavedChangesChoice = "save" | "discard" | "cancel";
@@ -525,6 +533,7 @@ function MainApp() {
   const [commandPalette, setCommandPalette] = useState<CommandPaletteState | null>(null);
   const [unsavedChangesDialog, setUnsavedChangesDialog] =
     useState<UnsavedChangesDialogState | null>(null);
+  const enqueueUnsavedChangesPrompt = useMemo(() => createSerialTaskQueue(), []);
   const [editorZoom, setEditorZoom] = useState(1);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewZoomMode, setPreviewZoomMode] = useState<PreviewZoomMode>("auto");
@@ -572,6 +581,8 @@ function MainApp() {
   const toggleBottomPanelRef = useRef<() => void>(() => undefined);
   const closeActiveTabRef = useRef<() => void>(() => undefined);
   const quitApplicationRef = useRef<() => void>(() => undefined);
+  const openDeepLinkUrlRef = useRef<((url: string) => Promise<void>) | null>(null);
+  const deepLinkQueueRef = useRef(Promise.resolve());
   const pendingEditorViewStateRestoreRef = useRef<number | null>(null);
   const tabPersistenceTimeoutRef = useRef<number | null>(null);
   const fileSyncPollInFlightRef = useRef(false);
@@ -1869,16 +1880,19 @@ function MainApp() {
       saveLabel: string;
       discardLabel: string;
     }) =>
-      new Promise<UnsavedChangesChoice>((resolve) => {
-        setUnsavedChangesDialog({
-          title: "Unsaved changes",
-          message: options.message,
-          saveLabel: options.saveLabel,
-          discardLabel: options.discardLabel,
-          resolve,
-        });
-      }),
-    [],
+      enqueueUnsavedChangesPrompt(
+        () =>
+          new Promise<UnsavedChangesChoice>((resolve) => {
+            setUnsavedChangesDialog({
+              title: "Unsaved changes",
+              message: options.message,
+              saveLabel: options.saveLabel,
+              discardLabel: options.discardLabel,
+              resolve,
+            });
+          }),
+      ),
+    [enqueueUnsavedChangesPrompt],
   );
 
   const chooseUnsavedChangesAction = useCallback((choice: UnsavedChangesChoice) => {
@@ -2798,6 +2812,51 @@ function MainApp() {
     }
   }, [applyWorkspaceSelection, confirmLeavingCurrentWorkspace]);
 
+  const openDeepLinkUrl = useCallback(
+    async (url: string) => {
+      try {
+        const expectedScheme = await invoke<string>("configured_deep_link_scheme");
+        const { filePath } = parseD2DeskDeepLink(url, expectedScheme);
+        const target = await invoke<ResolvedDeepLinkTarget>("resolve_deep_link_target", {
+          path: filePath,
+          workspaces: workspaceStateRef.current.workspaces.map((workspace) => ({
+            id: workspace.id,
+            rootPath: workspace.rootPath,
+          })),
+        });
+
+        const targetWorkspaceId = target.workspaceId;
+        if (
+          targetWorkspaceId &&
+          !workspaceStateRef.current.workspaces.some(
+            (workspace) => workspace.id === targetWorkspaceId,
+          )
+        ) {
+          throw new Error("Deep link workspace is no longer registered");
+        }
+
+        if (targetWorkspaceId !== activeWorkspaceIdRef.current) {
+          if (!(await confirmLeavingCurrentWorkspace())) return;
+        }
+
+        const file = await invoke<OpenedD2File>("read_d2_file", { path: target.path });
+        if (targetWorkspaceId !== activeWorkspaceIdRef.current) {
+          const nextWorkspaceState = activateWorkspace(
+            workspaceStateRef.current,
+            targetWorkspaceId,
+          );
+          applyWorkspaceSelection(nextWorkspaceState, targetWorkspaceId);
+        }
+
+        openFileInNewTab(file);
+        window.requestAnimationFrame(() => editorRef.current?.focus());
+      } catch (error) {
+        setStatus(String(error));
+      }
+    },
+    [applyWorkspaceSelection, confirmLeavingCurrentWorkspace, openFileInNewTab],
+  );
+
   const openActiveWorkspaceInFinder = useCallback(async () => {
     const workspacePath = activeWorkspaceDirectoryPath(workspaceStateRef.current);
     if (!workspacePath) {
@@ -2866,6 +2925,48 @@ function MainApp() {
     },
     [applyWorkspaceSelection, persistActiveEditorViewState],
   );
+
+  useEffect(() => {
+    openDeepLinkUrlRef.current = openDeepLinkUrl;
+  }, [openDeepLinkUrl]);
+
+  useEffect(() => {
+    let disposed = false;
+    let removeOpenUrlListener: (() => void) | null = null;
+
+    const enqueue = (urls: string[]) => {
+      deepLinkQueueRef.current = deepLinkQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          for (const url of urls) {
+            const handler = openDeepLinkUrlRef.current;
+            if (handler) await handler(url);
+          }
+        });
+    };
+
+    void onOpenUrl((urls) => {
+      if (!disposed) enqueue(urls);
+    })
+      .then(async (unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+
+        removeOpenUrlListener = unlisten;
+        const initialUrls = await getCurrent();
+        if (!disposed && initialUrls) enqueue(initialUrls);
+      })
+      .catch((error) => {
+        if (!disposed) setStatus(String(error));
+      });
+
+    return () => {
+      disposed = true;
+      removeOpenUrlListener?.();
+    };
+  }, []);
 
   useEffect(() => {
     openSourceFileRef.current = () => {

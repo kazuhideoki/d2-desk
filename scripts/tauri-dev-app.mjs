@@ -16,6 +16,7 @@ const noOpen = process.argv.includes("--no-open");
 const suffix = sanitizeSuffix(explicitSuffix || `${baseName}-${hash}`);
 const productName = process.env.D2_DESK_PRODUCT_NAME || `D2 Desk ${suffix}`;
 const identifier = process.env.D2_DESK_IDENTIFIER || `app.d2desk.dev.${suffix}`;
+const deepLinkScheme = `d2desk-${suffix}`;
 const stateDir = join(tmpdir(), "d2-desk-dev-app", hash);
 const configPath = join(stateDir, `tauri-dev-app-${suffix}.conf.json`);
 const cargoTargetDir = join(stateDir, `tauri-target-${suffix}`);
@@ -56,6 +57,13 @@ writeFileSync(
           },
         ],
       },
+      plugins: {
+        "deep-link": {
+          desktop: {
+            schemes: [deepLinkScheme],
+          },
+        },
+      },
     },
     null,
     2,
@@ -64,6 +72,7 @@ writeFileSync(
 
 console.log(`Building ${productName}`);
 console.log(`  identifier: ${identifier}`);
+console.log(`  deep link scheme: ${deepLinkScheme}`);
 console.log(`  cargo target: ${cargoTargetDir}`);
 console.log(`  config: ${configPath}`);
 console.log(`  app: ${appPath}`);
