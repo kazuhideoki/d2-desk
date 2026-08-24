@@ -410,6 +410,7 @@ function PreviewWindowApp() {
         overlayViewBox={previewState.overlayViewBox}
         zoom={previewZoom}
         zoomMode={previewZoomMode}
+        focusOnMount
         activeId={activeId}
         hoverId={hoverId}
         onHover={setHoverId}
@@ -4263,6 +4264,7 @@ function MainApp() {
               overlayViewBox={overlayViewBox}
               zoom={previewZoom}
               zoomMode={previewZoomMode}
+              focusOnMount={false}
               activeId={activeId}
               hoverId={hoverId}
               onHover={(id) => {

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
-import { ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronDown, ChevronUp, X, ZoomIn, ZoomOut } from "lucide-react";
 import type { D2Board, D2Object } from "../../types";
 import { connectionPath, fitBoundsZoom, settleAutoZoom } from "../../utils";
 import { RepeatButton } from "../../shared/components/RepeatButton";
 import { boardOptionLabel, boardPathKey } from "./boards";
 import { firstPreviewExternalUrl } from "./links";
+import { nextPreviewSearchIndex, previewTextMatches } from "./previewSearch";
 import { previewZoomShortcutAction, previewZoomWheelAction } from "./zoomShortcuts";
 
 export type PreviewZoomMode = "auto" | "manual";
@@ -18,6 +19,7 @@ type PreviewPaneProps = {
   overlayViewBox: string;
   zoom: number;
   zoomMode: PreviewZoomMode;
+  focusOnMount: boolean;
   activeId: string | null;
   hoverId: string | null;
   onHover: (id: string | null) => void;
@@ -201,6 +203,20 @@ function objectChipPreviewBounds(object: D2Object) {
   };
 }
 
+function isVisiblePreviewSearchElement(element: Element) {
+  const style = window.getComputedStyle(element);
+  if (style.display === "none" || style.visibility === "hidden") return false;
+  const bounds = element.getBoundingClientRect();
+  return bounds.width > 0 && bounds.height > 0;
+}
+
+function previewSearchElements(container: HTMLElement | null) {
+  if (!container) return [];
+  return Array.from(container.querySelectorAll("text, foreignObject > *")).filter(
+    isVisiblePreviewSearchElement,
+  );
+}
+
 export function PreviewPane({
   objects,
   boards = [],
@@ -209,6 +225,7 @@ export function PreviewPane({
   overlayViewBox,
   zoom,
   zoomMode,
+  focusOnMount,
   activeId,
   hoverId,
   onHover,
@@ -225,8 +242,101 @@ export function PreviewPane({
 }: PreviewPaneProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const svgOutputRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const fallbackSize = useMemo(() => sizeFromViewBox(overlayViewBox), [overlayViewBox]);
   const [contentSize, setContentSize] = useState(fallbackSize);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeSearchMatch, setActiveSearchMatch] = useState(-1);
+  const [searchMatchCount, setSearchMatchCount] = useState(0);
+
+  const openSearch = useCallback(() => {
+    setIsSearchOpen(true);
+    window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    });
+  }, []);
+
+  const closeSearch = useCallback(() => {
+    setIsSearchOpen(false);
+    viewportRef.current?.focus();
+  }, []);
+
+  const moveSearch = useCallback(
+    (direction: "next" | "previous") => {
+      setActiveSearchMatch((current) =>
+        nextPreviewSearchIndex(current, searchMatchCount, direction),
+      );
+    },
+    [searchMatchCount],
+  );
+
+  const handlePreviewPaneKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLElement>) => {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "f"
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        openSearch();
+      }
+    },
+    [openSearch],
+  );
+
+  const handleSearchWidgetKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeSearch();
+      } else if (event.key === "Enter" && event.target === searchInputRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        moveSearch(event.shiftKey ? "previous" : "next");
+      }
+    },
+    [closeSearch, moveSearch],
+  );
+
+  useEffect(() => {
+    if (focusOnMount) viewportRef.current?.focus();
+  }, [focusOnMount]);
+
+  useEffect(() => {
+    const candidateElements = previewSearchElements(svgOutputRef.current);
+    for (const element of candidateElements) {
+      element.classList.remove("preview-search-match", "preview-search-match-active");
+    }
+
+    if (!isSearchOpen || searchQuery.length === 0) {
+      setSearchMatchCount(0);
+      setActiveSearchMatch(-1);
+      return;
+    }
+
+    const matches = candidateElements.filter((element) =>
+      previewTextMatches(element.textContent, searchQuery),
+    );
+    for (const element of matches) {
+      element.classList.add("preview-search-match");
+    }
+
+    const nextActiveMatch =
+      activeSearchMatch >= 0 && activeSearchMatch < matches.length ? activeSearchMatch : 0;
+    setSearchMatchCount(matches.length);
+    setActiveSearchMatch(matches.length > 0 ? nextActiveMatch : -1);
+
+    const activeElement = matches[nextActiveMatch];
+    if (activeElement) {
+      activeElement.classList.add("preview-search-match-active");
+      activeElement.scrollIntoView({ block: "center", inline: "center" });
+    }
+  }, [activeSearchMatch, isSearchOpen, renderedSvg, searchQuery]);
 
   const updateMeasurements = useCallback(() => {
     const viewport = viewportRef.current;
@@ -377,7 +487,7 @@ export function PreviewPane({
   }, [handlePreviewWheel]);
 
   return (
-    <section className="preview-pane">
+    <section className="preview-pane" onKeyDown={handlePreviewPaneKeyDown}>
       <div className="pane-title">
         <span>Preview</span>
         <div className="pane-title-actions">
@@ -420,6 +530,51 @@ export function PreviewPane({
           </label>
         </div>
       </div>
+      {isSearchOpen ? (
+        <div
+          className="preview-search-widget"
+          role="search"
+          onKeyDown={handleSearchWidgetKeyDown}
+        >
+          <input
+            ref={searchInputRef}
+            aria-label="Find in preview"
+            placeholder="Find"
+            spellCheck={false}
+            value={searchQuery}
+            onChange={(event) => {
+              setSearchQuery(event.target.value);
+              setActiveSearchMatch(0);
+            }}
+          />
+          <span className="preview-search-count" aria-live="polite">
+            {searchQuery.length === 0
+              ? "No results"
+              : searchMatchCount === 0
+                ? "No results"
+                : `${activeSearchMatch + 1} of ${searchMatchCount}`}
+          </span>
+          <button
+            aria-label="Previous match"
+            disabled={searchMatchCount === 0}
+            title="Previous match (Shift+Enter)"
+            onClick={() => moveSearch("previous")}
+          >
+            <ChevronUp size={15} />
+          </button>
+          <button
+            aria-label="Next match"
+            disabled={searchMatchCount === 0}
+            title="Next match (Enter)"
+            onClick={() => moveSearch("next")}
+          >
+            <ChevronDown size={15} />
+          </button>
+          <button aria-label="Close find" title="Close (Escape)" onClick={closeSearch}>
+            <X size={15} />
+          </button>
+        </div>
+      ) : null}
       <div
         ref={viewportRef}
         className="preview-viewport"
