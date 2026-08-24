@@ -932,6 +932,62 @@ body.pane-resizing .pane-resize-handle::before {
   outline-offset: -2px;
 }
 
+.preview-search-widget {
+  position: absolute;
+  z-index: 4;
+  top: 44px;
+  right: 12px;
+  display: flex;
+  height: 30px;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 8px;
+  border: 1px solid #b8c5c9;
+  border-radius: 7px;
+  background: #ffffff;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.18);
+}
+
+.preview-search-widget input {
+  width: 180px;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  outline: 0;
+  color: #1f2937;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+}
+
+.preview-search-count {
+  min-width: 68px;
+  color: #64748b;
+  font-size: 10px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.preview-search-widget button {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  padding: 0;
+  color: #4b5c62;
+  background: transparent;
+}
+
+.preview-search-widget button:hover:not(:disabled) {
+  color: #0f766e;
+  background: #ecfdf5;
+}
+
+.preview-search-widget button:disabled {
+  opacity: 0.35;
+}
+
 .preview-canvas {
   position: relative;
   display: inline-block;
@@ -959,6 +1015,30 @@ body.pane-resizing .pane-resize-handle::before {
   max-width: none;
   background: #ffffff;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.16);
+}
+
+.svg-output text.preview-search-match {
+  stroke: rgba(250, 204, 21, 0.68) !important;
+  stroke-width: 8px;
+  stroke-linejoin: round;
+  paint-order: stroke fill;
+  vector-effect: non-scaling-stroke;
+}
+
+.svg-output text.preview-search-match-active {
+  stroke: rgba(251, 146, 60, 0.9) !important;
+  stroke-width: 10px;
+}
+
+.svg-output foreignObject > .preview-search-match {
+  border-radius: 2px;
+  background: rgba(250, 204, 21, 0.55) !important;
+  box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.55);
+}
+
+.svg-output foreignObject > .preview-search-match-active {
+  background: rgba(251, 146, 60, 0.72) !important;
+  box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.72);
 }
 
 .overlay {
