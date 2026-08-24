@@ -8,6 +8,7 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_deep_link::DeepLinkExt;
 
 struct ExitState {
     allow_exit: Mutex<bool>,
@@ -75,6 +76,20 @@ struct WorkspaceFileEntry {
     directory: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeepLinkWorkspace {
+    id: String,
+    root_path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResolvedDeepLinkTarget {
+    path: String,
+    workspace_id: Option<String>,
+}
+
 #[tauri::command]
 fn sidecar_call(method: String, params: Value) -> Result<Value, String> {
     let request = SidecarRequest { method, params };
@@ -100,6 +115,83 @@ fn read_d2_file(path: String) -> Result<OpenedD2File, String> {
         path: path_to_string(path),
         contents,
     })
+}
+
+#[tauri::command]
+fn resolve_deep_link_target(
+    path: String,
+    workspaces: Vec<DeepLinkWorkspace>,
+) -> Result<ResolvedDeepLinkTarget, String> {
+    let requested_path = PathBuf::from(path);
+    if !requested_path.is_absolute() {
+        return Err("deep link file path must be absolute".to_string());
+    }
+    let file_path = requested_path
+        .canonicalize()
+        .map_err(|err| format!("failed to resolve {}: {err}", requested_path.display()))?;
+    if !file_path.is_file() {
+        return Err(format!(
+            "deep link path is not a file: {}",
+            file_path.display()
+        ));
+    }
+    if !is_d2_file(&file_path) {
+        return Err(format!(
+            "deep link path is not a D2 file: {}",
+            file_path.display()
+        ));
+    }
+
+    let mut selected_workspace: Option<(usize, String)> = None;
+
+    for workspace in workspaces {
+        let Ok(root_path) = PathBuf::from(&workspace.root_path).canonicalize() else {
+            continue;
+        };
+        if !root_path.is_dir() || !file_path.starts_with(&root_path) {
+            continue;
+        }
+
+        let depth = root_path.components().count();
+        if selected_workspace
+            .as_ref()
+            .is_none_or(|(selected_depth, _)| depth > *selected_depth)
+        {
+            selected_workspace = Some((depth, workspace.id));
+        }
+    }
+
+    Ok(ResolvedDeepLinkTarget {
+        path: path_to_string(file_path),
+        workspace_id: selected_workspace.map(|(_, id)| id),
+    })
+}
+
+fn deep_link_scheme_from_plugin_config(config: &Value) -> Result<String, String> {
+    let schemes = config
+        .get("desktop")
+        .and_then(|desktop| desktop.get("schemes"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| "deep-link desktop schemes are not configured".to_string())?;
+    let [scheme] = schemes.as_slice() else {
+        return Err("exactly one deep-link desktop scheme must be configured".to_string());
+    };
+    let scheme = scheme
+        .as_str()
+        .filter(|scheme| !scheme.is_empty())
+        .ok_or_else(|| "deep-link desktop scheme must be a non-empty string".to_string())?;
+    Ok(scheme.to_string())
+}
+
+#[tauri::command]
+fn configured_deep_link_scheme(app: tauri::AppHandle) -> Result<String, String> {
+    let config = app
+        .config()
+        .plugins
+        .0
+        .get("deep-link")
+        .ok_or_else(|| "deep-link plugin is not configured".to_string())?;
+    deep_link_scheme_from_plugin_config(config)
 }
 
 #[tauri::command]
@@ -934,9 +1026,24 @@ fn platform_sidecar_name(base: &str) -> String {
     format!("{base}-{target}")
 }
 
+fn focus_main_window(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(any(windows, target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        focus_main_window(app);
+    }));
+
+    builder
         .manage(ExitState {
             allow_exit: Mutex::new(false),
         })
@@ -1032,8 +1139,16 @@ pub fn run() {
                 .item(&view_menu)
                 .build()
         })
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+            app.deep_link().on_open_url(move |_event| {
+                focus_main_window(&app_handle);
+            });
+            Ok(())
+        })
         .on_menu_event(|app, event| {
             if event.id() == "open-file" {
                 let _ = app.emit_to("main", "d2-desk-open", ());
@@ -1089,6 +1204,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             sidecar_call,
             read_d2_file,
+            resolve_deep_link_target,
+            configured_deep_link_scheme,
             write_d2_file,
             rename_d2_file,
             list_workspace_files,
@@ -1150,6 +1267,96 @@ mod tests {
         assert!(is_d2_file(Path::new("diagram.D2")));
         assert!(!is_d2_file(Path::new("diagram.txt")));
         assert!(!is_d2_file(Path::new("diagram")));
+    }
+
+    #[test]
+    fn resolve_deep_link_target_uses_the_deepest_registered_workspace() {
+        let workspace = temp_workspace("deep-link-workspace");
+        let nested = workspace.join("nested");
+        fs::create_dir(&nested).expect("create nested workspace");
+        let file = nested.join("diagram.d2");
+        fs::write(&file, "diagram").expect("write diagram");
+
+        let result = resolve_deep_link_target(
+            path_to_string(file.clone()),
+            vec![
+                DeepLinkWorkspace {
+                    id: "root".to_string(),
+                    root_path: path_to_string(workspace.clone()),
+                },
+                DeepLinkWorkspace {
+                    id: "nested".to_string(),
+                    root_path: path_to_string(nested.clone()),
+                },
+            ],
+        )
+        .expect("resolve deep link");
+
+        assert_eq!(
+            PathBuf::from(result.path),
+            file.canonicalize().expect("canonicalize diagram")
+        );
+        assert_eq!(result.workspace_id.as_deref(), Some("nested"));
+
+        fs::remove_dir_all(workspace).expect("remove temp workspace");
+    }
+
+    #[test]
+    fn resolve_deep_link_target_uses_no_workspace_when_none_contains_the_file() {
+        let file_directory = temp_workspace("deep-link-file");
+        let other_workspace = temp_workspace("deep-link-other");
+        let file = file_directory.join("diagram.d2");
+        fs::write(&file, "diagram").expect("write diagram");
+
+        let result = resolve_deep_link_target(
+            path_to_string(file.clone()),
+            vec![DeepLinkWorkspace {
+                id: "other".to_string(),
+                root_path: path_to_string(other_workspace.clone()),
+            }],
+        )
+        .expect("resolve deep link");
+
+        assert_eq!(result.workspace_id, None);
+
+        fs::remove_dir_all(file_directory).expect("remove file directory");
+        fs::remove_dir_all(other_workspace).expect("remove other workspace");
+    }
+
+    #[test]
+    fn resolve_deep_link_target_rejects_non_d2_files_and_directories() {
+        let workspace = temp_workspace("deep-link-invalid");
+        let text_file = workspace.join("notes.txt");
+        fs::write(&text_file, "notes").expect("write text file");
+
+        assert!(resolve_deep_link_target(path_to_string(text_file), Vec::new()).is_err());
+        assert!(resolve_deep_link_target(path_to_string(workspace.clone()), Vec::new()).is_err());
+        assert_eq!(
+            resolve_deep_link_target("relative.d2".to_string(), Vec::new())
+                .expect_err("reject relative path"),
+            "deep link file path must be absolute"
+        );
+
+        fs::remove_dir_all(workspace).expect("remove temp workspace");
+    }
+
+    #[test]
+    fn deep_link_scheme_from_plugin_config_requires_exactly_one_scheme() {
+        assert_eq!(
+            deep_link_scheme_from_plugin_config(&serde_json::json!({
+                "desktop": { "schemes": ["d2desk-validation"] }
+            }))
+            .expect("read configured scheme"),
+            "d2desk-validation"
+        );
+        assert!(deep_link_scheme_from_plugin_config(&serde_json::json!({
+            "desktop": { "schemes": [] }
+        }))
+        .is_err());
+        assert!(deep_link_scheme_from_plugin_config(&serde_json::json!({
+            "desktop": { "schemes": ["one", "two"] }
+        }))
+        .is_err());
     }
 
     #[test]
