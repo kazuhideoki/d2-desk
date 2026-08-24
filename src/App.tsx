@@ -32,7 +32,10 @@ import {
   type ShortcutAction,
 } from "./features/shortcuts/shortcutDispatcher";
 import { EditorPane } from "./features/editor/EditorPane";
-import { parseD2DeskDeepLink } from "./features/deep-links/deepLinks";
+import {
+  createD2DeskDeepLink,
+  parseD2DeskDeepLink,
+} from "./features/deep-links/deepLinks";
 import {
   connectionIdAtPosition,
   nextLargerSourceRange,
@@ -2075,6 +2078,22 @@ function MainApp() {
     }
   }, [currentFilePath]);
 
+  const copyFocusedTabDeepLink = useCallback(async () => {
+    if (!currentFilePath) {
+      setStatus("Save the file before copying deep link");
+      return;
+    }
+
+    try {
+      const scheme = await invoke<string>("configured_deep_link_scheme");
+      const deepLink = createD2DeskDeepLink(currentFilePath, scheme);
+      await copyTextToClipboard(deepLink);
+      setStatus(`Copied deep link: ${deepLink}`);
+    } catch (error) {
+      setStatus(String(error));
+    }
+  }, [currentFilePath]);
+
   const commitRenameFile = useCallback(async () => {
     if (!renameFileDialog || !currentFilePath) return;
 
@@ -3817,6 +3836,16 @@ function MainApp() {
         },
       },
       {
+        id: "file.copyFocusedDeepLink",
+        title: "Copy Deep Link",
+        category: "File",
+        keywords: ["current", "active", "tab", "url", "clipboard"],
+        enabled: Boolean(currentFilePath),
+        run: () => {
+          void copyFocusedTabDeepLink();
+        },
+      },
+      {
         id: "file.closeTab",
         title: "Close Tab",
         category: "File",
@@ -4012,6 +4041,7 @@ function MainApp() {
       addParentToSelectedNodes,
       closeActiveTab,
       compileResult.boards,
+      copyFocusedTabDeepLink,
       copyFocusedTabAbsolutePath,
       createNewTab,
       currentFilePath,

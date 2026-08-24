@@ -1,5 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { parseD2DeskDeepLink } from "./deepLinks";
+import { createD2DeskDeepLink, parseD2DeskDeepLink } from "./deepLinks";
+
+describe("createD2DeskDeepLink", () => {
+  it("creates an open URL with an encoded absolute file path", () => {
+    const url = createD2DeskDeepLink(
+      "/Users/oki/diagrams/system overview #1 日本語.d2",
+      "d2desk",
+    );
+
+    expect(url).toBe(
+      "d2desk://open?file=%2FUsers%2Foki%2Fdiagrams%2Fsystem+overview+%231+%E6%97%A5%E6%9C%AC%E8%AA%9E.d2",
+    );
+    expect(parseD2DeskDeepLink(url, "d2desk")).toEqual({
+      filePath: "/Users/oki/diagrams/system overview #1 日本語.d2",
+    });
+  });
+
+  it("rejects an empty file path", () => {
+    expect(() => createD2DeskDeepLink("", "d2desk")).toThrow(
+      "D2 Desk open URL requires a file path",
+    );
+  });
+});
 
 describe("parseD2DeskDeepLink", () => {
   it("reads the decoded file path from an open URL", () => {
